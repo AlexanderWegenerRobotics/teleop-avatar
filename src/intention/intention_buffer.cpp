@@ -50,7 +50,7 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
 
     if (!snap_opt) {
         sample.gaze_valid = false;
-        std::cerr << "[IntentionBuffer] frame_id " << gaze.frame_id << " not in buffer\n";
+        //std::cerr << "[IntentionBuffer] frame_id " << gaze.frame_id << " not in buffer\n";
     } else {
         const StateSnapshot& snap = *snap_opt;
 

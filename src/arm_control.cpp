@@ -75,7 +75,8 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     table_height_world_ = device_config["safety"]["table_height_world"].as<double>();
     table_safety_margin_ = device_config["safety"]["table_safety_margin"].as<double>();
     max_command_velocity_ = device_config["safety"]["max_command_velocity"].as<double>();
-    emergency_jump_threshold_ = device_config["safety"]["emergency_jump_threshold"].as<double>();
+    max_command_angular_velocity_ = device_config["safety"]["max_command_angular_velocity"].as<double>();
+    ee_fingertip_length_ = device_config["safety"]["ee_fingertip_length"].as<double>();
     cmd_dt_ = 1.0 / static_cast<double>(device_config["transmission"]["frequency"].as<int>());
 
     logger_ = std::make_unique<DataLogger<ArmLogEntry>>("../log/" + name_ + "_log.csv", armLogHeader, armLogRow, session_id);
@@ -154,7 +155,7 @@ void ArmControl::runStateHandler(){
                 T_cmd.linear() = q.toRotationMatrix();
                 Eigen::Isometry3d T_target = transformCommandToBase(T_cmd);
                 applySelfCollisionFilter(T_target);
-                //validateTargetPose(T_target);
+                validateTargetPose(T_target);
                 interpolator_.planCartesian(interpolator_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
                 double target_width = (1.0 - static_cast<double>(cmd.gripper)) * 0.08;
                 gripper->setWidth(target_width);
@@ -570,43 +571,46 @@ void ArmControl::applySelfCollisionFilter(Eigen::Isometry3d& T_target) {
 
 void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
     Eigen::Vector3d p_target = T_target.translation();
+    Eigen::Quaterniond q_target(T_target.rotation());
 
-    if (!p_target.allFinite()) {
-        if (has_prev_valid_target_) {
-            T_target.translation() = prev_valid_target_pos_;
-        } else {
-            T_target.translation() = interpolator_.getCurrentCartesian().translation();
-        }
+    if (!p_target.allFinite() || !q_target.coeffs().allFinite()) {
+        std::cout << "[WARN] " << name_ << ": non-finite command - discarding packet.\n";
+        T_target.translation() = has_prev_valid_target_ ? prev_valid_target_pos_ : interpolator_.getCurrentCartesian().translation();
+        T_target.linear() = has_prev_valid_target_ ? prev_valid_target_rot_.toRotationMatrix() : interpolator_.getCurrentCartesian().rotation();
         return;
     }
 
     if (has_prev_valid_target_) {
         Eigen::Vector3d dp = p_target - prev_valid_target_pos_;
-        double jump_norm = dp.norm();
+        double jump_norm   = dp.norm();
+        double max_step    = max_command_velocity_ * cmd_dt_;
 
-        if (jump_norm > emergency_jump_threshold_) {
-            T_target.translation() = prev_valid_target_pos_;
-            p_target = T_target.translation();
-        } else {
-            double max_jump = max_command_velocity_ * cmd_dt_;
-            if (jump_norm > max_jump && jump_norm > 1e-9) {
-                p_target = prev_valid_target_pos_ + (max_jump / jump_norm) * dp;
-            }
-        }
+        if (jump_norm > max_step && jump_norm > 1e-9)
+            p_target = prev_valid_target_pos_ + (max_step / jump_norm) * dp;
+
+        if (q_target.dot(prev_valid_target_rot_) < 0.0)
+            q_target.coeffs() *= -1.0;
+
+        double angle     = prev_valid_target_rot_.angularDistance(q_target);
+        double max_angle = max_command_angular_velocity_ * cmd_dt_;
+
+        if (angle > max_angle && angle > 1e-9)
+            q_target = prev_valid_target_rot_.slerp(max_angle / angle, q_target);
     }
 
     p_target = p_target.cwiseMax(workspace_min_).cwiseMin(workspace_max_);
-
     Eigen::Vector3d p_world = T_base_.rotation() * p_target + T_base_.translation();
-    double min_world_z = table_height_world_ + table_safety_margin_;
+    double min_world_z = table_height_world_ + table_safety_margin_ + ee_fingertip_length_;
     if (p_world.z() < min_world_z) {
         p_world.z() = min_world_z;
-        p_target = T_base_.rotation().transpose() * (p_world - T_base_.translation());
-        p_target = p_target.cwiseMax(workspace_min_).cwiseMin(workspace_max_);
+        p_target    = T_base_.rotation().transpose() * (p_world - T_base_.translation());
+        p_target    = p_target.cwiseMax(workspace_min_).cwiseMin(workspace_max_);
     }
 
     T_target.translation() = p_target;
+    T_target.linear()      = q_target.toRotationMatrix();
     prev_valid_target_pos_ = p_target;
+    prev_valid_target_rot_ = q_target;
     has_prev_valid_target_ = true;
 }
 

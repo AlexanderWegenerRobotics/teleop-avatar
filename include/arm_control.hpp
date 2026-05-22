@@ -107,8 +107,10 @@ private:
     double table_height_world_;
     double table_safety_margin_;
     double max_command_velocity_;
-    double emergency_jump_threshold_;
+    double max_command_angular_velocity_;
+    double ee_fingertip_length_;
     double cmd_dt_;
     bool has_prev_valid_target_{false};
     Eigen::Vector3d prev_valid_target_pos_ = Eigen::Vector3d::Zero();
+    Eigen::Quaterniond prev_valid_target_rot_ = Eigen::Quaterniond::Identity();
 };
