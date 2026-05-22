@@ -76,6 +76,7 @@ private:
     Eigen::Isometry3d transformBaseToWorld(const Eigen::Isometry3d& T_base) const;
     void applySelfCollisionFilter(Eigen::Isometry3d& T_target);
     void validateTargetPose(Eigen::Isometry3d& T_target);
+    Vector7 jointLimitAvoidanceTorque(const Vector7& q, const Vector7& dq);
 
 private:
     std::string name_;
@@ -84,7 +85,7 @@ private:
     Eigen::Matrix3d R_tool;
     Eigen::Isometry3d T_base_;
     Eigen::Isometry3d target_pose_;
-    Vector7 q0_;
+    Vector7 q0_, q_min_, q_max_;
     Vector7 tau_max_;
     Vector7 tau_rate_max_;
     std::mutex state_mtx;
@@ -97,7 +98,7 @@ private:
     std::atomic<double> gripper_width_{0.0};
 
 private:
-    Vector7 kp_joint_, kd_joint_;
+    Vector7 kp_joint_, kd_joint_, kp_joint_limit_, kd_joint_limit_;
     Eigen::Matrix<double, 6, 1> kp_cart_, kd_cart_;
     Vector7 kp_null_, kd_null_;
 
@@ -109,7 +110,10 @@ private:
     double max_command_velocity_;
     double max_command_angular_velocity_;
     double ee_fingertip_length_;
+    double max_tilt_angle_;
     double cmd_dt_;
+    double joint_limit_buffer_;
+    double joint_limit_torque_frac_;
     bool has_prev_valid_target_{false};
     Eigen::Vector3d prev_valid_target_pos_ = Eigen::Vector3d::Zero();
     Eigen::Quaterniond prev_valid_target_rot_ = Eigen::Quaterniond::Identity();

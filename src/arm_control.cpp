@@ -44,6 +44,8 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     T_base_.linear()      = base_orientation_.toRotationMatrix();
 
     q0_ = yamlToVector<7>(device_config["q0"]);
+    q_min_ = yamlToVector<7>(device_config["q_min"]);
+    q_max_ = yamlToVector<7>(device_config["q_max"]);
     tau_max_ = yamlToVector<7>(device_config["max_torque"]);
     tau_rate_max_ = yamlToVector<7>(device_config["max_torque_rate"]) / 1000.0;
     kp_joint_ = yamlToVector<7>(device_config["control"]["kp_joint"]);
@@ -52,6 +54,10 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     kd_cart_ = yamlToVector<6>(device_config["control"]["kd_cart"]);
     kp_null_ = yamlToVector<7>(device_config["control"]["kp_null"]);
     kd_null_ = yamlToVector<7>(device_config["control"]["kd_null"]);
+    kd_joint_limit_ = yamlToVector<7>(device_config["control"]["kd_joint_limit"]);
+    kp_joint_limit_ = yamlToVector<7>(device_config["control"]["kp_joint_limit"]);
+    joint_limit_buffer_  = device_config["safety"]["joint_limit_buffer"].as<double>();
+    joint_limit_torque_frac_ = device_config["safety"]["joint_limit_torque_frac"].as<double>();
 
     if (device_config["transmission"]) {
         UdpStreamConfig stream_cfg;
@@ -77,6 +83,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     max_command_velocity_ = device_config["safety"]["max_command_velocity"].as<double>();
     max_command_angular_velocity_ = device_config["safety"]["max_command_angular_velocity"].as<double>();
     ee_fingertip_length_ = device_config["safety"]["ee_fingertip_length"].as<double>();
+    max_tilt_angle_ = device_config["safety"]["max_tilt_angle"].as<double>();
     cmd_dt_ = 1.0 / static_cast<double>(device_config["transmission"]["frequency"].as<int>());
 
     logger_ = std::make_unique<DataLogger<ArmLogEntry>>("../log/" + name_ + "_log.csv", armLogHeader, armLogRow, session_id);
@@ -470,7 +477,7 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Matrix<double, 7, 7> N = Matrix7::Identity() - J_pinv * J;
     Vector7 tau_null = N * (kp_null_.cwiseProduct(q0_ - q) - kd_null_.cwiseProduct(dq));
 
-    return tau_task + tau_null + tau_coriolis;
+    return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq);
 }
 
 bool ArmControl::isHome() {
@@ -598,14 +605,23 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
             q_target = prev_valid_target_rot_.slerp(max_angle / angle, q_target);
     }
 
-    p_target = p_target.cwiseMax(workspace_min_).cwiseMin(workspace_max_);
-    Eigen::Vector3d p_world = T_base_.rotation() * p_target + T_base_.translation();
-    double min_world_z = table_height_world_ + table_safety_margin_ + ee_fingertip_length_;
-    if (p_world.z() < min_world_z) {
-        p_world.z() = min_world_z;
-        p_target    = T_base_.rotation().transpose() * (p_world - T_base_.translation());
-        p_target    = p_target.cwiseMax(workspace_min_).cwiseMin(workspace_max_);
+    Eigen::Vector3d ee_z_world = (T_base_.rotation() * q_target.toRotationMatrix()).col(2);
+    double tilt = std::acos(std::clamp(-ee_z_world.z(), -1.0, 1.0));
+    if (tilt > max_tilt_angle_) {
+        Eigen::Vector3d axis = ee_z_world.cross(Eigen::Vector3d(0.0, 0.0, -1.0));
+        double axis_norm = axis.norm();
+        if (axis_norm > 1e-9) {
+            Eigen::Quaterniond q_correction(Eigen::AngleAxisd(tilt - max_tilt_angle_, axis / axis_norm));
+            q_target = (Eigen::Quaterniond(T_base_.rotation()).inverse() * q_correction * Eigen::Quaterniond(T_base_.rotation()) * q_target).normalized();
+        }
     }
+
+    Eigen::Vector3d p_world = T_base_.rotation() * p_target + T_base_.translation();
+    p_world = p_world.cwiseMax(workspace_min_).cwiseMin(workspace_max_);
+    double min_world_z = table_height_world_ + table_safety_margin_ + ee_fingertip_length_;
+    if (p_world.z() < min_world_z)
+        p_world.z() = min_world_z;
+    p_target = T_base_.rotation().transpose() * (p_world - T_base_.translation());
 
     T_target.translation() = p_target;
     T_target.linear()      = q_target.toRotationMatrix();
@@ -625,4 +641,38 @@ void ArmControl::restartLogger(const std::string& path) {
 
 void ArmControl::writeEpisodeConfig(double px, double py, double pz, double gx, double gy, double gz, int mode) {
     logger_->writeEpisodeConfig(px, py, pz, gx, gy, gz, mode);
+}
+
+Vector7 ArmControl::jointLimitAvoidanceTorque(const Vector7& q, const Vector7& dq) {
+    Vector7 tau = Vector7::Zero();
+
+    for (int i = 0; i < 7; ++i) {
+        const double qmin = q_min_(i);
+        const double qmax = q_max_(i);
+        const double dmin = q(i) - qmin;
+        const double dmax = qmax - q(i);
+
+        double tau_i = 0.0;
+
+        if (dmin < joint_limit_buffer_) {
+            double w = std::clamp((joint_limit_buffer_ - dmin) / joint_limit_buffer_, 0.0, 1.0);
+            w *= w;
+            tau_i += kp_joint_limit_(i) * w * ((qmin + joint_limit_buffer_) - q(i));
+            if (dq(i) < 0.0)
+                tau_i -= kd_joint_limit_(i) * w * dq(i);
+        }
+
+        if (dmax < joint_limit_buffer_) {
+            double w = std::clamp((joint_limit_buffer_ - dmax) / joint_limit_buffer_, 0.0, 1.0);
+            w *= w;
+            tau_i += kp_joint_limit_(i) * w * ((qmax - joint_limit_buffer_) - q(i));
+            if (dq(i) > 0.0)
+                tau_i -= kd_joint_limit_(i) * w * dq(i);
+        }
+
+        const double sat = joint_limit_torque_frac_ * tau_max_(i);
+        tau(i) = std::clamp(tau_i, -sat, sat);
+    }
+
+    return tau;
 }
