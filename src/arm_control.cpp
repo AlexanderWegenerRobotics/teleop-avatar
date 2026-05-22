@@ -193,12 +193,14 @@ void ArmControl::runStateHandler(){
                 scp_->publishState(ds);
             }
 
-            T_ee = transformBaseToWorld(T_ee);
+            //T_ee = transformBaseToWorld(T_ee);
+            //Eigen::Quaterniond q_ee(T_ee.rotation());
+            Eigen::Isometry3d T_ee_world = T_base_ * T_ee;
             Eigen::Quaterniond q_ee(T_ee.rotation());
             ArmStateMsg state_msg{};
-            state_msg.position[0] = static_cast<float>(T_ee.translation().x());
-            state_msg.position[1] = static_cast<float>(T_ee.translation().y());
-            state_msg.position[2] = static_cast<float>(T_ee.translation().z());
+            state_msg.position[0] = static_cast<float>(T_ee_world.translation().x());
+            state_msg.position[1] = static_cast<float>(T_ee_world.translation().y());
+            state_msg.position[2] = static_cast<float>(T_ee_world.translation().z());
             state_msg.quaternion[0] = static_cast<float>(q_ee.w());
             state_msg.quaternion[1] = static_cast<float>(q_ee.x());
             state_msg.quaternion[2] = static_cast<float>(q_ee.y());
