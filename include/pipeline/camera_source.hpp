@@ -7,7 +7,7 @@
 #include <thread>
 #include <iostream>
 
-#include "streamer/shared_memory.hpp"
+#include "pipeline/shared_memory.hpp"
 
 using FrameCallback = std::function<void(const uint8_t*, uint32_t, uint32_t)>;
 

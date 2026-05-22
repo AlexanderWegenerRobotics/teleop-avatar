@@ -1,4 +1,4 @@
-#include "streamer/stream_quality_controller.hpp"
+#include "pipeline/stream_quality_controller.hpp"
 
 #include <iostream>
 #include <cstring>

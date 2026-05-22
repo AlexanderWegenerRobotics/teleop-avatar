@@ -12,6 +12,7 @@
 #include "data_logger.hpp"
 #include "intention/intention_buffer.hpp"
 #include "intention/intention_recognizer.hpp"
+#include "pipeline/episode_msg.hpp"
 
 class Avatar{
 
@@ -70,4 +71,12 @@ private:
 
     std::unique_ptr<IntentionBuffer>     intention_buffer_;
     std::unique_ptr<IntentionRecognizer> intention_recognizer_;
+
+    // ── Pipeline logger episode signaling ─────────────────────────────────
+    std::string logger_host_;
+    int         logger_port_        = 0;
+    socket_t    logger_sock_        = kInvalidSocket;
+    int         current_episode_idx_ = -1;   // -1 = no active episode
+
+    void sendEpisodeEvent(const std::string& type, const std::string& reason);
 };

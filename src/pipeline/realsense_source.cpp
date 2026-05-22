@@ -1,4 +1,4 @@
-#include "streamer/realsense_source.hpp"
+#include "pipeline/realsense_source.hpp"
 
 #include <iostream>
 #include <stdexcept>

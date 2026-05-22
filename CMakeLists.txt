@@ -186,42 +186,61 @@ if(BUILD_WITH_FRANKA)
     target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_FRANKA)
 endif()
 
-# ── Streamer (Linux / macOS only) ─────────────────────────────────────────────
+# ── Pipeline (camera streaming + HDF5 logging) ────────────────────────────────
 if(BUILD_STREAMER)
-    add_executable(avatar_streamer
-        src/streamer/streamer_main.cpp
-        src/streamer/video_streamer.cpp
-        src/streamer/camera_source.cpp
-        src/streamer/stream_quality_controller.cpp
-        src/streamer/realsense_source.cpp
+    find_package(HDF5 REQUIRED COMPONENTS C)
+    find_package(PkgConfig REQUIRED)
+    find_package(realsense2 REQUIRED)
+    pkg_check_modules(GST REQUIRED
+        gstreamer-1.0
+        gstreamer-app-1.0
+        gstreamer-video-1.0
     )
 
-    target_include_directories(avatar_streamer PRIVATE
+    add_executable(avatar_pipeline
+        src/pipeline/streamer_main.cpp
+        src/pipeline/video_streamer.cpp
+        src/pipeline/video_logger.cpp
+        src/pipeline/camera_source.cpp
+        src/pipeline/camera_channel.cpp
+        src/pipeline/episode_controller.cpp
+        src/pipeline/stream_quality_controller.cpp
+        src/pipeline/realsense_source.cpp
+    )
+
+    target_include_directories(avatar_pipeline PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${GST_INCLUDE_DIRS}
+        ${HDF5_INCLUDE_DIRS}
     )
 
-    target_link_libraries(avatar_streamer PRIVATE
+    target_link_libraries(avatar_pipeline PRIVATE
         yaml-cpp::yaml-cpp
+        msgpack-cxx
         ${GST_LIBRARIES}
         realsense2::realsense2
+        ${HDF5_C_LIBRARIES}
     )
 
-    target_link_directories(avatar_streamer PRIVATE
+    if(WIN32)
+        target_link_libraries(avatar_pipeline PRIVATE ws2_32 mswsock)
+    endif()
+
+    target_link_directories(avatar_pipeline PRIVATE
         ${GST_LIBRARY_DIRS}
     )
 
-    target_compile_options(avatar_streamer PRIVATE
+    target_compile_options(avatar_pipeline PRIVATE
         ${GST_CFLAGS_OTHER}
     )
 
-    target_compile_definitions(avatar_streamer PRIVATE BUILD_STREAMER)
+    target_compile_definitions(avatar_pipeline PRIVATE BUILD_STREAMER)
 
     # On Windows, tell the linker where GStreamer's import libs live
     if(WIN32 AND DEFINED ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64})
-        target_link_directories(avatar_streamer PRIVATE
+        target_link_directories(avatar_pipeline PRIVATE
             "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}/lib")
-        target_include_directories(avatar_streamer PRIVATE
+        target_include_directories(avatar_pipeline PRIVATE
             "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}/include"
             "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}/include/gstreamer-1.0"
             "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}/include/glib-2.0"

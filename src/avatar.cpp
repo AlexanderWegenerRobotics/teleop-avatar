@@ -66,6 +66,23 @@ Avatar::Avatar(const YAML::Node& config) {
     setsockopt(episode_sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
+    // ── Pipeline logger episode signaling ─────────────────────────────────
+    if (sys_config["avatar"]["pipeline_logger"]) {
+        const auto& pl = sys_config["avatar"]["pipeline_logger"];
+        if (pl["enabled"].as<bool>(false)) {
+            logger_host_ = pl["host"].as<std::string>("127.0.0.1");
+            logger_port_ = pl["port"].as<int>(7000);
+            logger_sock_ = socket(AF_INET, SOCK_DGRAM, 0);
+            if (logger_sock_ == kInvalidSocket) {
+                std::cerr << "[AVATAR-WARN] Failed to create pipeline logger socket\n";
+                logger_port_ = 0;
+            } else {
+                std::cout << "[AVATAR-INFO] Pipeline logger signals → "
+                          << logger_host_ << ":" << logger_port_ << std::endl;
+            }
+        }
+    }
+
     if (sys_config["avatar"]["transmission"]) {
         UdpReliableConfig cmd_cfg;
         cmd_cfg.transport.remote_ip   = sys_config["avatar"]["transmission"]["remote_ip"].as<std::string>();
@@ -233,8 +250,8 @@ Avatar::Avatar(const YAML::Node& config) {
 }
 
 Avatar::~Avatar() {
-    if (episode_sock_ != kInvalidSocket)
-        close_socket(episode_sock_);
+    if (episode_sock_ != kInvalidSocket) close_socket(episode_sock_);
+    if (logger_sock_  != kInvalidSocket) close_socket(logger_sock_);
 }
 
 void Avatar::start(){
@@ -574,6 +591,11 @@ void Avatar::updateStateMachine(SysState cmd_state){
             else if(cmd_state == SysState::ENGAGED && allInState(SysState::AWAITING)){
                 requestAllDevices(SysState::ENGAGED);
                 state_ = SysState::ENGAGED;
+                // Start the first episode folder here so logging begins immediately
+                // on first engagement (no reset required for episode 0).
+                // Subsequent episodes are started by processResetAllCompletion().
+                startNewEpisodeFolder();
+                markEpisodeStart();
                 if (scene_logger_) scene_logger_->enable(true);
                 std::cout << "[AVATAR-INFO]: Engage system." << std::endl;
             }
@@ -664,9 +686,43 @@ ArmControl* Avatar::getArm(const std::string& name) {
 void Avatar::markEpisodeStart() {
     for (auto& arm  : arm_instances) arm->markEpisodeStart();
     for (auto& head : head_instances) head->markEpisodeStart();
+
+    // episode_index_ was already incremented by startNewEpisodeFolder(); the
+    // folder just created is index (episode_index_ - 1).
+    current_episode_idx_ = episode_index_ - 1;
+    sendEpisodeEvent("episode_start", "");
 }
 
 void Avatar::markEpisodeEnd(const std::string& reason) {
     for (auto& arm  : arm_instances) arm->markEpisodeEnd(reason);
     for (auto& head : head_instances) head->markEpisodeEnd(reason);
+
+    if (current_episode_idx_ >= 0) {
+        sendEpisodeEvent("episode_end", reason);
+        current_episode_idx_ = -1;
+    }
+}
+
+void Avatar::sendEpisodeEvent(const std::string& type, const std::string& reason) {
+    if (logger_sock_ == kInvalidSocket || logger_port_ == 0) return;
+
+    EpisodeEventMsg msg;
+    msg.type           = type;
+    msg.session_id     = session_id_;
+    msg.episode_index  = current_episode_idx_;
+    msg.reason         = reason;
+
+    msgpack::sbuffer buf;
+    msgpack::pack(buf, msg);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(static_cast<uint16_t>(logger_port_));
+    inet_pton(AF_INET, logger_host_.c_str(), &addr.sin_addr);
+
+    sendto(logger_sock_,
+           buf.data(), static_cast<int>(buf.size()),
+           0,
+           reinterpret_cast<sockaddr*>(&addr),
+           static_cast<int>(sizeof(addr)));
 }

@@ -35,14 +35,14 @@ devices:
       kd_cart: [70, 70, 70, 10, 10, 10]
       kp_null: [15, 15, 15, 15, 8, 8, 5]
       kd_null: [2, 2, 2, 2, 1, 1, 1]
-      motion_scale: 2.0
+
     safety:
       workspace_min: [0.20, -0.55, 0.05]
       workspace_max: [0.85,  0.55, 0.75]
       table_height_world: 0.0
       table_safety_margin: 0.02
-      max_command_velocity: 200.40
-      emergency_jump_threshold: 200.10
+      max_command_velocity: 0.40
+      emergency_jump_threshold: 0.10
 
   - name: arm_right
     type: arm
@@ -66,14 +66,13 @@ devices:
       kd_cart: [70, 70, 70, 10, 10, 10]
       kp_null: [15, 15, 15, 15, 8, 8, 5]
       kd_null: [2, 2, 2, 2, 1, 1, 1]
-      motion_scale: 2.0
     safety:
       workspace_min: [0.20, -0.55, 0.05]
       workspace_max: [0.85,  0.55, 0.75]
       table_height_world: 0.0
       table_safety_margin: 0.02
-      max_command_velocity: 200.40
-      emergency_jump_threshold: 100.10
+      max_command_velocity: 0.40
+      emergency_jump_threshold: 0.10
 
   - name: head
     type: head

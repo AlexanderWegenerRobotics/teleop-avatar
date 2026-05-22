@@ -11,7 +11,7 @@ for %%C in (Release Debug) do (
     if not defined AVATAR (
         if exist "%SCRIPT_DIR%\build\%%C\avatar.exe" (
             set "AVATAR=%SCRIPT_DIR%\build\%%C\avatar.exe"
-            set "STREAMER=%SCRIPT_DIR%\build\%%C\avatar_streamer.exe"
+            set "STREAMER=%SCRIPT_DIR%\build\%%C\avatar_pipeline.exe"
         )
     )
 )
@@ -27,7 +27,7 @@ if not defined AVATAR (
     exit /b 1
 )
 if not exist "%STREAMER%" (
-    echo [ERROR]: avatar_streamer.exe not found at %STREAMER%
+    echo [ERROR]: avatar_pipeline.exe not found at %STREAMER%
     exit /b 1
 )
 
@@ -48,14 +48,14 @@ if not defined AVATAR_PID (
 
 timeout /t 2 /nobreak > nul
 
-echo [LAUNCH]: Starting avatar_streamer...
+echo [LAUNCH]: Starting avatar_pipeline...
 start /D "%WORK_DIR%" "" /B "%STREAMER%"
 
 for /f %%P in ('powershell -NoProfile -Command ^
-    "Get-Process avatar_streamer -EA SilentlyContinue | Sort-Object StartTime -Desc | Select -First 1 -Exp Id"') do set "STREAMER_PID=%%P"
+    "Get-Process avatar_pipeline -EA SilentlyContinue | Sort-Object StartTime -Desc | Select -First 1 -Exp Id"') do set "STREAMER_PID=%%P"
 
 if not defined STREAMER_PID (
-    echo [ERROR]: Failed to get avatar_streamer PID.
+    echo [ERROR]: Failed to get avatar_pipeline PID.
     if defined AVATAR_PID taskkill /PID %AVATAR_PID% /F >nul 2>&1
     exit /b 1
 )
@@ -72,7 +72,7 @@ rem --- hand off monitoring to PowerShell (try/finally survives Ctrl+C) ---
     echo try {
     echo     while ^($true^) {
     echo         if ^(-not $av -or $av.HasExited^) { Write-Host '[LAUNCH]: avatar exited.'; break }
-    echo         if ^(-not $st -or $st.HasExited^) { Write-Host '[LAUNCH]: avatar_streamer exited.'; break }
+    echo         if ^(-not $st -or $st.HasExited^) { Write-Host '[LAUNCH]: avatar_pipeline exited.'; break }
     echo         Start-Sleep -Milliseconds 500
     echo     }
     echo } finally {

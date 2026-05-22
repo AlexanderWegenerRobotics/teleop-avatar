@@ -7,7 +7,7 @@
 #include <chrono>
 #include <functional>
 
-#include "streamer/stream_feedback.hpp"
+#include "pipeline/stream_feedback.hpp"
 #include "network/platform_socket.hpp"
 
 enum class StreamState {

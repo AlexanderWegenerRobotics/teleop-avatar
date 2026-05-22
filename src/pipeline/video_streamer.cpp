@@ -1,5 +1,4 @@
-#include "streamer/video_streamer.hpp"
-#include "streamer/realsense_source.hpp"
+#include "pipeline/video_streamer.hpp"
 
 #include <stdexcept>
 #include <iostream>
@@ -11,18 +10,7 @@
 VideoStreamer::VideoStreamer(const StreamerConfig& config)
     : config_(config)
 {
-    gst_init(nullptr, nullptr);
-
-    if (config_.source_type == "realsense") {
-        source_ = std::make_unique<RealSenseSource>(
-            config_.realsense_serial,
-            config_.stream_width,
-            config_.stream_height,
-            config_.fps);
-    } else {
-        source_ = std::make_unique<MuJoCoSource>(config_.shm_name, config_.fps);
-    }
-
+    // gst_init() must be called once by main before constructing VideoStreamers.
     target_fps_.store(config_.fps);
 }
 
@@ -72,19 +60,15 @@ void VideoStreamer::start() {
     gst_element_set_state(pipeline_, GST_STATE_PLAYING);
 
     bRunning_ = true;
-    source_->start([this](const uint8_t* rgb, uint32_t w, uint32_t h) {
-        pushFrame(rgb, w, h);
-    });
 
     std::cout << "[INFO] Streamer running on "
               << config_.host << ":" << config_.port
-              << " " << source_->width() << "x" << source_->height()
-              << "+1 (timestamp row) @ " << config_.fps << "fps" << std::endl;
+              << " " << config_.stream_width << "x" << config_.stream_height
+              << "+2 (timestamp rows) @ " << config_.fps << "fps" << std::endl;
 }
 
 void VideoStreamer::stop() {
     bRunning_ = false;
-    if (source_) source_->stop();
     if (quality_) quality_->stop();
 
     if (pipeline_) {
@@ -105,15 +89,15 @@ void VideoStreamer::stop() {
 }
 
 void VideoStreamer::buildPipeline() {
-    // Height + 2: the extra two rows carries an embedded wall-clock timestamp.
-    // The receiver reads and crops it before display.
-    int padded_height = source_->height() + 2;
+    // Height + 2: the extra two rows carry the embedded wall-clock timestamp and frame ID.
+    // The receiver reads and crops them before display.
+    int padded_height = config_.stream_height + 2;
 
     std::string pipeline_str =
         "appsrc name=src stream-type=0 format=3 is-live=true block=false"
         " caps=video/x-raw,format=RGB"
-        ",width="      + std::to_string(source_->width())  +
-        ",height="     + std::to_string(padded_height)     +
+        ",width="      + std::to_string(config_.stream_width)  +
+        ",height="     + std::to_string(padded_height)          +
         ",framerate="  + std::to_string(config_.fps) + "/1"
         " ! queue max-size-buffers=2 leaky=downstream"
         " ! videoconvert"

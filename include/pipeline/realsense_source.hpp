@@ -1,6 +1,6 @@
 #pragma once
 
-#include "streamer/camera_source.hpp"
+#include "pipeline/camera_source.hpp"
 
 #include <librealsense2/rs.hpp>
 

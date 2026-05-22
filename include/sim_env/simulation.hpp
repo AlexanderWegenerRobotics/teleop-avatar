@@ -13,7 +13,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 
-#include "streamer/shared_memory.hpp"
+#include "pipeline/shared_memory.hpp"
 #include "sim_env/scene_builder.hpp"
 #include "intention/intention_sample.hpp"
 

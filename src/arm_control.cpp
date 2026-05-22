@@ -154,6 +154,7 @@ void ArmControl::runStateHandler(){
                 T_cmd.linear() = q.toRotationMatrix();
                 Eigen::Isometry3d T_target = transformCommandToBase(T_cmd);
                 applySelfCollisionFilter(T_target);
+                //validateTargetPose(T_target);
                 interpolator_.planCartesian(interpolator_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
                 double target_width = (1.0 - static_cast<double>(cmd.gripper)) * 0.08;
                 gripper->setWidth(target_width);
