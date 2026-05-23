@@ -30,6 +30,7 @@ public:
     void requestState(SysState state){cmd_state_ = state;}
     SysState getState() const {return state_;}
     Eigen::Isometry3d getTargetPose() const;
+    Eigen::Isometry3d getRawTargetPose() const;
     void initSelfCollisionProtection(std::shared_ptr<DeviceRegistry> registry, const SelfCollisionConfig& config) {
         scp_ = std::make_unique<SelfCollisionProtection>(name_, std::move(registry), config);
     }
@@ -84,7 +85,7 @@ private:
     Eigen::Quaterniond base_orientation_;
     Eigen::Matrix3d R_tool;
     Eigen::Isometry3d T_base_;
-    Eigen::Isometry3d target_pose_;
+    Eigen::Isometry3d target_pose_, target_pose_raw_;
     Vector7 q0_, q_min_, q_max_;
     Vector7 tau_max_;
     Vector7 tau_rate_max_;

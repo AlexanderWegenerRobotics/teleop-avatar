@@ -38,7 +38,7 @@ public:
     double getGripperWidth(const std::string& deviceName);
     DeviceState getDeviceState(const std::string& deviceName);
     void setDeviceActive(const std::string& deviceName, bool state);
-    void setFramePose(const std::string& name, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat);
+    void setFramePose(const std::string& name, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat, double z_offset=0.0);
     void setFreeBodyPose(const std::string& bodyName, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat);
     bool getFreeBodyPose(const std::string& bodyName, Eigen::Vector3d& pos, Eigen::Quaterniond& quat);
     CameraIntrinsics getCameraIntrinsics(const std::string& cam_name) const;

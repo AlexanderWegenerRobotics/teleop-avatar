@@ -77,7 +77,7 @@ Avatar::Avatar(const YAML::Node& config) {
                 std::cerr << "[AVATAR-WARN] Failed to create pipeline logger socket\n";
                 logger_port_ = 0;
             } else {
-                std::cout << "[AVATAR-INFO] Pipeline logger signals → "
+                std::cout << "[AVATAR-INFO] Pipeline logger signals -> "
                           << logger_host_ << ":" << logger_port_ << std::endl;
             }
         }
@@ -312,7 +312,10 @@ void Avatar::start(){
                 Eigen::Isometry3d T = arm->getTargetPose();
                 std::string dev = arm->getDeviceName();
                 std::string side = dev.substr(dev.find('_') + 1);
-                sim_->setFramePose("target_" + side + "_frame", T.translation(), Eigen::Quaterniond(T.rotation()));
+                sim_->setFramePose("target_" + side + "_frame", T.translation(), Eigen::Quaterniond(T.rotation()), 0.107);
+
+                T = arm->getRawTargetPose();
+                sim_->setFramePose("target_raw_" + side + "_frame", T.translation(), Eigen::Quaterniond(T.rotation()), 0.107);
             }
 
             if (intention_buffer_) {

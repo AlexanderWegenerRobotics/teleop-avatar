@@ -1,9 +1,7 @@
 <mujoco model="target_frame">
     <worldbody>
-        <body name="frame_origin">
-            <geom type="capsule" fromto="0 0 0 0.05 0 0" size="0.005" rgba="1 0 0 0.3" contype="0" conaffinity="0"/>
-            <geom type="capsule" fromto="0 0 0 0 0.05 0" size="0.005" rgba="0 1 0 0.3" contype="0" conaffinity="0"/>
-            <geom type="capsule" fromto="0 0 0 0 0 0.05" size="0.005" rgba="0 0 1 0.3" contype="0" conaffinity="0"/>
-        </body>
+        <geom type="capsule" fromto="0 0 0 0.05 0 0" size="0.005" rgba="1 0 0 0.3" contype="0" conaffinity="0"/>
+        <geom type="capsule" fromto="0 0 0 0 0.05 0" size="0.005" rgba="0 1 0 0.3" contype="0" conaffinity="0"/>
+        <geom type="capsule" fromto="0 0 0 0 0 0.05" size="0.005" rgba="0 0 1 0.3" contype="0" conaffinity="0"/>
     </worldbody>
 </mujoco>

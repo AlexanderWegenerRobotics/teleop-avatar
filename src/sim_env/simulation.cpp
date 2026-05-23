@@ -478,13 +478,16 @@ void Simulation::setDeviceActive(const std::string& deviceName, bool state){
     active_devices_[deviceName] = state;
 }
 
-void Simulation::setFramePose(const std::string& name, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat) {
+void Simulation::setFramePose(const std::string& name, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat, double z_offset) {
     auto it = mocap_index_.find(name);
     if (it == mocap_index_.end()) return;
     int id = it->second;
-    data->mocap_pos[id * 3 + 0] = pos.x();
-    data->mocap_pos[id * 3 + 1] = pos.y();
-    data->mocap_pos[id * 3 + 2] = pos.z();
+
+    Eigen::Vector3d offset_pos = pos + quat * Eigen::Vector3d(0, 0, z_offset);
+
+    data->mocap_pos[id * 3 + 0] = offset_pos.x();
+    data->mocap_pos[id * 3 + 1] = offset_pos.y();
+    data->mocap_pos[id * 3 + 2] = offset_pos.z();
     data->mocap_quat[id * 4 + 0] = quat.w();
     data->mocap_quat[id * 4 + 1] = quat.x();
     data->mocap_quat[id * 4 + 2] = quat.y();

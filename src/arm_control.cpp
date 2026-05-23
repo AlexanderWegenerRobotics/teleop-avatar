@@ -42,6 +42,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     T_base_ = Eigen::Isometry3d::Identity();
     T_base_.translation() = base_position_;
     T_base_.linear()      = base_orientation_.toRotationMatrix();
+    target_pose_raw_ = Eigen::Isometry3d::Identity();
 
     q0_ = yamlToVector<7>(device_config["q0"]);
     q_min_ = yamlToVector<7>(device_config["q_min"]);
@@ -161,6 +162,7 @@ void ArmControl::runStateHandler(){
                 T_cmd.translation() = pos;
                 T_cmd.linear() = q.toRotationMatrix();
                 Eigen::Isometry3d T_target = transformCommandToBase(T_cmd);
+                target_pose_raw_ = T_base_ * T_target;
                 applySelfCollisionFilter(T_target);
                 validateTargetPose(T_target);
                 interpolator_.planCartesian(interpolator_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
@@ -477,7 +479,16 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Matrix<double, 7, 7> N = Matrix7::Identity() - J_pinv * J;
     Vector7 tau_null = N * (kp_null_.cwiseProduct(q0_ - q) - kd_null_.cwiseProduct(dq));
 
-    return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq);
+    static const Vector7 kMaxDq = (Vector7() << 2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610).finished();
+    static const double kVelDampOnset = 0.05;
+    Vector7 tau_vel_damp = Vector7::Zero();
+    for (int i = 0; i < 7; ++i) {
+        double excess = std::abs(dq(i)) - (kMaxDq(i) - kVelDampOnset);
+        if (excess > 0.0)
+            tau_vel_damp(i) = -80.0 * excess * (dq(i) > 0 ? 1.0 : -1.0);
+    }
+    return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq) + tau_vel_damp;
+    //return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq);
 }
 
 bool ArmControl::isHome() {
@@ -523,6 +534,10 @@ Eigen::Isometry3d ArmControl::transformBaseToWorld(const Eigen::Isometry3d& T_ba
 
 Eigen::Isometry3d ArmControl::getTargetPose() const{
     return target_pose_;
+}
+
+Eigen::Isometry3d ArmControl::getRawTargetPose() const{
+    return target_pose_raw_;
 }
 
 void ArmControl::applySelfCollisionFilter(Eigen::Isometry3d& T_target) {

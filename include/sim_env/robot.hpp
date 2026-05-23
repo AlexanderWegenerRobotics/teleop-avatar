@@ -66,17 +66,18 @@ private:
                    const std::array<double, 7>& dq,
                    const std::array<double, 7>& tau_cmd,
                    double dt);
+    void checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const Vector7& q);
 
 private:
     Simulation*            sim    = nullptr;
     std::string            name_;
-    std::string ee_frame_name_;
+    std::string            ee_frame_name_;
     std::unique_ptr<Model> model_;
     RobotState             robot_state_;
     std::atomic<bool>      bRunning{false};
-    Vector7 tau_filtered_;
-    
-    // GMO integrator state
+    Vector7                tau_filtered_;
+    Vector7                tau_prev_;
+
     Vector7 r_;
     Vector7 p_prev_;
     static constexpr double K_GMO = 50.0;

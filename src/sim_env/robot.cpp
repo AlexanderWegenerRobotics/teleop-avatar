@@ -24,9 +24,7 @@ Robot::~Robot() {}
 void Robot::set_simulation(Simulation& _sim, const YAML::Node& sim_dev, const YAML::Node& robot_dev) {
     sim          = &_sim;
     name_        = sim_dev["name"].as<std::string>();
-    ee_frame_name_ = sim_dev["urdf_ee_name"]
-                     ? sim_dev["urdf_ee_name"].as<std::string>()
-                     : "panda_link8";
+    ee_frame_name_ = sim_dev["urdf_ee_name"] ? sim_dev["urdf_ee_name"].as<std::string>() : "panda_link8";
 
     std::string urdf_path = sim_dev["urdf_path"].as<std::string>();
     auto ori = robot_dev["base_pose"]["orientation"].as<std::vector<double>>();
@@ -63,6 +61,48 @@ void Robot::populateRobotState(const DeviceState& ds, double dt) {
     updateGMO(robot_state_.q, robot_state_.dq, robot_state_.tau_J_d, dt);
 }
 
+void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const Vector7& q) {
+    static const std::array<double, 7> kMaxTorqueRate    = {1000, 1000, 1000, 1000, 1000, 1000, 1000};
+    static const std::array<double, 7> kMaxTorque        = {87, 87, 87, 87, 12, 12, 12};
+    static const std::array<double, 7> kMaxJointVelocity = {2.150, 2.150, 2.150, 2.150, 2.580, 2.580, 2.580};
+    static const std::array<std::pair<double,double>, 7> kJointLimits = {{
+        {-2.7437 + 0.01,  2.7437 - 0.01},
+        {-1.7837 + 0.01,  1.7837 - 0.01},
+        {-2.9007 + 0.01,  2.9007 - 0.01},
+        {-3.0421 + 0.01, -0.1518 - 0.01},
+        {-2.8065 + 0.01,  2.8065 - 0.01},
+        { 0.5445 + 0.01,  4.5169 - 0.01},
+        {-3.0159 + 0.01,  3.0159 - 0.01}
+    }};
+
+    constexpr double dt = 1.0 / 1000.0;
+
+    for (int i = 0; i < 7; ++i) {
+        if (std::abs(tau_cmd(i)) > kMaxTorque[i])
+            std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
+                      << ": tau_J_range_violation - tau=" << tau_cmd(i)
+                      << " Nm (limit=" << kMaxTorque[i] << " Nm)\n";
+
+        double tau_rate = std::abs(tau_cmd(i) - tau_prev_(i)) / dt;
+        if (tau_rate > kMaxTorqueRate[i])
+            std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
+                      << ": torque_discontinuity - rate=" << tau_rate
+                      << " Nm/s (limit=" << kMaxTorqueRate[i] << " Nm/s)\n";
+
+        if (std::abs(dq(i)) > kMaxJointVelocity[i])
+            std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
+                      << ": joint_velocity_violation - dq=" << dq(i)
+                      << " rad/s (limit=" << kMaxJointVelocity[i] << " rad/s)\n";
+
+        if (q(i) < kJointLimits[i].first || q(i) > kJointLimits[i].second)
+            std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
+                      << ": joint_position_limits_violation - q=" << q(i)
+                      << " rad (limits=[" << kJointLimits[i].first
+                      << ", " << kJointLimits[i].second << "] rad)\n";
+    }
+
+    tau_prev_ = tau_cmd;
+}
 
 void Robot::control(std::function<Torques(const RobotState&, Duration)> control_callback) {
     constexpr double dt = 1.0 / 1000.0;
@@ -71,21 +111,6 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
     constexpr double filter_cutoff_hz = 500.0;
     constexpr double omega = 2.0 * M_PI * filter_cutoff_hz;
     constexpr double alpha = (omega * dt) / (1.0 + omega * dt);
-
-    const Vector7 joint_damping = (Vector7() << 10.0, 10.0, 10.0, 10.0, 5.0, 5.0, 2.0).finished();
-
-    constexpr double limit_buffer = 0.15;
-    constexpr double limit_stiffness = 0.0;
-
-    const std::array<std::pair<double, double>, 7> joint_limits = {{
-        {-2.7437,  2.7437},
-        {-1.7837,  1.7837},
-        {-2.9007,  2.9007},
-        {-3.0421, -0.1518},
-        {-2.8065,  2.8065},
-        { 0.5445,  4.5169},
-        {-3.0159,  3.0159}
-    }};
 
     auto next_control_time = std::chrono::high_resolution_clock::now();
     Duration dur;
@@ -97,6 +122,7 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
 
     sim->setDeviceActive(name_, true);
     tau_filtered_ = Vector7::Zero();
+    tau_prev_     = Vector7::Zero();
     bRunning = true;
 
     while (bRunning) {
@@ -118,30 +144,12 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
             tau_raw[i] = tau_cmd.tau_J[i] + gravity[i];
 
         Vector7 dq_eig = Eigen::Map<const Vector7>(robot_state_.dq.data());
-        Vector7 q_eig = Eigen::Map<const Vector7>(robot_state_.q.data());
+        Vector7 q_eig  = Eigen::Map<const Vector7>(robot_state_.q.data());
+        Vector7 tau_cmd_eig = Eigen::Map<const Vector7>(tau_cmd.tau_J.data());
 
-        //Vector7 tau_damping = joint_damping.cwiseProduct(dq_eig);
-        Vector7 tau_damped = tau_raw;  // - tau_damping;
+        checkFrankaErrors(tau_cmd_eig, dq_eig, q_eig);
 
-        Vector7 tau_limit_repulsion = Vector7::Zero();
-        for (int i = 0; i < 7; ++i) {
-            double q_i = q_eig[i];
-            double lo = joint_limits[i].first;
-            double hi = joint_limits[i].second;
-
-            double dist_lo = q_i - lo;
-            double dist_hi = hi - q_i;
-
-            if (dist_lo < limit_buffer)
-                tau_limit_repulsion[i] = limit_stiffness * (limit_buffer - dist_lo);
-
-            if (dist_hi < limit_buffer)
-                tau_limit_repulsion[i] = -limit_stiffness * (limit_buffer - dist_hi);
-        }
-
-        Vector7 tau_total = tau_damped + tau_limit_repulsion;
-
-        tau_filtered_ = alpha * tau_total + (1.0 - alpha) * tau_filtered_;
+        tau_filtered_ = alpha * tau_raw + (1.0 - alpha) * tau_filtered_;
 
         if (tau_cmd.motion_finished) {
             std::cout << "Stopped robot arm control loop" << std::endl;
