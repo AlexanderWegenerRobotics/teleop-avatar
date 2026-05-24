@@ -1,0 +1,16 @@
+<mujoco model="camera_assembly">
+  <compiler angle="radian" meshdir="assets"/>
+
+  <asset>
+    <mesh name="camera_assembly" file="camera_assembly.stl"/>
+  </asset>
+
+  <worldbody>
+    <body name="camera_mount">
+      <inertial mass="0.001" pos="0 0 0" diaginertia="1e-6 1e-6 1e-6"/>
+      <geom mesh="camera_assembly" type="mesh" contype="0" conaffinity="0" group="2"/>
+      <camera name="rgb" pos="0.07 0 0.05" quat="0 1 0 0" fovy="69"/>
+    </body>
+  </worldbody>
+
+</mujoco>

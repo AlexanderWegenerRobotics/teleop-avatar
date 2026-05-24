@@ -22,8 +22,21 @@ Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_qua
             joints_to_lock.push_back(full_model.getJointId(name));
     }
 
+    for (int i = 0; i <= 15; ++i) {
+        std::string name = "joint_" + std::to_string(i) + "_0";
+        if (full_model.existJointName(name))
+            joints_to_lock.push_back(full_model.getJointId(name));
+    }
+
     Eigen::VectorXd q_ref = Eigen::VectorXd::Zero(full_model.nq);
     pin_model_ = pinocchio::buildReducedModel(full_model, joints_to_lock, q_ref);
+
+    if (!pin_model_.existFrame(ee_frame_name_))
+        std::cerr << "[Model] WARNING: EE frame '" << ee_frame_name_ << "' not found in URDF!\n";
+
+    std::cout << "[Model] Looking for EE frame: " << ee_frame_name_ << std::endl;
+    std::cout << "[Model] Frame exists: " << pin_model_.existFrame(ee_frame_name_) << std::endl;
+    std::cout << "[Model] nq=" << pin_model_.nq << " nv=" << pin_model_.nv << std::endl;
 
     Eigen::Quaterniond q(base_quat[0], base_quat[1], base_quat[2], base_quat[3]);
     Eigen::Vector3d g_base = q.toRotationMatrix().transpose() * Eigen::Vector3d(0, 0, -9.81);

@@ -10,51 +10,33 @@ simulation:
 devices:
   - name: arm_left
     model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"
-    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
+    urdf_path: "../models/urdf/allegro_hand/fr3_allegro_hand.urdf"
     root_body: "link0"
-    urdf_ee_name: "fr3_hand"
+    urdf_ee_name: "palm_link"
     gripper_actuator: "actuator8"
   
   - name: hand_left
-    model_path: "../models/mujoco/robots/franka_fr3/hand.xml"
-    root_body: "hand"
-    gripper_actuator: "actuator8"
+    model_path: "../models/mujoco/robots/allegro_hand/allegro_hand_right_A.xml"
+    root_body: "link_0_0"
     attach_to: "arm_left_fr3_link7"
     attach_offset:
-      position: [0, 0, 0.107]
-      orientation: [0.9239, 0, 0, -0.3827]
-
-  - name: camera_left
-    model_path: "../models/mujoco/props/camera_realsense.xml"
-    root_body: "camera_mount"
-    attach_to: "arm_left_fr3_link7"
-    attach_offset:
-      position: [0, -0.0, 0.107] 
-      orientation: [0.9239, 0, 0, -0.3827]
+      position: [0, 0, 0.2]
+      orientation: [1, 0, 0, 0]
 
   - name: arm_right
     model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"
-    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
+    urdf_path: "../models/urdf/allegro_hand/fr3_allegro_hand.urdf"
     root_body: "link0"
-    urdf_ee_name: "fr3_hand"
+    urdf_ee_name: "palm_link"
     gripper_actuator: "actuator8"
 
   - name: hand_right
-    model_path: "../models/mujoco/robots/franka_fr3/hand.xml"
-    root_body: "hand"
-    gripper_actuator: "actuator8"
+    model_path: "../models/mujoco/robots/allegro_hand/allegro_hand_right_A.xml"
+    root_body: "link_0_0"
     attach_to: "arm_right_fr3_link7"
     attach_offset:
-      position: [0, 0, 0.107]
-      orientation: [0.9239, 0, 0, -0.3827]
-
-  - name: camera_right
-    model_path: "../models/mujoco/props/camera_realsense.xml"
-    root_body: "camera_mount"
-    attach_to: "arm_right_fr3_link7"
-    attach_offset:
-      position: [0, 0.0, 0.107] 
-      orientation: [0.9239, 0, 0, -0.3827]
+      position: [0, 0, 0.2]
+      orientation: [0, 0, 0, 1]
 
   - name: head
     model_path: "../models/mujoco/robots/pan_tilt_dummy/pan_tilt_dummy.xml"

@@ -500,7 +500,7 @@ void Avatar::startNewEpisodeFolder() {
 }
 
 void Avatar::applyEpisodeConfig(const EpisodeConfig& cfg) {
-    std::cout << "[AVATAR-INFO]: Episode config — "
+    std::cout << "[AVATAR-INFO]: Episode config - "
               << "pick=(" << cfg.pick_x << "," << cfg.pick_y << "," << cfg.pick_z << ") "
               << "place=(" << cfg.place_x << "," << cfg.place_y << "," << cfg.place_z << ") "
               << "mode=" << (cfg.mode == 0 ? "unimanual" : "bimanual") << std::endl;
