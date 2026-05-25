@@ -39,6 +39,7 @@ Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_qua
     std::cout << "[Model] nq=" << pin_model_.nq << " nv=" << pin_model_.nv << std::endl;
 
     Eigen::Quaterniond q(base_quat[0], base_quat[1], base_quat[2], base_quat[3]);
+    q.normalize();
     Eigen::Vector3d g_base = q.toRotationMatrix().transpose() * Eigen::Vector3d(0, 0, -9.81);
     pin_model_.gravity.linear(g_base);
     pin_data_ = pinocchio::Data(pin_model_);
@@ -48,7 +49,7 @@ Model::~Model() {}
 
 std::array<double, 42> Model::zeroJacobian(const std::array<double, 7>& q) {
     Vector7 q_eig = Eigen::Map<const Vector7>(q.data());
-
+    std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::computeJointJacobians(pin_model_, pin_data_, q_eig);
     pinocchio::framesForwardKinematics(pin_model_, pin_data_, q_eig);
 
@@ -64,7 +65,7 @@ std::array<double, 42> Model::zeroJacobian(const std::array<double, 7>& q) {
 
 std::array<double, 49> Model::mass(const std::array<double, 7>& q) {
     Vector7 q_eig = Eigen::Map<const Vector7>(q.data());
-
+    std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::crba(pin_model_, pin_data_, q_eig);
     pin_data_.M.triangularView<Eigen::StrictlyLower>() =
         pin_data_.M.triangularView<Eigen::StrictlyUpper>().transpose();
@@ -74,11 +75,11 @@ std::array<double, 49> Model::mass(const std::array<double, 7>& q) {
     return result;
 }
 
-std::array<double, 7> Model::coriolis(const std::array<double, 7>& q,
-                                       const std::array<double, 7>& dq) {
+std::array<double, 7> Model::coriolis(const std::array<double, 7>& q, const std::array<double, 7>& dq) {
     Vector7 q_eig  = Eigen::Map<const Vector7>(q.data());
     Vector7 dq_eig = Eigen::Map<const Vector7>(dq.data());
 
+    std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::computeCoriolisMatrix(pin_model_, pin_data_, q_eig, dq_eig);
 
     std::array<double, 7> result;
@@ -89,6 +90,7 @@ std::array<double, 7> Model::coriolis(const std::array<double, 7>& q,
 std::array<double, 7> Model::gravity(const std::array<double, 7>& q) {
     Vector7 q_eig = Eigen::Map<const Vector7>(q.data());
 
+    std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::computeGeneralizedGravity(pin_model_, pin_data_, q_eig);
 
     std::array<double, 7> result;
@@ -99,6 +101,7 @@ std::array<double, 7> Model::gravity(const std::array<double, 7>& q) {
 std::array<double, 16> Model::EEPose(const std::array<double, 7>& q) {
     Vector7 q_eig = Eigen::Map<const Vector7>(q.data());
 
+    std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::forwardKinematics(pin_model_, pin_data_, q_eig);
     pinocchio::updateFramePlacements(pin_model_, pin_data_);
 
@@ -110,10 +113,10 @@ std::array<double, 16> Model::EEPose(const std::array<double, 7>& q) {
 }
 
 std::array<double, 6> Model::cartesianWrench(const std::array<double, 7>& q,
-                                               const std::array<double, 7>& tau_ext) {
+                                            const std::array<double, 7>& tau_ext) {
     Vector7 q_eig       = Eigen::Map<const Vector7>(q.data());
     Vector7 tau_ext_eig = Eigen::Map<const Vector7>(tau_ext.data());
-
+    std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::computeJointJacobians(pin_model_, pin_data_, q_eig);
     pinocchio::framesForwardKinematics(pin_model_, pin_data_, q_eig);
 
@@ -122,22 +125,20 @@ std::array<double, 6> Model::cartesianWrench(const std::array<double, 7>& q,
                                 pin_model_.getFrameId(ee_frame_name_),
                                 pinocchio::LOCAL_WORLD_ALIGNED, J);
 
-    Eigen::Matrix<double, 6, 1> F_ext =
-        (J * J.transpose()).ldlt().solve(J * tau_ext_eig);
+    Eigen::Matrix<double, 6, 1> F_ext = (J * J.transpose()).ldlt().solve(J * tau_ext_eig);
 
     std::array<double, 6> result;
     Eigen::Map<Eigen::Matrix<double, 6, 1>>(result.data()) = F_ext;
     return result;
 }
 
-GMOInputs Model::computeGMOInputs(const std::array<double, 7>& q,
-                                    const std::array<double, 7>& dq) {
+GMOInputs Model::computeGMOInputs(const std::array<double, 7>& q, const std::array<double, 7>& dq) {
     Vector7 q_eig  = Eigen::Map<const Vector7>(q.data());
     Vector7 dq_eig = Eigen::Map<const Vector7>(dq.data());
 
+    std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::crba(pin_model_, pin_data_, q_eig);
-    pin_data_.M.triangularView<Eigen::StrictlyLower>() =
-        pin_data_.M.triangularView<Eigen::StrictlyUpper>().transpose();
+    pin_data_.M.triangularView<Eigen::StrictlyLower>() = pin_data_.M.triangularView<Eigen::StrictlyUpper>().transpose();
 
     pinocchio::computeCoriolisMatrix(pin_model_, pin_data_, q_eig, dq_eig);
     pinocchio::computeGeneralizedGravity(pin_model_, pin_data_, q_eig);
@@ -146,6 +147,7 @@ GMOInputs Model::computeGMOInputs(const std::array<double, 7>& q,
 }
 
 Matrix4 Model::forwardKinematics(const Vector7& q) {
+    std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::forwardKinematics(pin_model_, pin_data_, q);
     pinocchio::updateFramePlacements(pin_model_, pin_data_);
 

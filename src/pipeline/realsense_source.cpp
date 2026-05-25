@@ -1,5 +1,7 @@
 #include "pipeline/realsense_source.hpp"
 
+#ifdef WITH_REALSENSE
+
 #include <iostream>
 #include <stdexcept>
 
@@ -65,3 +67,5 @@ void RealSenseSource::run() {
                   static_cast<uint32_t>(color.get_height()));
     }
 }
+
+#endif

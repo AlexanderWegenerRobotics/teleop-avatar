@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 AVATAR="$SCRIPT_DIR/build/avatar"
-STREAMER="$SCRIPT_DIR/build/avatar_streamer"
+STREAMER="$SCRIPT_DIR/build/avatar_pipeline"
 
 # --- sanity checks ---
 if [ ! -f "$AVATAR" ]; then

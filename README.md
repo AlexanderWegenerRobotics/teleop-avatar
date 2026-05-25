@@ -102,7 +102,7 @@ feedback_port: 5005
 ## Repository structure
 
 ```
-teleop-simulator/
+teleop-avatar/
 ├── src/
 │   ├── main.cpp                        # Entry point: loads config, starts Avatar
 │   ├── avatar.cpp                      # Master state machine + device coordination
@@ -174,6 +174,12 @@ mkdir build && cd build
 ```bash
 cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DMUJOCO_ROOT=/path/to/mujoco
 cmake .. -G "Visual Studio 17 2022" -DCMAKE_PREFIX_PATH="$env:CONDA_PREFIX\Library" -DCMAKE_TOOLCHAIN_FILE="" -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF
+
+cmake .. \
+  -DBUILD_STREAMER=OFF \
+  -DBUILD_WITH_FRANKA=OFF \
+  -DMUJOCO_ROOT=/path/to/mujoco \
+  -DCMAKE_PREFIX_PATH=/opt/openrobots
 ```
 
 **Real Franka hardware:**
@@ -185,6 +191,8 @@ cmake .. -DBUILD_WITH_MUJOCO=OFF -DBUILD_WITH_FRANKA=ON
 
 ```bash
 cmake --build . --config Release
+make -j$(nproc)
+
 ```
 
 This produces two binaries: `build/avatar` and `build/avatar_streamer`.

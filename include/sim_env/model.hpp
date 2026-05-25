@@ -7,6 +7,7 @@
 #include <pinocchio/multibody/model.hpp>
 #include <pinocchio/multibody/data.hpp>
 #include "common.hpp"
+#include <mutex>
 
 namespace franka {
 
@@ -19,6 +20,11 @@ class Model {
 public:
     Model(const std::string& urdf_path, const std::array<double, 4>& base_quat, const std::string& ee_frame_name);
     ~Model();
+
+    Model(const Model&) = delete;
+    Model& operator=(const Model&) = delete;
+    Model(Model&&) = default;
+    Model& operator=(Model&&) = default;
 
     std::array<double, 42> zeroJacobian(const std::array<double, 7>& q);
     std::array<double, 49> mass(const std::array<double, 7>& q);
@@ -33,6 +39,7 @@ private:
     pinocchio::Model pin_model_;
     pinocchio::Data  pin_data_;
     std::string ee_frame_name_;
+    mutable std::mutex pin_mutex_;
 };
 
 }

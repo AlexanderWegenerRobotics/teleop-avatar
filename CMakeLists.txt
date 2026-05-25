@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.27")
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.29")
     cmake_policy(SET CMP0167 NEW)
 endif()
 project(avatar VERSION 0.1.0)
@@ -98,7 +98,10 @@ if(BUILD_STREAMER)
         message(STATUS "GStreamer root: $ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}")
     endif()
     find_package(PkgConfig REQUIRED)
-    find_package(realsense2 REQUIRED)
+    if(BUILD_WITH_REALSENSE)
+        find_package(realsense2 REQUIRED)
+    endif()
+
     pkg_check_modules(GST REQUIRED
         gstreamer-1.0
         gstreamer-app-1.0
@@ -190,7 +193,9 @@ endif()
 if(BUILD_STREAMER)
     find_package(HDF5 REQUIRED COMPONENTS C)
     find_package(PkgConfig REQUIRED)
-    find_package(realsense2 REQUIRED)
+    if(BUILD_WITH_REALSENSE)
+        find_package(realsense2 REQUIRED)
+    endif()
     pkg_check_modules(GST REQUIRED
         gstreamer-1.0
         gstreamer-app-1.0
@@ -205,7 +210,6 @@ if(BUILD_STREAMER)
         src/pipeline/camera_channel.cpp
         src/pipeline/episode_controller.cpp
         src/pipeline/stream_quality_controller.cpp
-        src/pipeline/realsense_source.cpp
     )
 
     target_include_directories(avatar_pipeline PRIVATE
@@ -218,9 +222,12 @@ if(BUILD_STREAMER)
         yaml-cpp::yaml-cpp
         msgpack-cxx
         ${GST_LIBRARIES}
-        realsense2::realsense2
         ${HDF5_C_LIBRARIES}
     )
+    if(BUILD_WITH_REALSENSE)
+        target_link_libraries(avatar_pipeline PRIVATE realsense2::realsense2)
+        target_sources(avatar_pipeline PRIVATE src/pipeline/realsense_source.cpp)
+    endif()
 
     if(WIN32)
         target_link_libraries(avatar_pipeline PRIVATE ws2_32 mswsock)

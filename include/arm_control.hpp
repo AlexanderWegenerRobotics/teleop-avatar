@@ -49,7 +49,7 @@ public:
 public:
     std::unique_ptr<franka::Robot> robot;
 	std::unique_ptr<franka::Gripper> gripper;
-	std::unique_ptr<franka::Model> model;
+	franka::Model* model = nullptr;
 
 private:
     std::thread control_thread;

@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <cstring>
 
 // ---------------------------------------------------------------------------
 // PIMPL: HDF5 handles

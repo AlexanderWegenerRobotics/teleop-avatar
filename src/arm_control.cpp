@@ -100,7 +100,7 @@ void ArmControl::start(){
     state_ = SysState::IDLE;
     cmd_state_ = SysState::IDLE;
     current_state = robot->readOnce();
-    model = std::make_unique<franka::Model>(robot->loadModel());
+    model = &robot->loadModel();
     Eigen::Map<const Vector7> q_init(current_state.q.data());
     interpolator_.planJoint(q_init, q_init, ProfileType::TRAPEZOIDAL);
     control_thread = std::thread(&ArmControl::runControlHandler, this);

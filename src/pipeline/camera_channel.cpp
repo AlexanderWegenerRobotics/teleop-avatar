@@ -1,5 +1,7 @@
 #include "pipeline/camera_channel.hpp"
-#include "pipeline/realsense_source.hpp"
+#ifdef WITH_REALSENSE
+    #include "pipeline/realsense_source.hpp"
+#endif
 
 #include <chrono>
 #include <iostream>
@@ -16,11 +18,15 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
 
     // ── Source ────────────────────────────────────────────────────────────
     if (config_.source_type == "realsense") {
+    #ifdef WITH_REALSENSE
         source_ = std::make_unique<RealSenseSource>(
             config_.realsense_serial,
             config_.source_width,
             config_.source_height,
             config_.fps);
+    #else
+        throw std::runtime_error("Built without RealSense support. Rebuild with -DBUILD_WITH_REALSENSE=ON");
+    #endif
     } else {
         source_ = std::make_unique<MuJoCoSource>(config_.shm_name, config_.fps);
     }
