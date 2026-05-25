@@ -20,6 +20,7 @@ cameras:
     source_type:  "mujoco"      # "mujoco" | "realsense"
     shm_name:     "/avatar_cam"
     fps:          30
+    realsense_serial: ""
 
     stream:
       enabled:            true

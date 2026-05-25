@@ -225,6 +225,7 @@ if(BUILD_STREAMER)
         ${HDF5_C_LIBRARIES}
     )
     if(BUILD_WITH_REALSENSE)
+        target_compile_definitions(avatar_pipeline PRIVATE WITH_REALSENSE)
         target_link_libraries(avatar_pipeline PRIVATE realsense2::realsense2)
         target_sources(avatar_pipeline PRIVATE src/pipeline/realsense_source.cpp)
     endif()

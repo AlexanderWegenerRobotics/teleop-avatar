@@ -176,10 +176,11 @@ cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DMUJOCO_ROOT=/path/to/m
 cmake .. -G "Visual Studio 17 2022" -DCMAKE_PREFIX_PATH="$env:CONDA_PREFIX\Library" -DCMAKE_TOOLCHAIN_FILE="" -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF
 
 cmake .. \
-  -DBUILD_STREAMER=OFF \
+  -DBUILD_STREAMER=ON \
+  -DBUILD_WITH_REALSENSE=ON \
   -DBUILD_WITH_FRANKA=OFF \
-  -DMUJOCO_ROOT=/path/to/mujoco \
-  -DCMAKE_PREFIX_PATH=/opt/openrobots
+  -DMUJOCO_ROOT=/home/robot/Documents/awegener/tools/mujoco \
+  -DCMAKE_PREFIX_PATH="/opt/openrobots"
 ```
 
 **Real Franka hardware:**
