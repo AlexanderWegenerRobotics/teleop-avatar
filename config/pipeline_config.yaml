@@ -17,9 +17,11 @@ episode_listener_port: 7100   # must not clash with avatar receive_port (7000)
 
 cameras:
   - name:         "head_cam"
-    source_type:  "mujoco"      # "mujoco" | "realsense"
-    shm_name:     "/avatar_cam"
+    source_type:  "v4l2"      # "mujoco" | "realsense" | "v4l2"
+    shm_name:     "/dev/video4"  # "/avatar_cam"
     fps:          30
+    source_width:  1280
+    source_height: 720
     realsense_serial: ""
 
     stream:
@@ -32,7 +34,7 @@ cameras:
       bitrate_kbps:       2000
       fec_percentage:     10
       width:              1280
-      height:             960
+      height:             720
 
     log:
       enabled:      false

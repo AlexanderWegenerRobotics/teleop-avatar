@@ -208,6 +208,7 @@ if(BUILD_STREAMER)
         src/pipeline/video_logger.cpp
         src/pipeline/camera_source.cpp
         src/pipeline/camera_channel.cpp
+        src/pipeline/v4l2_source.cpp
         src/pipeline/episode_controller.cpp
         src/pipeline/stream_quality_controller.cpp
     )

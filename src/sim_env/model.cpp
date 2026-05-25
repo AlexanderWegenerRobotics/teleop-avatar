@@ -34,9 +34,6 @@ Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_qua
     if (!pin_model_.existFrame(ee_frame_name_))
         std::cerr << "[Model] WARNING: EE frame '" << ee_frame_name_ << "' not found in URDF!\n";
 
-    std::cout << "[Model] Looking for EE frame: " << ee_frame_name_ << std::endl;
-    std::cout << "[Model] Frame exists: " << pin_model_.existFrame(ee_frame_name_) << std::endl;
-    std::cout << "[Model] nq=" << pin_model_.nq << " nv=" << pin_model_.nv << std::endl;
 
     Eigen::Quaterniond q(base_quat[0], base_quat[1], base_quat[2], base_quat[3]);
     q.normalize();
