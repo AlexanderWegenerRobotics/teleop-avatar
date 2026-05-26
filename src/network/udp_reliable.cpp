@@ -1,6 +1,7 @@
 #include "network/udp_reliable.hpp"
 #include <algorithm>
 #include <cstring>
+#include <iostream>
 
 UdpReliable::UdpReliable(const UdpReliableConfig& config)
     : config_(config)
@@ -116,8 +117,7 @@ void UdpReliable::processIncoming() {
             ReliableEnvelope env;
             obj.convert(env);
 
-            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
+            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             last_recv_time_ms_.store(static_cast<uint64_t>(now_ms));
             recv_seq_.store(env.sequence);
 
@@ -134,8 +134,7 @@ void UdpReliable::processIncoming() {
                     msgpack::pack(ack_payload, ack);
 
                     auto packed = packEnvelope("ack", ack_payload, false);
-                    transport_.sendTo(packed.data(), static_cast<int>(packed.size()),
-                                      sender);
+                    transport_.sendTo(packed.data(), static_cast<int>(packed.size()), sender);
                 }
                 dispatchMessage(env);
             }
@@ -159,8 +158,7 @@ void UdpReliable::processRetries() {
 
     auto it = pending_acks_.begin();
     while (it != pending_acks_.end()) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - it->last_send_time).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->last_send_time).count();
 
         if (elapsed >= it->retry_interval_ms) {
             if (it->attempts >= it->max_retries) {
@@ -168,8 +166,7 @@ void UdpReliable::processRetries() {
                 continue;
             }
 
-            transport_.sendTo(it->packed_data.data(),
-                              static_cast<int>(it->packed_data.size()));
+            transport_.sendTo(it->packed_data.data(), static_cast<int>(it->packed_data.size()));
             it->attempts++;
             it->last_send_time = now;
         }
@@ -179,17 +176,16 @@ void UdpReliable::processRetries() {
 
 void UdpReliable::handleAck(uint32_t ack_seq) {
     std::lock_guard<std::mutex> lock(pending_mtx_);
-    auto it = std::find_if(pending_acks_.begin(), pending_acks_.end(),
-        [ack_seq](const PendingMessage& pm) { return pm.sequence == ack_seq; });
+    auto it = std::find_if(pending_acks_.begin(), pending_acks_.end(), [ack_seq](const PendingMessage& pm) { return pm.sequence == ack_seq; });
     if (it != pending_acks_.end()) {
         pending_acks_.erase(it);
     }
 }
 
 bool UdpReliable::isAlive() const {
-    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    return (static_cast<uint64_t>(now_ms) - last_recv_time_ms_.load()) < ALIVE_TIMEOUT_MS;
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>( std::chrono::steady_clock::now().time_since_epoch()).count();
+    bool alive = (static_cast<uint64_t>(now_ms) - last_recv_time_ms_.load()) < ALIVE_TIMEOUT_MS;
+    return alive;
 }
 
 uint64_t UdpReliable::lastRecvTimeMs() const {

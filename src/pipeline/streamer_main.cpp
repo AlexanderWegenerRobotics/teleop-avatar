@@ -96,17 +96,30 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    std::string config_path = "../config/pipeline_config.yaml";
-    if (argc > 1) config_path = argv[1];
+    std::string global_config_path = "../config/config.yaml";
+    if (argc > 1) global_config_path = argv[1];
+
+    YAML::Node global_cfg;
+    try {
+        global_cfg = YAML::LoadFile(global_config_path);
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] Failed to load global config: " << e.what() << std::endl;
+    #ifdef _WIN32
+            WSACleanup();
+    #endif
+        return 1;
+    }
+
+    std::string config_path = global_cfg["streamer_config"].as<std::string>("../config/pipeline_config.yaml");
 
     YAML::Node cfg;
     try {
         cfg = YAML::LoadFile(config_path);
     } catch (const std::exception& e) {
-        std::cerr << "[ERROR] Failed to load config: " << e.what() << std::endl;
-#ifdef _WIN32
-        WSACleanup();
-#endif
+        std::cerr << "[ERROR] Failed to load streamer config: " << e.what() << std::endl;
+    #ifdef _WIN32
+            WSACleanup();
+    #endif
         return 1;
     }
 

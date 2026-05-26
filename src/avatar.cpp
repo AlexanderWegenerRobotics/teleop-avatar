@@ -11,9 +11,7 @@
 Avatar::Avatar(const YAML::Node& config) {
     YAML::Node sys_config = YAML::LoadFile(config["robot_config"].as<std::string>());
 
-    session_id_ = std::to_string(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+    session_id_ = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 
     for (const auto& dev : sys_config["devices"]) {
         if (!dev["enabled"].as<bool>(true)) continue;
@@ -71,14 +69,13 @@ Avatar::Avatar(const YAML::Node& config) {
         const auto& pl = sys_config["avatar"]["pipeline_logger"];
         if (pl["enabled"].as<bool>(false)) {
             logger_host_ = pl["host"].as<std::string>("127.0.0.1");
-            logger_port_ = pl["port"].as<int>(7000);
+            logger_port_ = pl["port"].as<int>(7100);
             logger_sock_ = socket(AF_INET, SOCK_DGRAM, 0);
             if (logger_sock_ == kInvalidSocket) {
                 std::cerr << "[AVATAR-WARN] Failed to create pipeline logger socket\n";
                 logger_port_ = 0;
             } else {
-                std::cout << "[AVATAR-INFO] Pipeline logger signals -> "
-                          << logger_host_ << ":" << logger_port_ << std::endl;
+                std::cout << "[AVATAR-INFO] Pipeline logger signals -> " << logger_host_ << ":" << logger_port_ << std::endl;
             }
         }
     }
@@ -357,10 +354,7 @@ void Avatar::start(){
                     s.name    = "place_pose";
                     s.type    = SlotType::PLACE_POSE;
                     s.T_world = Eigen::Isometry3d::Identity();
-                    s.T_world.translation() = Eigen::Vector3d(
-                        current_episode_cfg_.place_x,
-                        current_episode_cfg_.place_y,
-                        current_episode_cfg_.place_z);
+                    s.T_world.translation() = Eigen::Vector3d(current_episode_cfg_.place_x, current_episode_cfg_.place_y, current_episode_cfg_.place_z);
                     snap.slots.push_back(std::move(s));
                 }
 
@@ -506,13 +500,8 @@ void Avatar::applyEpisodeConfig(const EpisodeConfig& cfg) {
               << "mode=" << (cfg.mode == 0 ? "unimanual" : "bimanual") << std::endl;
 
 #ifndef WITH_FRANKA
-    sim_->setFreeBodyPose("box_1_box",
-        Eigen::Vector3d(cfg.pick_x, cfg.pick_y, cfg.pick_z),
-        Eigen::Quaterniond::Identity());
-
-    sim_->setFramePose("place_pose_frame",
-        Eigen::Vector3d(cfg.place_x, cfg.place_y, cfg.place_z),
-        Eigen::Quaterniond::Identity());
+    sim_->setFreeBodyPose("box_1_box", Eigen::Vector3d(cfg.pick_x, cfg.pick_y, cfg.pick_z), Eigen::Quaterniond::Identity());
+    sim_->setFramePose("place_pose_frame", Eigen::Vector3d(cfg.place_x, cfg.place_y, cfg.place_z), Eigen::Quaterniond::Identity());
 #endif
 }
 
@@ -594,9 +583,6 @@ void Avatar::updateStateMachine(SysState cmd_state){
             else if(cmd_state == SysState::ENGAGED && allInState(SysState::AWAITING)){
                 requestAllDevices(SysState::ENGAGED);
                 state_ = SysState::ENGAGED;
-                // Start the first episode folder here so logging begins immediately
-                // on first engagement (no reset required for episode 0).
-                // Subsequent episodes are started by processResetAllCompletion().
                 startNewEpisodeFolder();
                 markEpisodeStart();
                 if (scene_logger_) scene_logger_->enable(true);
@@ -689,9 +675,6 @@ ArmControl* Avatar::getArm(const std::string& name) {
 void Avatar::markEpisodeStart() {
     for (auto& arm  : arm_instances) arm->markEpisodeStart();
     for (auto& head : head_instances) head->markEpisodeStart();
-
-    // episode_index_ was already incremented by startNewEpisodeFolder(); the
-    // folder just created is index (episode_index_ - 1).
     current_episode_idx_ = episode_index_ - 1;
     sendEpisodeEvent("episode_start", "");
 }

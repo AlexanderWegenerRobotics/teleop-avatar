@@ -3,7 +3,9 @@
     #include "pipeline/realsense_source.hpp"
 #endif
 
-#include "pipeline/v4l2_source.hpp"
+#ifdef WITH_V4L2
+    #include "pipeline/v4l2_source.hpp"
+#endif
 
 #include <chrono>
 #include <iostream>
@@ -30,13 +32,14 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
         throw std::runtime_error("Built without RealSense support. Rebuild with -DBUILD_WITH_REALSENSE=ON");
     #endif
     }
-    else if (config_.source_type == "v4l2") {
-    source_ = std::make_unique<V4L2Source>(
-        config_.shm_name,   // reuse shm_name field for device path e.g. "/dev/video4"
-        config_.source_width,
-        config_.source_height,
-        config_.fps);
-    } 
+    #ifdef WITH_V4L2
+    } else if (config_.source_type == "v4l2") {
+        source_ = std::make_unique<V4L2Source>(
+            config_.shm_name,
+            config_.source_width,
+            config_.source_height,
+            config_.fps);
+    #endif
     else {
         source_ = std::make_unique<MuJoCoSource>(config_.shm_name, config_.fps);
     }

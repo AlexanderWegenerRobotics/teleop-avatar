@@ -124,7 +124,7 @@ devices:
     type: gripper
     enabled: True
     transmission:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"
       send_port: 8004
       receive_port: 7004
       frequency: 20
@@ -136,7 +136,7 @@ devices:
     type: gripper
     enabled: True
     transmission:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"
       send_port: 8005
       receive_port: 7005
       frequency: 20

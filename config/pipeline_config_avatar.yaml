@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Simulation-side keys (read by simulation.cpp to configure offscreen rendering)
+# ─────────────────────────────────────────────────────────────────────────────
+enabled:        true
+stream_camera:  "head_head_cam"
+stream_fps:     30
+stream_width:   1280
+stream_height:  960
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline process (avatar_pipeline binary)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# UDP port on which this process listens for episode_start / episode_end
+episode_listener_port: 7100
+
+cameras:
+  - name:         "head_cam"
+    source_type:  "v4l2"          # "mujoco" | "realsense" | "v4l2"
+    shm_name:     "/dev/video4"   # "/avatar_cam" | "/dev/video4"
+    fps:          30
+    source_width:  1280
+    source_height: 720
+    realsense_serial: ""
+
+    stream:
+      enabled:            true
+      host:               "10.112.24.173"
+      port:               5004
+      feedback_port:      5005
+      status_port:        5007
+      status_interval_ms: 500
+      bitrate_kbps:       2000
+      fec_percentage:     10
+      width:              1280
+      height:             960
+
+    log:
+      enabled:      false
+      output_dir:   "logs"
+      width:        640
+      height:       480
+      center_crop:  false     # crop largest 1:1 square from centre before resizing
+      # override with explicit window if the workspace is off-centre:
+      # crop_x: 160   # pixels from left edge of source
+      # crop_y:   0
+      # crop_w: 960   # must match log aspect ratio (width:height = crop_w:crop_h)
+      # crop_h: 960
+
+  # ── Future camera entry template (uncomment and fill in when ready) ────────
+  # - name:         "wrist_cam"
+  #   source_type:  "mujoco"
+  #   shm_name:     "/avatar_wrist_cam"
+  #   fps:          30
+  #   stream:
+  #     enabled: false
+  #   log:
+  #     enabled:    true
+  #     output_dir: "logs"
+  #     width:      224
+  #     height:     224

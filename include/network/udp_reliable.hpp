@@ -22,8 +22,7 @@ struct ReliableEnvelope {
     bool        ack_requested = false;
     msgpack::object payload;
 
-    MSGPACK_DEFINE_MAP(sequence, timestamp_ns, state, fault_code,
-                       msg_type, ack_requested, payload)
+    MSGPACK_DEFINE_MAP(sequence, timestamp_ns, state, fault_code, msg_type, ack_requested, payload)
 };
 
 struct AckMsg {

@@ -1,5 +1,5 @@
 #pragma once
-
+#ifdef WITH_V4L2
 #include "pipeline/camera_source.hpp"
 
 #include <atomic>
@@ -37,3 +37,5 @@ private:
 
     std::vector<uint8_t> rgb_buf_;
 };
+
+#endif // WITH_V4L2

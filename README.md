@@ -173,7 +173,7 @@ mkdir build && cd build
 **Simulation only (no hardware required):**
 ```bash
 cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DMUJOCO_ROOT=/path/to/mujoco
-cmake .. -G "Visual Studio 17 2022" -DCMAKE_PREFIX_PATH="$env:CONDA_PREFIX\Library" -DCMAKE_TOOLCHAIN_FILE="" -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF
+cmake .. -G "Visual Studio 17 2022" -DCMAKE_PREFIX_PATH="$env:CONDA_PREFIX\Library" -DCMAKE_TOOLCHAIN_FILE="" -DBUILD_WITH_MUJOCO=ON -DBUILD_STREAMER=ON -DBUILD_WITH_FRANKA=OFF
 
 cmake .. \
   -DBUILD_STREAMER=ON \

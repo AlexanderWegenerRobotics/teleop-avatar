@@ -1,3 +1,5 @@
+#ifdef WITH_V4L2
+
 #include "pipeline/v4l2_source.hpp"
 
 #include <fcntl.h>
@@ -179,3 +181,5 @@ void V4L2Source::run() {
         xioctl(fd_, VIDIOC_QBUF, &buf);
     }
 }
+
+#endif // WITH_V4L2

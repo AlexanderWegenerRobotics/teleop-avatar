@@ -195,7 +195,7 @@ void StreamQualityController::processReport(const StreamFeedbackMsg& report) {
         current_params_ = paramsForState(StreamState::NORMAL);
         degrade_counter_ = 0;
         recover_counter_ = 0;
-        std::cout << "[QualityController] receiver connected → NORMAL" << std::endl;
+        std::cout << "[QualityController] receiver connected -> NORMAL" << std::endl;
         if (on_change_) on_change_(current_params_);
     }
 }
@@ -212,7 +212,7 @@ void StreamQualityController::updateState() {
     if (state_ != StreamState::NO_RECEIVER && state_ != StreamState::STALE) {
         if (since_last > config_.stale_timeout_ms) {
             state_ = StreamState::STALE;
-            std::cout << "[QualityController] feedback lost → STALE" << std::endl;
+            std::cout << "[QualityController] feedback lost -> STALE" << std::endl;
             degrade_counter_ = 0;
             recover_counter_ = 0;
             return;
@@ -223,7 +223,7 @@ void StreamQualityController::updateState() {
         if (since_last > config_.no_receiver_timeout_ms) {
             state_ = StreamState::NO_RECEIVER;
             current_params_ = paramsForState(StreamState::NO_RECEIVER);
-            std::cout << "[QualityController] timeout → NO_RECEIVER" << std::endl;
+            std::cout << "[QualityController] timeout -> NO_RECEIVER" << std::endl;
             if (on_change_) on_change_(current_params_);
             ever_received_ = false;
         }
@@ -295,7 +295,7 @@ void StreamQualityController::updateState() {
 
     if (state_ != prev) {
         current_params_ = paramsForState(state_);
-        std::cout << "[QualityController] state change → "
+        std::cout << "[QualityController] state change -> "
                   << (state_ == StreamState::NORMAL   ? "NORMAL"   :
                       state_ == StreamState::DEGRADED ? "DEGRADED" :
                       state_ == StreamState::CRITICAL ? "CRITICAL" : "UNKNOWN")

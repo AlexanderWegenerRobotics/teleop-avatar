@@ -208,10 +208,14 @@ if(BUILD_STREAMER)
         src/pipeline/video_logger.cpp
         src/pipeline/camera_source.cpp
         src/pipeline/camera_channel.cpp
-        src/pipeline/v4l2_source.cpp
         src/pipeline/episode_controller.cpp
         src/pipeline/stream_quality_controller.cpp
     )
+
+    if(UNIX AND NOT APPLE)
+        target_sources(avatar_pipeline PRIVATE src/pipeline/v4l2_source.cpp)
+        target_compile_definitions(avatar_pipeline PRIVATE WITH_V4L2)
+    endif()
 
     target_include_directories(avatar_pipeline PRIVATE
         ${CMAKE_SOURCE_DIR}/include

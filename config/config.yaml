@@ -1,3 +1,3 @@
 sim_config: "../config/sim_config.yaml"
-robot_config: "../config/robot_config_MBZUAI.yaml"
-streamer_config: "../config/pipeline_config.yaml"
+robot_config: "../config/robot_config_local.yaml"
+streamer_config: "../config/pipeline_config_local.yaml"
