@@ -1,11 +1,19 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Simulation-side keys (read by simulation.cpp to configure offscreen rendering)
+# Not used on the real robot (no MuJoCo), kept for schema consistency.
 # ─────────────────────────────────────────────────────────────────────────────
 enabled:        true
-stream_camera:  "head_head_cam"
+stereo:         false          # set true to switch to left+right eye streams
 stream_fps:     30
 stream_width:   1280
 stream_height:  960
+
+# stream_cameras is ignored on the real robot (source_type: v4l2 bypasses SHM),
+# but kept here so this file can be swapped with the local config without errors.
+stream_cameras:
+  - camera:   "head_head_cam"
+    shm_name: "avatar_cam"
+    eye:      "mono"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline process (avatar_pipeline binary)
@@ -16,6 +24,7 @@ episode_listener_port: 7100
 
 cameras:
   - name:         "head_cam"
+    eye:          "mono"
     source_type:  "v4l2"          # "mujoco" | "realsense" | "v4l2"
     shm_name:     "/dev/video4"   # "/avatar_cam" | "/dev/video4"
     fps:          30

@@ -1,0 +1,17 @@
+<mujoco model="background">
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <material name="box_mat" rgba="0.2 0.2 0.2 1" specular="0.4" shininess="0.2"/>
+  </asset>
+
+  <worldbody>
+    <body name="box" pos="0 0 1">
+      <geom name="box_geom" type="box" size="0.02 2 1"
+            mass="0.1" material="box_mat" condim="6"
+            friction="0.3 0.005 0.001"
+            solimp="0.95 0.99 0.001" solref="0.02 1.0"/>
+      <site name="box_center" pos="0 0 0" size="0.003" rgba="1 0 0 1"/>
+    </body>
+  </worldbody>
+</mujoco>

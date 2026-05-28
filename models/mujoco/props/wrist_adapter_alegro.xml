@@ -1,0 +1,34 @@
+<mujoco model="wrist_adapter">
+    <compiler angle="radian" meshdir="assets"/>
+
+  <asset>
+    <mesh name="wrist_adapter_mesh" file="hand_mounting_alegro.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <body name="wrist_adapter">
+      
+      <inertial mass="0.17433"
+                pos="-0.00151 0.0 -0.02650"
+                fullinertia="2.248e-4 2.121e-4 3.553e-4 0.0 0.0 0.0"/>
+
+      <!-- collision geometry -->
+      <geom name="wrist_adapter_col"
+            type="mesh"
+            mesh="wrist_adapter_mesh"
+            contype="1"
+            conaffinity="1"
+            rgba="0.6 0.6 0.6 1"/>
+
+      <!-- visual geometry (same mesh, no collision) -->
+      <geom name="wrist_adapter_vis"
+            type="mesh"
+            mesh="wrist_adapter_mesh"
+            contype="0"
+            conaffinity="0"
+            rgba="0.7 0.7 0.7 1"/>
+
+    </body>
+  </worldbody>
+
+</mujoco>

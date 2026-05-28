@@ -69,10 +69,11 @@ private:
     std::atomic<bool> bRenderingIsRunning{false};
     std::thread       model_thread;
     std::thread       rendering_thread;
-    std::unique_ptr<SharedMemoryWriter> shm_writer_;
 
 private:
     struct CamEntry { std::string name; int id; };
+    struct StreamCamEntry { std::string camera_name; std::string shm_name; };
+    std::vector<std::unique_ptr<SharedMemoryWriter>> shm_writers_;
 
     mjvScene    scn_;
     mjvOption   vopt_;
@@ -91,7 +92,8 @@ public:
     GLFWwindow* offscreen_window_ = nullptr;
     bool        render_enabled_  = false;
     bool        shm_enabled_     = false;
-    std::string stream_camera_;
+    bool        stereo_          = false;
+    std::vector<StreamCamEntry> stream_cameras_;
     std::vector<CamEntry> render_cams_;
 
 private:

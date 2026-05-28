@@ -10,7 +10,6 @@
 VideoStreamer::VideoStreamer(const StreamerConfig& config)
     : config_(config)
 {
-    // gst_init() must be called once by main before constructing VideoStreamers.
     target_fps_.store(config_.fps);
 }
 
@@ -88,10 +87,27 @@ void VideoStreamer::stop() {
     }
 }
 
+static bool nvencAvailable() {
+    GstElementFactory* f = gst_element_factory_find("nvh264enc");
+    if (f) { gst_object_unref(f); return true; }
+    return false;
+}
+
 void VideoStreamer::buildPipeline() {
     // Height + 2: the extra two rows carry the embedded wall-clock timestamp and frame ID.
     // The receiver reads and crops them before display.
     int padded_height = config_.stream_height + 2;
+
+    // GPU encoder (nvh264enc) causes the UE5 receiver's udpsrc to fail to bind
+    // its socket — the RTP stream it produces is incompatible with the UE5
+    // bundled GStreamer's rtph264depay/rtpulpfecdec stack.  Use x264enc (CPU)
+    // until the root cause is understood.
+    std::cout << "[INFO] Encoder: x264enc (CPU)" << std::endl;
+    std::string encode_seg =
+        " ! video/x-raw,format=I420"
+        " ! x264enc name=encoder tune=zerolatency speed-preset=ultrafast"
+        " bitrate=" + std::to_string(config_.bitrate_kbps) +
+        " key-int-max=30";
 
     std::string pipeline_str =
         "appsrc name=src stream-type=0 format=3 is-live=true block=false"
@@ -101,10 +117,7 @@ void VideoStreamer::buildPipeline() {
         ",framerate="  + std::to_string(config_.fps) + "/1"
         " ! queue max-size-buffers=2 leaky=downstream"
         " ! videoconvert"
-        " ! video/x-raw,format=I420"
-        " ! x264enc name=encoder tune=zerolatency speed-preset=ultrafast"
-        " bitrate="     + std::to_string(config_.bitrate_kbps) +
-        " key-int-max=30"
+        + encode_seg +
         " ! rtph264pay pt=96"
         " ! rtpulpfecenc name=fec percentage=" + std::to_string(config_.fec_percentage) +
         " ! udpsink host=" + config_.host +

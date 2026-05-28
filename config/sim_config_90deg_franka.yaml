@@ -1,5 +1,5 @@
 rendering:
-  enabled: false
+  enabled: true
   fps: 30
 
 simulation:
@@ -10,7 +10,7 @@ simulation:
 devices:
   - name: arm_left
     model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"
-    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
+    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand_90deg.urdf"
     root_body: "link0"
     urdf_ee_name: "fr3_hand"
     gripper_actuator: "actuator8"
@@ -21,8 +21,8 @@ devices:
     gripper_actuator: "actuator8"
     attach_to: "arm_left_fr3_link7"
     attach_offset:
-      position: [0, 0, 0.107]
-      orientation: [0.9239, 0, 0, -0.3827]
+      position: [0.15, 0, 0.107]
+      orientation: [0, 0.7071, 0, 0.7071]
 
   - name: camera_left
     model_path: "../models/mujoco/props/camera_realsense.xml"
@@ -34,7 +34,7 @@ devices:
 
   - name: arm_right
     model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"
-    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
+    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand_90deg.urdf"
     root_body: "link0"
     urdf_ee_name: "fr3_hand"
     gripper_actuator: "actuator8"
@@ -45,8 +45,8 @@ devices:
     gripper_actuator: "actuator8"
     attach_to: "arm_right_fr3_link7"
     attach_offset:
-      position: [0, 0, 0.107]
-      orientation: [0.9239, 0, 0, -0.3827]
+      position: [0.15, 0, 0.107]
+      orientation: [0, 0.7071, 0, 0.7071]
 
   - name: camera_right
     model_path: "../models/mujoco/props/camera_realsense.xml"
@@ -74,27 +74,6 @@ objects:
     pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
-
-  - name: background_front
-    type: static
-    model_path: "../models/mujoco/props/background.xml"
-    pose:
-      position: [1.5, 0, 0]
-      orientation: [1, 0, 0, 0]
-
-  - name: background_left
-    type: static
-    model_path: "../models/mujoco/props/background.xml"
-    pose:
-      position: [0, 1.5, 0]
-      orientation: [0.7071, 0, 0, 0.7071]
-
-  - name: background_right
-    type: static
-    model_path: "../models/mujoco/props/background.xml"
-    pose:
-      position: [0, -1.5, 0]
-      orientation: [0.7071, 0, 0, 0.7071]
 
   - name: right_base_frame
     type: visual
@@ -164,7 +143,26 @@ objects:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
 
+  - name: background_front
+    type: static
+    model_path: "../models/mujoco/props/background.xml"
+    pose:
+      position: [1.5, 0, 0]
+      orientation: [1, 0, 0, 0]
 
+  - name: background_left
+    type: static
+    model_path: "../models/mujoco/props/background.xml"
+    pose:
+      position: [0, 1.5, 0]
+      orientation: [0.7071, 0, 0, 0.7071]
+
+  - name: background_right
+    type: static
+    model_path: "../models/mujoco/props/background.xml"
+    pose:
+      position: [0, -1.5, 0]
+      orientation: [0.7071, 0, 0, 0.7071]
 
 
 

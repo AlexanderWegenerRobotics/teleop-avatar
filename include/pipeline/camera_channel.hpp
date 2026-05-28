@@ -20,6 +20,14 @@ struct CameraChannelConfig {
     int         source_width    = 640;       // realsense only (mujoco reads from shm)
     int         source_height   = 480;
 
+    // ── Stereo-combined mode ──────────────────────────────────────────────
+    // When true, this channel reads shm_name (left) AND stereo_partner_shm
+    // (right) in the same poll loop, composites them side-by-side, and sends
+    // a single 2×width stream.  The right-eye CameraChannel should have
+    // stream_enabled=false.  Only valid for source_type="mujoco".
+    bool        stereo_combined    = false;
+    std::string stereo_partner_shm = "";
+
     // ── Streaming ─────────────────────────────────────────────────────────
     bool         stream_enabled = false;
     StreamerConfig stream;

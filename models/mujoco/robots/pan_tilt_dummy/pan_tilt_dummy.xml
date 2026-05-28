@@ -23,8 +23,12 @@
                     <joint name="tilt_joint" type="hinge" axis="0 -1 0" range="-1.57 1.57"/>
                     <geom type="box" size="0.05 0.04 0.035" pos="0 0 0.035" rgba="0.15 0.35 0.6 1" mass="0.5"/>
 
-                    <!-- Camera site at front face of tilt box -->
+                    <!--Mono centered camera -->
                     <camera name="head_cam" pos="0.05 0 0.035" euler="1.5708 -1.5708 0" fovy="60"/>
+                    <!-- stereo pair -->
+                    <camera name="head_cam_left"  pos="0.05  0.0315 0.035" euler="1.5708 -1.5708 0" fovy="60"/>
+                    <camera name="head_cam_right" pos="0.05 -0.0315 0.035" euler="1.5708 -1.5708 0" fovy="60"/>
+
                     <site name="camera_site" pos="0.05 0 0.035" size="0.007" rgba="1 0 0 1"/>
                 </body>
             </body>

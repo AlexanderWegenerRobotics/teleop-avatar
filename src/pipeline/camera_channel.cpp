@@ -21,7 +21,12 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
     }
 
     // ── Source ────────────────────────────────────────────────────────────
-    if (config_.source_type == "realsense") {
+    if (config_.stereo_combined) {
+        // Side-by-side stereo: both eyes composited into one 2×width stream.
+        // stream_width is set to 2×single-eye width in the YAML config directly.
+        source_ = std::make_unique<StereoMuJoCoSource>(
+            config_.shm_name, config_.stereo_partner_shm, config_.fps);
+    } else if (config_.source_type == "realsense") {
     #ifdef WITH_REALSENSE
         source_ = std::make_unique<RealSenseSource>(
             config_.realsense_serial,
@@ -31,7 +36,6 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
     #else
         throw std::runtime_error("Built without RealSense support. Rebuild with -DBUILD_WITH_REALSENSE=ON");
     #endif
-    }
     #ifdef WITH_V4L2
     } else if (config_.source_type == "v4l2") {
         source_ = std::make_unique<V4L2Source>(
@@ -40,7 +44,7 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
             config_.source_height,
             config_.fps);
     #endif
-    else {
+    } else {
         source_ = std::make_unique<MuJoCoSource>(config_.shm_name, config_.fps);
     }
 

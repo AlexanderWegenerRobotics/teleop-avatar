@@ -56,11 +56,28 @@ Simulation::Simulation(const YAML::Node& config) {
     if (sim_config["rendering"] && sim_config["rendering"]["fps"])
         render_fps_ = sim_config["rendering"]["fps"].as<int>();
 
-    shm_enabled_   = stream_config["enabled"].as<bool>(false);
-    stream_camera_ = stream_config["stream_camera"].as<std::string>("");
-    stream_fps_    = stream_config["stream_fps"].as<int>(30);
-    stream_width_  = stream_config["stream_width"].as<int>(model->vis.global.offwidth);
-    stream_height_ = stream_config["stream_height"].as<int>(model->vis.global.offheight);
+    shm_enabled_  = stream_config["enabled"].as<bool>(false);
+    stereo_       = stream_config["stereo"].as<bool>(false);
+    stream_fps_   = stream_config["stream_fps"].as<int>(30);
+    stream_width_ = stream_config["stream_width"].as<int>(model->vis.global.offwidth);
+    stream_height_= stream_config["stream_height"].as<int>(model->vis.global.offheight);
+
+    // Build the list of cameras to stream from shared memory.
+    // In mono mode only entries with eye=="mono" (or no eye key) are active.
+    // In stereo mode only entries with eye=="left" or eye=="right" are active.
+    if (stream_config["stream_cameras"] && stream_config["stream_cameras"].IsSequence()) {
+        for (const auto& entry : stream_config["stream_cameras"]) {
+            std::string eye = entry["eye"].as<std::string>("mono");
+            bool active = stereo_ ? (eye == "left" || eye == "right")
+                                  : (eye == "mono");
+            if (!active) continue;
+            StreamCamEntry sc;
+            sc.camera_name = entry["camera"].as<std::string>("");
+            sc.shm_name    = entry["shm_name"].as<std::string>("");
+            if (!sc.camera_name.empty() && !sc.shm_name.empty())
+                stream_cameras_.push_back(std::move(sc));
+        }
+    }
 
     snap_[0] = mj_copyData(nullptr, model, data);
     snap_[1] = mj_copyData(nullptr, model, data);
@@ -149,9 +166,12 @@ void Simulation::run_model() {
 
 void Simulation::buildCameraList() {
     render_cams_.clear();
+    std::cout << "[Simulation] Available cameras (" << model->ncam << "):" << std::endl;
     for (int i = 0; i < model->ncam; ++i) {
         const char* name = mj_id2name(model, mjOBJ_CAMERA, i);
-        render_cams_.push_back({name ? name : ("cam" + std::to_string(i)), i});
+        std::string n = name ? name : ("cam" + std::to_string(i));
+        render_cams_.push_back({n, i});
+        std::cout << "  [" << i << "] " << n << std::endl;
     }
 }
 
@@ -269,41 +289,58 @@ void Simulation::initOffscreenStreaming() {
     mjr_defaultContext(&stream_con_);
     mjr_makeContext(model, &stream_con_, mjFONTSCALE_100);
 
+    shm_writers_.clear();
+    for (const auto& sc : stream_cameras_) {
 #ifndef _WIN32
-    shm_unlink("/avatar_cam");
+        shm_unlink(sc.shm_name.c_str());
 #endif
-    shm_writer_ = std::make_unique<SharedMemoryWriter>("/avatar_cam", stream_width_, stream_height_);
+        shm_writers_.push_back(
+            std::make_unique<SharedMemoryWriter>(sc.shm_name, stream_width_, stream_height_));
+        std::cout << "[Streaming] Opened SHM writer: " << sc.shm_name
+                  << "  camera=" << sc.camera_name << std::endl;
+    }
+    if (shm_writers_.empty())
+        std::cerr << "[Streaming] Warning: no stream cameras configured — nothing will be written\n";
 }
 
 void Simulation::renderStreamFrame() {
-    int cam_id = -1;
-    for (const auto& c : render_cams_)
-        if (c.name == stream_camera_) { cam_id = c.id; break; }
-    if (cam_id < 0) return;
+    if (stream_cameras_.empty() || shm_writers_.empty()) return;
 
+    // Latch the snapshot once — all cameras render from the same physics state.
     int r = snap_read_.load(std::memory_order_acquire);
     mjData* snap = snap_[r];
 
-    mjvCamera mjcam;
-    mjv_defaultCamera(&mjcam);
-    mjcam.type       = mjCAMERA_FIXED;
-    mjcam.fixedcamid = cam_id;
-
     mjrRect viewport = {0, 0, stream_con_.offWidth, stream_con_.offHeight};
     mjr_setBuffer(mjFB_OFFSCREEN, &stream_con_);
-    mjv_updateScene(model, snap, &stream_vopt_, nullptr, &mjcam, mjCAT_ALL, &stream_scn_);
-    mjr_render(viewport, &stream_scn_, &stream_con_);
 
     std::vector<uint8_t> pixels(stream_width_ * stream_height_ * 3);
-    mjr_readPixels(pixels.data(), nullptr, viewport, &stream_con_);
 
-    for (int row = 0; row < stream_height_ / 2; ++row) {
-        uint8_t* top = pixels.data() + row * stream_width_ * 3;
-        uint8_t* bot = pixels.data() + (stream_height_ - 1 - row) * stream_width_ * 3;
-        std::swap_ranges(top, top + stream_width_ * 3, bot);
+    for (size_t i = 0; i < stream_cameras_.size(); ++i) {
+        // Look up camera id by name.
+        int cam_id = -1;
+        for (const auto& c : render_cams_)
+            if (c.name == stream_cameras_[i].camera_name) { cam_id = c.id; break; }
+        if (cam_id < 0) continue;
+
+        mjvCamera mjcam;
+        mjv_defaultCamera(&mjcam);
+        mjcam.type       = mjCAMERA_FIXED;
+        mjcam.fixedcamid = cam_id;
+
+        mjv_updateScene(model, snap, &stream_vopt_, nullptr, &mjcam, mjCAT_ALL, &stream_scn_);
+        mjr_render(viewport, &stream_scn_, &stream_con_);
+
+        mjr_readPixels(pixels.data(), nullptr, viewport, &stream_con_);
+
+        // MuJoCo returns pixels bottom-up; flip to top-down for consumers.
+        for (int row = 0; row < stream_height_ / 2; ++row) {
+            uint8_t* top = pixels.data() + row * stream_width_ * 3;
+            uint8_t* bot = pixels.data() + (stream_height_ - 1 - row) * stream_width_ * 3;
+            std::swap_ranges(top, top + stream_width_ * 3, bot);
+        }
+
+        shm_writers_[i]->write(pixels.data(), pixels.size());
     }
-
-    shm_writer_->write(pixels.data(), pixels.size());
 }
 
 void Simulation::run_streaming() {

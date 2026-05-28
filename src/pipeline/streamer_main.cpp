@@ -67,6 +67,8 @@ static CameraChannelConfig parseCameraConfig(const YAML::Node& n) {
     c.fps              = n["fps"].as<int>(30);
     c.source_width     = n["source_width"].as<int>(640);
     c.source_height    = n["source_height"].as<int>(480);
+    c.stereo_combined    = n["stereo_combined"].as<bool>(false);
+    c.stereo_partner_shm = n["stereo_partner_shm"].as<std::string>("");
 
     if (n["stream"]) {
         c.stream_enabled = n["stream"]["enabled"].as<bool>(false);
@@ -126,6 +128,10 @@ int main(int argc, char** argv) {
     // GStreamer must be initialised once before any VideoStreamer is constructed.
     gst_init(nullptr, nullptr);
 
+    // ── Stereo mode flag ──────────────────────────────────────────────────
+    bool stereo = cfg["stereo"].as<bool>(false);
+    std::cout << "[INFO] Stereo mode: " << (stereo ? "enabled" : "disabled") << std::endl;
+
     // ── Build camera channels ──────────────────────────────────────────────
     if (!cfg["cameras"] || !cfg["cameras"].IsSequence()) {
         std::cerr << "[ERROR] 'cameras' sequence missing from config" << std::endl;
@@ -134,8 +140,23 @@ int main(int argc, char** argv) {
 
     try {
         for (const auto& cam_node : cfg["cameras"]) {
+            // Filter by eye tag: in mono mode keep "mono" entries (or entries
+            // with no eye key); in stereo mode keep "left" and "right" entries.
+            std::string eye = cam_node["eye"].as<std::string>("mono");
+            // "stereo" = single side-by-side combined stream (new approach).
+            // "left"/"right" = legacy two-stream approach (kept for compatibility).
+            bool active = stereo ? (eye == "stereo" || eye == "left" || eye == "right")
+                                 : (eye == "mono");
+            if (!active) {
+                std::cout << "[INFO] Skipping camera (eye=" << eye
+                          << ", stereo=" << stereo << "): "
+                          << cam_node["name"].as<std::string>("?") << std::endl;
+                continue;
+            }
+
             auto cam_cfg = parseCameraConfig(cam_node);
             std::cout << "[INFO] Registering camera: " << cam_cfg.name
+                      << "  eye=" << eye
                       << "  source=" << cam_cfg.source_type
                       << "  stream=" << cam_cfg.stream_enabled
                       << "  log="    << cam_cfg.log_enabled << std::endl;

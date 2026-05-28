@@ -15,7 +15,7 @@
   <worldbody>
     <body name="table" pos="0 0 0">
       <!-- Table top + legs -->
-      <geom name="table_surface" class="table" type="box" size="0.8 0.7 0.025" pos="0 0 0.4" friction="1.2 0.005 0.0001"solimp="0.99 0.99 0.001" solref="0.001 1"/>
+      <geom name="table_surface" class="table" type="box" size="0.8 0.9 0.025" pos="0 0 0.4" friction="1.2 0.005 0.0001"solimp="0.99 0.99 0.001" solref="0.001 1"/>
       <geom name="leg_front_right" class="table" type="cylinder" size="0.03 0.1875" pos="0.52 0.42 0.1875" friction="0.9 0.005 0.0001"/>
       <geom name="leg_front_left" class="table" type="cylinder" size="0.03 0.1875" pos="-0.52 0.42 0.1875" friction="0.9 0.005 0.0001"/>
       <geom name="leg_back_right" class="table" type="cylinder" size="0.03 0.1875" pos="0.52 -0.42 0.1875" friction="0.9 0.005 0.0001"/>

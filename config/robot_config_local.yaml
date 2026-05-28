@@ -30,7 +30,8 @@ devices:
     base_pose:
       position: [0, 0.4, 0.8]
       orientation: [0.5, -0.5,  0.5, -0.5]
-    q0: [-0.3, -1.1, 0.3, -2.0, 0.5, 2.9, -0.9]
+    #q0: [-0.3, -1.1, 0.3, -2.0, 0.5, 2.9, -0.9]
+    q0: [0.0, -1.2, 0.17, -1.58, 0, 1.6, 0.0]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
     q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
@@ -47,13 +48,13 @@ devices:
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
 
     safety:
-      workspace_min: [0.6, -0.3, 0.425]
+      workspace_min: [0.6, -0.3, 0.415]
       workspace_max: [1.0,  0.3, 1.0]
-      table_height_world: 0.425
+      table_height_world: 0.415         # 0.425
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 2.0
-      max_command_angular_velocity: 5.0
+      max_command_velocity: 3.0
+      max_command_angular_velocity: 8.0
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
@@ -70,7 +71,8 @@ devices:
     base_pose:
       position: [0, -0.4, 0.8]
       orientation: [0.5, 0.5, 0.5, 0.5]
-    q0: [0.3, -1.1, -0.3, -2.0, -0.5, 2.9, 0.9]
+    #q0: [0.3, -1.1, -0.3, -2.0, -0.5, 2.9, 0.9]
+    q0: [0.0, -1.2, -0.17, -1.58, 0, 1.6, 0.0]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
     q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
@@ -86,13 +88,13 @@ devices:
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
     safety:
-      workspace_min: [0.6, -0.3, 0.425]
+      workspace_min: [0.6, -0.3, 0.415]
       workspace_max: [1.0,  0.3, 1.0]
-      table_height_world: 0.425
+      table_height_world: 0.415         # 0.425
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 2.0
-      max_command_angular_velocity: 5.0
+      max_command_velocity: 3.0
+      max_command_angular_velocity: 8.0
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40

@@ -1,11 +1,25 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Simulation-side keys (read by simulation.cpp to configure offscreen rendering)
+# Simulation-side keys
 # ─────────────────────────────────────────────────────────────────────────────
 enabled:        true
-stream_camera:  "head_head_cam"
+stereo:         true          # set true to switch to left+right eye streams
 stream_fps:     30
 stream_width:   1280
 stream_height:  960
+
+# Which MuJoCo cameras to render and write to shared memory.
+# In mono mode (stereo: false) only entries with eye: "mono" are active.
+# In stereo mode (stereo: true) only entries with eye: "left" or "right" are active.
+stream_cameras:
+  - camera:   "head_head_cam"
+    shm_name: "avatar_cam"
+    eye:      "mono"
+  - camera:   "head_head_cam_left"
+    shm_name: "avatar_cam_left"
+    eye:      "left"
+  - camera:   "head_head_cam_right"
+    shm_name: "avatar_cam_right"
+    eye:      "right"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline process (avatar_pipeline binary)
@@ -14,13 +28,18 @@ stream_height:  960
 # UDP port on which this process listens for episode_start / episode_end
 episode_listener_port: 7100
 
+# Camera channel entries.  The "eye" tag controls which entries are loaded:
+#   stereo: false  ->  only eye: "mono" channels are started
+#   stereo: true   ->  only eye: "left" and eye: "right" channels are started
 cameras:
+  # ── Mono channel (active when stereo: false) ────────────────────────────
   - name:         "head_cam"
-    source_type:  "mujoco"      # "mujoco" | "realsense" | "v4l2"
-    shm_name:     "avatar_cam"  # "/avatar_cam" | "/dev/video4"
+    eye:          "mono"
+    source_type:  "mujoco"
+    shm_name:     "avatar_cam"
     fps:           30
     source_width:  1280
-    source_height: 720
+    source_height: 960
     realsense_serial: ""
 
     stream:
@@ -30,32 +49,46 @@ cameras:
       feedback_port:      5005
       status_port:        5007
       status_interval_ms: 500
-      bitrate_kbps:       2000
+      bitrate_kbps:       4000
       fec_percentage:     10
       width:              1280
-      height:             720
+      height:             960
 
     log:
-      enabled:      false
-      output_dir:   "logs"
-      width:        640
-      height:       480
-      center_crop:  false     # crop largest 1:1 square from centre before resizing
-      # override with explicit window if the workspace is off-centre:
-      # crop_x: 160   # pixels from left edge of source
-      # crop_y:   0
-      # crop_w: 960   # must match log aspect ratio (width:height = crop_w:crop_h)
-      # crop_h: 960
+      enabled:    true
+      output_dir: "logs"
+      width:      640
+      height:     480
 
-  # ── Future camera entry template (uncomment and fill in when ready) ────────
-  # - name:         "wrist_cam"
-  #   source_type:  "mujoco"
-  #   shm_name:     "/avatar_wrist_cam"
-  #   fps:          30
-  #   stream:
-  #     enabled: false
-  #   log:
-  #     enabled:    true
-  #     output_dir: "logs"
-  #     width:      224
-  #     height:     224
+  # ── Stereo combined channel (active when stereo: true) ──────────────────
+  # Reads both eye shm buffers in the same poll iteration and composites them
+  # side-by-side (left|right) into a single 2560×960 stream on one port.
+  # This guarantees temporal sync and correlated compression artifacts.
+  - name:              "head_cam_stereo"
+    eye:               "stereo"
+    source_type:       "mujoco"
+    shm_name:          "avatar_cam_left"       # left eye (primary)
+    stereo_combined:   true
+    stereo_partner_shm: "avatar_cam_right"     # right eye (composited alongside)
+    fps:               30
+    source_width:      1280                    # single-eye width (source)
+    source_height:     960
+    realsense_serial:  ""
+
+    stream:
+      enabled:            true
+      host:               "127.0.0.1"
+      port:               5004
+      feedback_port:      5005
+      status_port:        5007
+      status_interval_ms: 500
+      bitrate_kbps:       6000    # higher budget for 2560-wide combined frame
+      fec_percentage:     10
+      width:              2560    # 2 × single-eye width
+      height:             960
+
+    log:
+      enabled:    true
+      output_dir: "logs"
+      width:      640
+      height:     480
