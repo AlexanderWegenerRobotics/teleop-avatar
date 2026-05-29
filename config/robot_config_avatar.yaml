@@ -21,6 +21,9 @@ devices:
   - name: arm_left
     type: arm
     enabled: True
+    franka_ip: "172.16.0.2"
+    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
+    urdf_ee_name: "fr3_hand"
     transmission:
       remote_ip: "10.112.24.173"
       send_port: 8001
@@ -61,6 +64,9 @@ devices:
   - name: arm_right
     type: arm
     enabled: True
+    franka_ip: "172.16.0.3"
+    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
+    urdf_ee_name: "fr3_hand"
     transmission:
       remote_ip: "10.112.24.173"
       send_port: 8002

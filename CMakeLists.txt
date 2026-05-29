@@ -29,6 +29,21 @@ elseif(UNIX)
     message(STATUS "Platform: Linux")
 endif()
 
+# ── Conda/miniforge prefix ────────────────────────────────────────────────────
+# When pinocchio (and other conda packages) are needed, prepend the active conda
+# env to CMAKE_PREFIX_PATH so we get consistent package versions (e.g. yaml-cpp 0.8
+# instead of the Ubuntu 22.04 system yaml-cpp 0.7 which lacks the :: target).
+if(DEFINED ENV{CONDA_PREFIX})
+    list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
+elseif(EXISTS "/home/ceti/miniforge3")
+    list(PREPEND CMAKE_PREFIX_PATH "/home/ceti/miniforge3")
+endif()
+# Prefer locally-installed packages (e.g. newer Poco with move semantics)
+# over system packages to keep headers and libraries consistent.
+if(UNIX AND EXISTS "/usr/local/lib/cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "/usr/local")
+endif()
+
 # ── Core dependencies ─────────────────────────────────────────────────────────
 find_package(yaml-cpp REQUIRED)
 find_package(Eigen3 REQUIRED)
@@ -81,6 +96,11 @@ if(BUILD_WITH_MUJOCO)
         )
     endif()
 
+endif()
+
+# Pinocchio provides our custom dynamics model (franka::Model in sim_env/model.hpp).
+# Needed for MuJoCo simulation and retained for real-robot builds for now.
+if(BUILD_WITH_MUJOCO)
     set(COAL_DISABLE_HPP_FCL_WARNINGS ON CACHE BOOL "" FORCE)
     find_package(pinocchio REQUIRED)
 endif()
@@ -131,6 +151,10 @@ if(BUILD_WITH_MUJOCO)
         src/sim_env/model.cpp
         src/sim_env/tum_head_driver.cpp
     )
+endif()
+
+if(BUILD_WITH_FRANKA)
+    list(APPEND SOURCES src/sim_env/tum_head_driver.cpp)
 endif()
 
 add_executable(${PROJECT_NAME} ${SOURCES})
@@ -191,8 +215,16 @@ endif()
 
 # ── Pipeline (camera streaming + HDF5 logging) ────────────────────────────────
 if(BUILD_STREAMER)
-    find_package(HDF5 REQUIRED COMPONENTS C)
     find_package(PkgConfig REQUIRED)
+    if(UNIX AND NOT APPLE)
+        # Use pkg-config to find the system serial HDF5, avoiding Windows/conda paths
+        pkg_check_modules(HDF5_SYS REQUIRED hdf5-serial)
+        set(HDF5_INCLUDE_DIRS ${HDF5_SYS_INCLUDE_DIRS})
+        set(HDF5_C_LIBRARIES  ${HDF5_SYS_LIBRARIES})
+        set(HDF5_LIBRARY_DIRS ${HDF5_SYS_LIBRARY_DIRS})
+    else()
+        find_package(HDF5 REQUIRED COMPONENTS C)
+    endif()
     if(BUILD_WITH_REALSENSE)
         find_package(realsense2 REQUIRED)
     endif()
@@ -229,6 +261,9 @@ if(BUILD_STREAMER)
         ${GST_LIBRARIES}
         ${HDF5_C_LIBRARIES}
     )
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(avatar_pipeline PRIVATE curl)
+    endif()
     if(BUILD_WITH_REALSENSE)
         target_compile_definitions(avatar_pipeline PRIVATE WITH_REALSENSE)
         target_link_libraries(avatar_pipeline PRIVATE realsense2::realsense2)
@@ -241,6 +276,7 @@ if(BUILD_STREAMER)
 
     target_link_directories(avatar_pipeline PRIVATE
         ${GST_LIBRARY_DIRS}
+        ${HDF5_LIBRARY_DIRS}
     )
 
     target_compile_options(avatar_pipeline PRIVATE

@@ -21,6 +21,7 @@ devices:
   - name: arm_left
     type: arm
     enabled: True
+    franka_ip: "172.16.0.2"
     transmission:
       remote_ip: "127.0.0.1"
       send_port: 8001
@@ -50,7 +51,7 @@ devices:
     safety:
       workspace_min: [0.6, -0.3, 0.415]
       workspace_max: [1.0,  0.3, 1.0]
-      table_height_world: 0.415         # 0.425
+      table_height_world: 0.425         # 0.425
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
       max_command_velocity: 3.0
@@ -62,6 +63,7 @@ devices:
   - name: arm_right
     type: arm
     enabled: True
+    franka_ip: "172.16.0.2"
     transmission:
       remote_ip: "127.0.0.1"
       send_port: 8002
@@ -90,7 +92,7 @@ devices:
     safety:
       workspace_min: [0.6, -0.3, 0.415]
       workspace_max: [1.0,  0.3, 1.0]
-      table_height_world: 0.415         # 0.425
+      table_height_world: 0.425         # 0.425
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
       max_command_velocity: 3.0
