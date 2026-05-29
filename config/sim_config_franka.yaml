@@ -1,5 +1,5 @@
 rendering:
-  enabled: false
+  enabled: true
   fps: 30
 
 simulation:

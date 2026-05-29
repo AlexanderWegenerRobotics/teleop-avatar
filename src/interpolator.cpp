@@ -6,9 +6,9 @@
 Interpolator::Interpolator(const InterpolatorConfig& config)
     : config_(config)
     , min_steps_(config.control_freq / config.comm_freq)
-    , n_steps_(min_steps_)
-    , current_idx_(0)
     , space_(InterpolationSpace::JOINT)
+    , joint_idx_(0)
+    , cartesian_idx_(0)
 {}
 
 int Interpolator::computeJointSteps(const Eigen::VectorXd& q_start, const Eigen::VectorXd& q_end) const {
@@ -84,9 +84,8 @@ void Interpolator::planJoint(const Eigen::VectorXd& q_start, const Eigen::Vector
 
     std::lock_guard<std::mutex> lock(mtx_);
     space_           = InterpolationSpace::JOINT;
-    n_steps_         = n_steps;
     joint_waypoints_ = std::move(waypoints);
-    current_idx_     = 0;
+    joint_idx_       = 0;
 }
 
 void Interpolator::planCartesian(const Eigen::Isometry3d& T_start, const Eigen::Isometry3d& T_end, ProfileType profile) {
@@ -107,38 +106,49 @@ void Interpolator::planCartesian(const Eigen::Isometry3d& T_start, const Eigen::
     }
     std::lock_guard<std::mutex> lock(mtx_);
     space_               = InterpolationSpace::CARTESIAN;
-    n_steps_             = n_steps;
     cartesian_waypoints_ = std::move(waypoints);
-    current_idx_         = 0;
+    cartesian_idx_       = 0;
 }
 
 Eigen::VectorXd Interpolator::getCurrentJoint() const {
     std::lock_guard<std::mutex> lock(mtx_);
     if (joint_waypoints_.empty()) return Eigen::VectorXd::Zero(config_.n_dof);
-    return joint_waypoints_[std::min(current_idx_, n_steps_ - 1)];
+    int idx = std::min(joint_idx_, (int)joint_waypoints_.size() - 1);
+    return joint_waypoints_[idx];
 }
 
 Eigen::Isometry3d Interpolator::getCurrentCartesian() const {
     std::lock_guard<std::mutex> lock(mtx_);
     if (cartesian_waypoints_.empty()) return Eigen::Isometry3d::Identity();
-    return cartesian_waypoints_[std::min(current_idx_, n_steps_ - 1)];
+    int idx = std::min(cartesian_idx_, (int)cartesian_waypoints_.size() - 1);
+    return cartesian_waypoints_[idx];
 }
 
 bool Interpolator::step() {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (current_idx_ < n_steps_ - 1) {
-        ++current_idx_;
-        return true;
+    if (space_ == InterpolationSpace::JOINT) {
+        if (joint_idx_ < (int)joint_waypoints_.size() - 1) {
+            ++joint_idx_;
+            return true;
+        }
+    } else {
+        if (cartesian_idx_ < (int)cartesian_waypoints_.size() - 1) {
+            ++cartesian_idx_;
+            return true;
+        }
     }
     return false;
 }
 
 bool Interpolator::isDone() const {
     std::lock_guard<std::mutex> lock(mtx_);
-    return current_idx_ >= n_steps_ - 1;
+    if (space_ == InterpolationSpace::JOINT)
+        return joint_idx_ >= (int)joint_waypoints_.size() - 1;
+    return cartesian_idx_ >= (int)cartesian_waypoints_.size() - 1;
 }
 
 void Interpolator::reset() {
     std::lock_guard<std::mutex> lock(mtx_);
-    current_idx_ = 0;
+    joint_idx_     = 0;
+    cartesian_idx_ = 0;
 }

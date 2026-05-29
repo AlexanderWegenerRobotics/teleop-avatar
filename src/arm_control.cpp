@@ -29,15 +29,9 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     base_position_ = Eigen::Vector3d(pos[0], pos[1], pos[2]);
     base_orientation_ = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]);
 
-    if (name_.find("right") != std::string::npos) {
-        R_tool <<  0, -1,  0,
-                   0,  0,  1,
-                  -1,  0,  0;
-    } else {
-        R_tool <<  0, -1,  0,
-                0,  0,  1,
-                -1,  0,  0;
-    }
+    // R_tool is computed analytically once T_origin_ is captured at home
+    // (see isHome() and reOrigin()).  Set identity here as a safe default.
+    R_tool = Eigen::Matrix3d::Identity();
 
     T_base_ = Eigen::Isometry3d::Identity();
     T_base_.translation() = base_position_;
@@ -271,8 +265,7 @@ void ArmControl::updateRecovery() {
                 interpolator_.planCartesian(T_ee, T_ee);
                 recovery_.setMode(RecoveryMode::WAITING_ACK);
                 if (timed_out) {
-                    std::cout << "[WARN]: " << name_ << " recovery timed out, residual joint err: "
-                              << (q_final - q).cwiseAbs().maxCoeff() << " rad" << std::endl;
+                    std::cout << "[WARN]: " << name_ << " recovery timed out, residual joint err: " << (q_final - q).cwiseAbs().maxCoeff() << " rad" << std::endl;
                 } else {
                     std::cout << "[INFO]: " << name_ << " recovery motion done, awaiting operator." << std::endl;
                 }
@@ -308,8 +301,8 @@ void ArmControl::updateStateMachine(SysState cmd_state){
             break;
         case SysState::HOMING:
             if(isHome()){
-                state_ = SysState::AWAITING;
                 interpolator_.planCartesian(T_origin_, T_origin_);
+                state_ = SysState::AWAITING;
                 std::cout << "[INFO]: " << name_ << " is awaiting." << std::endl;
             }
             break;
@@ -506,6 +499,14 @@ bool ArmControl::isHome() {
 
     if (position_reached && velocity_settled) {
         T_origin_ = T_ee;
+        // R_tool maps controller axes to EE body axes so that:
+        //   R_base * R_origin * R_tool = I
+        // => world-frame EE angular velocity == commanded angular velocity.
+        // Derivation: T_target.linear() = R_origin * R_tool * R_cmd * R_tool^T
+        //             R_EE_world = R_base * T_target.linear()
+        //             = R_cmd * R_base * R_origin   (with R_tool = R_origin^T * R_base^T)
+        //             so ω_world = ω_cmd for any command axis.
+        R_tool = T_origin_.rotation().transpose() * T_base_.rotation().transpose();
         return true;
     }
     return false;
@@ -648,6 +649,7 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 void ArmControl::reOrigin() {
     std::lock_guard<std::mutex> lock(state_mtx);
     T_origin_ = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
+    R_tool = T_origin_.rotation().transpose() * T_base_.rotation().transpose();
 }
 
 void ArmControl::restartLogger(const std::string& path) {

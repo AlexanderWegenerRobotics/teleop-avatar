@@ -53,11 +53,16 @@ private:
 private:
     InterpolatorConfig config_;
     int                min_steps_;
-    int                n_steps_;
-    int                current_idx_;
     InterpolationSpace space_;
     mutable std::mutex mtx_;
 
+    // Joint and Cartesian plans maintain independent indices so that
+    // replanning one space does not corrupt the readout of the other.
+    // This prevents getCurrentJoint() from jumping to waypoint[0] of a
+    // stale joint plan when planCartesian() resets the shared index mid-tick.
     std::vector<Eigen::VectorXd>   joint_waypoints_;
+    int                            joint_idx_ = 0;
+
     std::vector<Eigen::Isometry3d> cartesian_waypoints_;
+    int                            cartesian_idx_ = 0;
 };
