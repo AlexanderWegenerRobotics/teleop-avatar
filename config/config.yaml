@@ -1,3 +1,3 @@
-sim_config: "../config/sim_config_franka.yaml"
+sim_config: "../config/sim_config_90deg_alegro.yaml"
 robot_config: "../config/robot_config_local.yaml"
 streamer_config: "../config/pipeline_config_local.yaml"

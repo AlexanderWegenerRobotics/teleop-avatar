@@ -126,7 +126,7 @@ void ArmControl::stop(){
 }
 
 void ArmControl::runStateHandler(){
-    constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 100));
+    constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 500));
     auto next_control_time = std::chrono::high_resolution_clock::now();
     SysState prev_state = state_;
     Eigen::VectorXd q_current = Eigen::VectorXd::Zero(7);

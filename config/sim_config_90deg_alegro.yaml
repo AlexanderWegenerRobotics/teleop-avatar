@@ -1,5 +1,5 @@
 rendering:
-  enabled: false
+  enabled: true
   fps: 30
 
 simulation:
@@ -27,7 +27,8 @@ devices:
     model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"
     urdf_path: "../models/urdf/allegro_hand/fr3_allegro_hand_90deg.urdf"
     root_body: "link0"
-    urdf_ee_name: "palm_link"
+    #urdf_ee_name: "palm_link"
+    urdf_ee_name: "fr3_link8"
     gripper_actuator: "actuator8"
 
   - name: hand_right

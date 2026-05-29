@@ -37,6 +37,7 @@ devices:
     urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
     root_body: "link0"
     urdf_ee_name: "fr3_hand"
+    #urdf_ee_name: "fr3_link8"
     gripper_actuator: "actuator8"
 
   - name: hand_right
