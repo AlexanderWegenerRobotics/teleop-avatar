@@ -8,8 +8,13 @@
 #include <iostream>
 
 ArmControl::ArmControl(const YAML::Node& device_config, const std::string& session_id)
+#ifdef WITH_FRANKA
+    : robot(std::make_unique<franka::Robot>(device_config["franka_ip"].as<std::string>()))
+    , gripper(std::make_unique<franka::Gripper>(device_config["franka_ip"].as<std::string>()))
+#else
     : robot(std::make_unique<franka::Robot>())
     , gripper(std::make_unique<franka::Gripper>())
+#endif
     , bRunning(false)
     , state_(SysState::OFFLINE)
     , interpolator_(InterpolatorConfig{
@@ -100,7 +105,12 @@ void ArmControl::start(){
     state_ = SysState::IDLE;
     cmd_state_ = SysState::IDLE;
     current_state = robot->readOnce();
+#ifdef WITH_FRANKA
+    franka_owned_model_ = std::make_unique<franka::Model>(robot->loadModel());
+    model = franka_owned_model_.get();
+#else
     model = &robot->loadModel();
+#endif
     Eigen::Map<const Vector7> q_init(current_state.q.data());
     interpolator_.planJoint(q_init, q_init, ProfileType::TRAPEZOIDAL);
     control_thread = std::thread(&ArmControl::runControlHandler, this);
@@ -167,7 +177,11 @@ void ArmControl::runStateHandler(){
                 validateTargetPose(T_target);
                 interpolator_.planCartesian(interpolator_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
                 double target_width = (1.0 - static_cast<double>(cmd.gripper)) * 0.08;
+#ifdef WITH_FRANKA
+                gripper->move(target_width, 0.08);
+#else
                 gripper->setWidth(target_width);
+#endif
                 target_pose_ = T_base_ * T_target;
                 has_cmd = false;
             } else {
@@ -192,7 +206,7 @@ void ArmControl::runStateHandler(){
             Eigen::Isometry3d T_ee(Eigen::Map<const Eigen::Matrix4d>(rs.O_T_EE.data()));
 
             if (scp_ && (state_ == SysState::ENGAGED || state_ == SysState::AWAITING)) {
-                auto J_array = model->zeroJacobian(rs.q);
+                auto J_array = model->zeroJacobian(franka::Frame::kEndEffector, rs);
                 Matrix6x7 J  = Eigen::Map<Matrix6x7>(J_array.data());
                 Eigen::Map<const Vector7> dq(rs.dq.data());
                 Eigen::Vector3d ee_vel = (J * dq).head<3>();
@@ -386,7 +400,7 @@ void ArmControl::runControlHandler(){
                 Matrix4 T_target = Matrix4::Identity();
                 if(state_ == SysState::HOMING || state_ == SysState::RECOVERING){
                     q_target = interpolator_.getCurrentJoint();
-                    T_target = model->forwardKinematics(q_target);
+                    //T_target = model->forwardKinematics(q_target);
                 }
                 else if(state_ == SysState::ENGAGED || state_ == SysState::AWAITING){
                     Eigen::Isometry3d T_ee_target = interpolator_.getCurrentCartesian();
@@ -428,7 +442,7 @@ Vector7 ArmControl::jointImpedanceControl(const franka::RobotState& rs) {
     Vector7 e = q_target - q;
     Vector7 de = -dq;
 
-    auto coriolis_array = model->coriolis(rs.q, rs.dq);
+    auto coriolis_array = model->coriolis(rs);
     Vector7 tau_coriolis = Eigen::Map<Vector7>(coriolis_array.data());
 
     Vector7 tau = kp_joint_.cwiseProduct(e) + kd_joint_.cwiseProduct(de) + tau_coriolis;
@@ -455,7 +469,7 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Matrix<double, 6, 1> error;
     error << pos_error, ori_error;
 
-    auto J_array = model->zeroJacobian(rs.q);
+    auto J_array = model->zeroJacobian(franka::Frame::kEndEffector, rs);
     Matrix6x7 J = Eigen::Map<Matrix6x7>(J_array.data());
 
     Eigen::Matrix<double, 6, 1> ee_vel = J * dq;
@@ -463,10 +477,10 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Matrix<double, 6, 1> F = kp_cart_.cwiseProduct(error) - kd_cart_.cwiseProduct(ee_vel);
     Vector7 tau_task = J.transpose() * F;
 
-    auto mass_array = model->mass(rs.q);
+    auto mass_array = model->mass(rs);
     Matrix7 M = Eigen::Map<Matrix7>(mass_array.data());
 
-    auto coriolis_array = model->coriolis(rs.q, rs.dq);
+    auto coriolis_array = model->coriolis(rs);
     Vector7 tau_coriolis = Eigen::Map<Vector7>(coriolis_array.data());
 
     Eigen::LDLT<Matrix7> M_ldlt(M);
@@ -548,7 +562,7 @@ void ArmControl::applySelfCollisionFilter(Eigen::Isometry3d& T_target) {
     {
         std::lock_guard<std::mutex> lock(state_mtx);
         T_ee = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
-        auto J_array = model->zeroJacobian(current_state.q);
+        auto J_array = model->zeroJacobian(franka::Frame::kEndEffector, current_state);
         Matrix6x7 J = Eigen::Map<Matrix6x7>(J_array.data());
         Eigen::Map<const Vector7> dq(current_state.dq.data());
         ee_vel_base = (J * dq).head<3>();

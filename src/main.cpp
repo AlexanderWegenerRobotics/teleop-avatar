@@ -6,7 +6,9 @@
 #include <atomic>
 #include <csignal>
 
+#ifndef WITH_FRANKA
 #include <GLFW/glfw3.h>
+#endif
 #include <yaml-cpp/yaml.h>
 
 #include "avatar.hpp"
@@ -36,12 +38,21 @@ int main() {
     try {
         YAML::Node config = YAML::LoadFile("../config/config.yaml");
 
+        Avatar avatar(config);
+
+#ifdef WITH_FRANKA
+        std::thread avatar_thread([&]() { avatar.start(); });
+        std::cout << "Avatar started (Franka mode)" << std::endl;
+        while (!g_shutdown_requested.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        std::cout << "Avatar will be stopped" << std::endl;
+        avatar.stop();
+        if (avatar_thread.joinable()) avatar_thread.join();
+#else
         if (!glfwInit())
             throw std::runtime_error("glfwInit failed");
 
-        Avatar avatar(config);
-
-#ifndef WITH_FRANKA
         auto sim = avatar.getSim();
 
         if (sim->render_enabled_) {
@@ -85,9 +96,9 @@ int main() {
         sim->stop();
 
         if (avatar_thread.joinable()) avatar_thread.join();
-#endif
 
         glfwTerminate();
+#endif
 
     } catch (const std::exception& e) {
         std::cerr << "[Fatal] " << e.what() << "\n";

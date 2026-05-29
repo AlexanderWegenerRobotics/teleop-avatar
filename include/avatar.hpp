@@ -7,7 +7,9 @@
 #include "arm_control.hpp"
 #include "head_control.hpp"
 #include "network/udp_reliable.hpp"
+#ifndef WITH_FRANKA
 #include "sim_env/simulation.hpp"
+#endif
 #include "self_collision_protection.hpp"
 #include "data_logger.hpp"
 #include "intention/intention_buffer.hpp"
@@ -25,7 +27,9 @@ public:
     bool isRunning() const {return bRunning;}
     SysState getState() const {return state_;}
 
+#ifndef WITH_FRANKA
     std::shared_ptr<Simulation> getSim() const { return sim_; }
+#endif
 
 private:
     void updateStateMachine(SysState cmd_state);
@@ -46,7 +50,9 @@ private:
     std::atomic<SysState> cmd_requested_{SysState::IDLE};
     std::unique_ptr<DataLogger<SceneLogEntry>> scene_logger_;
 
+#ifndef WITH_FRANKA
     std::shared_ptr<Simulation> sim_ = nullptr;
+#endif
     std::atomic<bool> bRunning;
     std::atomic<SysState> state_;
     std::shared_ptr<DeviceRegistry> device_registry_;

@@ -1,5 +1,7 @@
 #pragma once
 
+#ifndef WITH_FRANKA
+
 #include <atomic>
 #include <string>
 
@@ -47,4 +49,10 @@ private:
     std::atomic<double> commanded_width_{0.0};
 };
 
-}
+}  // namespace franka
+
+#else  // WITH_FRANKA — use real libfranka Gripper
+
+#include <franka/gripper.h>
+
+#endif  // WITH_FRANKA

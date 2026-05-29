@@ -4,6 +4,7 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <iostream>
 
 #include <yaml-cpp/yaml.h>
 
@@ -91,6 +92,8 @@ private:
     Vector7 tau_rate_max_;
     std::mutex state_mtx;
     franka::RobotState current_state;
+    // Owns the pinocchio dynamics model when using real Franka (not obtained from loadModel())
+    std::unique_ptr<franka::Model> franka_owned_model_;
     Eigen::Isometry3d T_origin_;
     std::unique_ptr<SelfCollisionProtection> scp_;
     CollisionState scp_state_;

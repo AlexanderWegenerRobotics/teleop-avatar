@@ -1,4 +1,5 @@
 #include "sim_env/model.hpp"
+#include "sim_env/robot.hpp"  // full RobotState definition
 
 #include <pinocchio/parsers/urdf.hpp>
 #include <pinocchio/algorithm/jacobian.hpp>
@@ -44,8 +45,8 @@ Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_qua
 
 Model::~Model() {}
 
-std::array<double, 42> Model::zeroJacobian(const std::array<double, 7>& q) {
-    Vector7 q_eig = Eigen::Map<const Vector7>(q.data());
+std::array<double, 42> Model::zeroJacobian(Frame /*frame*/, const RobotState& rs) {
+    Vector7 q_eig = Eigen::Map<const Vector7>(rs.q.data());
     std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::computeJointJacobians(pin_model_, pin_data_, q_eig);
     pinocchio::framesForwardKinematics(pin_model_, pin_data_, q_eig);
@@ -60,8 +61,8 @@ std::array<double, 42> Model::zeroJacobian(const std::array<double, 7>& q) {
     return result;
 }
 
-std::array<double, 49> Model::mass(const std::array<double, 7>& q) {
-    Vector7 q_eig = Eigen::Map<const Vector7>(q.data());
+std::array<double, 49> Model::mass(const RobotState& rs) {
+    Vector7 q_eig = Eigen::Map<const Vector7>(rs.q.data());
     std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::crba(pin_model_, pin_data_, q_eig);
     pin_data_.M.triangularView<Eigen::StrictlyLower>() =
@@ -72,9 +73,9 @@ std::array<double, 49> Model::mass(const std::array<double, 7>& q) {
     return result;
 }
 
-std::array<double, 7> Model::coriolis(const std::array<double, 7>& q, const std::array<double, 7>& dq) {
-    Vector7 q_eig  = Eigen::Map<const Vector7>(q.data());
-    Vector7 dq_eig = Eigen::Map<const Vector7>(dq.data());
+std::array<double, 7> Model::coriolis(const RobotState& rs) {
+    Vector7 q_eig  = Eigen::Map<const Vector7>(rs.q.data());
+    Vector7 dq_eig = Eigen::Map<const Vector7>(rs.dq.data());
 
     std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::computeCoriolisMatrix(pin_model_, pin_data_, q_eig, dq_eig);
@@ -143,11 +144,3 @@ GMOInputs Model::computeGMOInputs(const std::array<double, 7>& q, const std::arr
     return { pin_data_.M * dq_eig, pin_data_.C * dq_eig + pin_data_.g };
 }
 
-Matrix4 Model::forwardKinematics(const Vector7& q) {
-    std::lock_guard<std::mutex> lock(pin_mutex_);
-    pinocchio::forwardKinematics(pin_model_, pin_data_, q);
-    pinocchio::updateFramePlacements(pin_model_, pin_data_);
-
-    const pinocchio::SE3& T = pin_data_.oMf[pin_model_.getFrameId(ee_frame_name_)];
-    return T.toHomogeneousMatrix();
-}

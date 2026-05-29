@@ -1,5 +1,9 @@
 #pragma once
 
+#include "sim_env/model.hpp"  // always: pinocchio-based franka::Model
+
+#ifndef WITH_FRANKA
+
 #include <memory>
 #include <array>
 #include <string>
@@ -8,8 +12,6 @@
 
 #include <Eigen/Dense>
 #include <yaml-cpp/yaml.h>
-
-#include "sim_env/model.hpp"
 
 class Simulation;
 struct DeviceState;
@@ -83,4 +85,10 @@ private:
     static constexpr double K_GMO = 50.0;
 };
 
-}
+}  // namespace franka
+
+#else  // WITH_FRANKA — use real libfranka; model.hpp above provides franka::Model
+
+#include <franka/robot.h>  // brings in franka::Robot, RobotState, Torques, Duration
+
+#endif  // WITH_FRANKA

@@ -1,6 +1,8 @@
 #pragma once
 
+#ifndef WITH_FRANKA
 #include "sim_env/simulation.hpp"
+#endif
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <functional>
@@ -54,11 +56,13 @@ namespace franka_joint_driver {
 
         Error control(const CallbackFunctionTorque& driver_callback_torque);
 
+#ifndef WITH_FRANKA
     public:
         void set_simulation(Simulation& sim, const YAML::Node& device_config);
 
     private:
-        Simulation* sim;
+        Simulation* sim = nullptr;
+#endif
         std::string name_;
         std::atomic<bool> bRunning;
         std::vector<CommandTorque> command;
