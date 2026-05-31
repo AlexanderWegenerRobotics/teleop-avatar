@@ -100,15 +100,15 @@ devices:
       kp_null: [10, 10, 10, 10, 4, 4, 4]
       kd_null: [1, 1, 1, 1, 0.5, 0.5, 0.5]
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
-      kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
+      kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8] 
     safety:
       workspace_min: [0.6, -0.3, 0.425]
       workspace_max: [1.0,  0.3, 1.0]
       table_height_world: 0.425
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 0.15        # sim: 2.0
-      max_command_angular_velocity: 0.3 # sim: 5.0
+      max_command_velocity: 2.15        # sim: 2.0
+      max_command_angular_velocity: 3.3 # sim: 5.0
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40

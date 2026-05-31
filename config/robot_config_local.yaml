@@ -103,8 +103,8 @@ devices:
       table_height_world: 0.425         # 0.425
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 0.15        # sim: 3.0
-      max_command_angular_velocity: 0.3 # sim: 8.0
+      max_command_velocity: 1.5        # sim: 3.0
+      max_command_angular_velocity: 3.0 # sim: 8.0
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
