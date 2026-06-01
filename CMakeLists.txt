@@ -4,6 +4,9 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.29")
 endif()
 project(avatar VERSION 0.1.0)
 include(${CMAKE_SOURCE_DIR}/cmake/options.cmake)
+if(EXISTS "${CMAKE_SOURCE_DIR}/cmake/options.local.cmake")
+    include(${CMAKE_SOURCE_DIR}/cmake/options.local.cmake)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
@@ -79,12 +82,24 @@ if(BUILD_WITH_MUJOCO)
             INTERFACE_INCLUDE_DIRECTORIES "${MUJOCO_ROOT}/include"
         )
     elseif(APPLE)
-        # macOS: glob for the .dylib (version-agnostic)
-        file(GLOB _mj_lib LIST_DIRECTORIES false "${MUJOCO_ROOT}/lib/libmujoco*.dylib")
+        # macOS: support both flat install (lib/libmujoco*.dylib + include/) and
+        # framework bundle (Versions/A/libmujoco*.dylib + Headers/)
+        file(GLOB _mj_lib LIST_DIRECTORIES false
+            "${MUJOCO_ROOT}/lib/libmujoco*.dylib"
+            "${MUJOCO_ROOT}/Versions/A/libmujoco*.dylib"
+        )
         list(GET _mj_lib 0 _mj_lib_path)
+        # Flat install: include/mujoco/mujoco.h → point to include/
+        # Framework bundle: mujoco symlink → Headers/, so <mujoco/mujoco.h>
+        #   resolves via MUJOCO_ROOT/mujoco/mujoco.h → Headers/mujoco.h
+        if(EXISTS "${MUJOCO_ROOT}/include")
+            set(_mj_include "${MUJOCO_ROOT}/include")
+        else()
+            set(_mj_include "${MUJOCO_ROOT}")
+        endif()
         set_target_properties(mujoco PROPERTIES
             IMPORTED_LOCATION             "${_mj_lib_path}"
-            INTERFACE_INCLUDE_DIRECTORIES "${MUJOCO_ROOT}/include"
+            INTERFACE_INCLUDE_DIRECTORIES "${_mj_include}"
         )
     else()
         # Linux: glob for the versioned .so

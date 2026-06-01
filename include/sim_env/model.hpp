@@ -36,8 +36,8 @@ public:
 
     Model(const Model&) = delete;
     Model& operator=(const Model&) = delete;
-    Model(Model&&) = default;
-    Model& operator=(Model&&) = default;
+    Model(Model&&) = delete;
+    Model& operator=(Model&&) = delete;
 
     // Signatures match real libfranka RobotState overloads
     std::array<double, 42> zeroJacobian(Frame frame, const RobotState& rs);

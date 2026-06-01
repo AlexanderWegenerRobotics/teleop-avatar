@@ -405,7 +405,7 @@ void Simulation::setCtrl(const std::string& deviceName,
 void Simulation::setGripper(const std::string& deviceName, double width) {
     auto it = gripper_ids_.find(deviceName);
     if (it == gripper_ids_.end() || it->second < 0) {
-        std::cerr << "[Simulation] setGripper: device '" << deviceName << "' has no gripper actuator defined\n";
+        //std::cerr << "[Simulation] setGripper: device '" << deviceName << "' has no gripper actuator defined\n";
         return;
     }
 

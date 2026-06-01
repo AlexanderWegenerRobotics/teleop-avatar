@@ -16,6 +16,7 @@ if [ ! -f "$STREAMER" ]; then
 fi
 
 cleanup() {
+    INTERRUPTED=1
     echo ""
     echo "[LAUNCH]: Shutting down..."
     kill "$STREAMER_PID" 2>/dev/null
@@ -23,6 +24,7 @@ cleanup() {
     wait "$STREAMER_PID" 2>/dev/null
     wait "$AVATAR_PID" 2>/dev/null
     echo "[LAUNCH]: All processes stopped."
+    exit 0
 }
 trap cleanup SIGINT SIGTERM
 

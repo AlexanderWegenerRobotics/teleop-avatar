@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <filesystem>
 #include <unordered_map>
+#include <unordered_set>
 #include <cmath>
 #include <cstdio>
 #include <iostream>
@@ -236,6 +237,13 @@ std::vector<DeviceConfig> SceneBuilder::parseDevices(const YAML::Node& sim_confi
     std::vector<DeviceConfig> devices;
     if (!robot_config["devices"]) return devices;
 
+    // Collect names of disabled devices so dependents (e.g. grippers
+    // attached to a disabled arm) can be skipped too.
+    std::unordered_set<std::string> disabled_devices;
+    for (const auto& rd : robot_config["devices"])
+        if (rd["enabled"] && !rd["enabled"].as<bool>())
+            disabled_devices.insert(rd["name"].as<std::string>());
+
     for (const auto& rd : robot_config["devices"]) {
         if (rd["enabled"] && !rd["enabled"].as<bool>()) continue;
 
@@ -256,6 +264,23 @@ std::vector<DeviceConfig> SceneBuilder::parseDevices(const YAML::Node& sim_confi
         dev.root_body        = sd["root_body"].as<std::string>();
         dev.gripper_actuator = sd["gripper_actuator"] ? sd["gripper_actuator"].as<std::string>() : "";
         dev.attach_to = sd["attach_to"] ? sd["attach_to"].as<std::string>() : "";
+
+        // Skip devices attached to a disabled device (body name is prefixed
+        // with the parent device name, e.g. "arm_left_fr3_link7").
+        if (!dev.attach_to.empty()) {
+            bool parent_disabled = false;
+            for (const auto& disabled : disabled_devices) {
+                if (dev.attach_to.rfind(disabled + "_", 0) == 0) {
+                    parent_disabled = true;
+                    break;
+                }
+            }
+            if (parent_disabled) {
+                std::cerr << "[SceneBuilder] Skipping '" << name
+                          << "' because its attach_to parent is disabled.\n";
+                continue;
+            }
+        }
 
         if (sd["attach_offset"]) {
             auto p = sd["attach_offset"]["position"];

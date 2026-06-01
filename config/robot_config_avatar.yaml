@@ -20,7 +20,7 @@ avatar:
 devices:
   - name: arm_left
     type: arm
-    enabled: False
+    enabled: True
     franka_ip: "172.16.0.2"
     urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
     urdf_ee_name: "fr3_hand"
@@ -51,8 +51,8 @@ devices:
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
 
     safety:
-      workspace_min: [0.6, -0.3, 0.425]
-      workspace_max: [1.0,  0.3, 1.0]
+      workspace_min: [0.6, -0.5, 0.425]
+      workspace_max: [1.0,  0.5, 1.0]
       table_height_world: 0.425
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
@@ -102,8 +102,8 @@ devices:
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8] 
     safety:
-      workspace_min: [0.6, -0.3, 0.425]
-      workspace_max: [1.0,  0.3, 1.0]
+      workspace_min: [0.6, -0.5, 0.425]
+      workspace_max: [1.0,  0.5, 1.0]
       table_height_world: 0.425
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
@@ -115,7 +115,7 @@ devices:
 
   - name: head
     type: head
-    enabled: False
+    enabled: True
     transmission:
       remote_ip: "10.112.24.173"
       send_port: 8003

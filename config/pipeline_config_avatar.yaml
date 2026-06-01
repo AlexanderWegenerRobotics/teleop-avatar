@@ -25,8 +25,8 @@ episode_listener_port: 7100
 cameras:
   - name:         "head_cam"
     eye:          "mono"
-    source_type:  "v4l2"          # "mujoco" | "realsense" | "v4l2"
-    shm_name:     "/dev/video4"   # "/avatar_cam" | "/dev/video4"
+    source_type:  "mujoco"          # "mujoco" | "realsense" | "v4l2"
+    shm_name:     "avatar_cam"   # "/avatar_cam" | "/dev/video4"
     fps:          30
     source_width:  1280
     source_height: 720

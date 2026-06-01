@@ -1,3 +1,6 @@
+# Local CMake overrides (machine-specific build options)
+cmake/options.local.cmake
+
 # Build
 build/
 cmake-build-*/

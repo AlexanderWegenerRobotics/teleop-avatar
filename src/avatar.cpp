@@ -42,8 +42,8 @@ Avatar::Avatar(const YAML::Node& config) {
         arm->initSelfCollisionProtection(device_registry_, scp_config);
     }
 
-    getArm("arm_right")->setCollisionImportanceWeight(1.0);
-    getArm("arm_left")->setCollisionImportanceWeight(1.0);
+    if (auto* a = getArm("arm_right")) a->setCollisionImportanceWeight(1.0);
+    if (auto* a = getArm("arm_left"))  a->setCollisionImportanceWeight(1.0);
 
     log_base_dir_ = "logs";
     if (sys_config["avatar"]["log_dir"]){
@@ -211,6 +211,7 @@ Avatar::Avatar(const YAML::Node& config) {
     applyEpisodeConfig(current_episode_cfg_);
 
     for (const auto& dev : sys_config["devices"]) {
+        if (!dev["enabled"].as<bool>(true)) continue;
         if (dev["type"].as<std::string>() != "head") continue;
         if (!dev["camera"]) continue;
 
