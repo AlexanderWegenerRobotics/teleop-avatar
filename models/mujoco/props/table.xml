@@ -1,25 +1,54 @@
 <mujoco model="manipulation_table">
-  <compiler angle="radian" autolimits="true"/>
+  <compiler angle="radian" autolimits="true" meshdir="assets" texturedir="assets"/>
+
+  <asset>
+    <mesh name="table_plate" file="table_plate.stl" scale="0.001 0.001 0.001"/>
+
+    <texture name="metal_tex" type="2d" file="metal_material.png"/>
+    <material name="plate_mat"
+              texture="metal_tex"
+              texrepeat="4 4"
+              texuniform="false"
+              specular="0.9"
+              shininess="0.4"
+              reflectance="0.3"/>
+    <material name="leg_mat"
+              texture="metal_tex"
+              texrepeat="1 2"
+              texuniform="false"
+              specular="0.9"
+              shininess="0.4"
+              reflectance="0.3"/>
+  </asset>
 
   <default>
     <default class="table">
-      <geom material="table_mat" condim="6"/>
+      <geom condim="6"/>
     </default>
   </default>
 
-  <asset>
-    <!-- Wooden table appearance with good friction -->
-    <material name="table_mat" rgba="0.82 0.71 0.55 1" specular="0.3" shininess="0.1"/>
-  </asset>
-
   <worldbody>
     <body name="table" pos="0 0 0">
-      <!-- Table top + legs -->
-      <geom name="table_surface" class="table" type="box" size="0.8 0.9 0.025" pos="0 0 0.4" friction="1.2 0.005 0.0001"solimp="0.99 0.99 0.001" solref="0.001 1"/>
-      <geom name="leg_front_right" class="table" type="cylinder" size="0.03 0.1875" pos="0.52 0.42 0.1875" friction="0.9 0.005 0.0001"/>
-      <geom name="leg_front_left" class="table" type="cylinder" size="0.03 0.1875" pos="-0.52 0.42 0.1875" friction="0.9 0.005 0.0001"/>
-      <geom name="leg_back_right" class="table" type="cylinder" size="0.03 0.1875" pos="0.52 -0.42 0.1875" friction="0.9 0.005 0.0001"/>
-      <geom name="leg_back_left" class="table" type="cylinder" size="0.03 0.1875" pos="-0.52 -0.42 0.1875" friction="0.9 0.005 0.0001"/>
+
+      <geom name="table_surface" class="table" type="mesh" mesh="table_plate"
+            material="plate_mat"
+            pos="-0.42 0 0.674"
+            euler="1.5708 0 0"
+            friction="1.2 0.005 0.0001"
+            solimp="0.99 0.99 0.001" solref="0.001 1"/>
+
+      <geom name="leg_front_right" class="table" material="leg_mat"
+            type="box" size="0.03 0.03 0.337" pos="0.42 0.42 0.337"
+            friction="0.9 0.005 0.0001"/>
+      <geom name="leg_front_left"  class="table" material="leg_mat"
+            type="box" size="0.03 0.03 0.337" pos="-0.42 0.42 0.337"
+            friction="0.9 0.005 0.0001"/>
+      <geom name="leg_back_right"  class="table" material="leg_mat"
+            type="box" size="0.03 0.03 0.337" pos="0.42 -0.42 0.337"
+            friction="0.9 0.005 0.0001"/>
+      <geom name="leg_back_left"   class="table" material="leg_mat"
+            type="box" size="0.03 0.03 0.337" pos="-0.42 -0.42 0.337"
+            friction="0.9 0.005 0.0001"/>
     </body>
   </worldbody>
 </mujoco>

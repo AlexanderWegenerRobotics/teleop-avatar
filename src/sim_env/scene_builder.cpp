@@ -44,7 +44,8 @@ static std::string docToString(XMLDocument& doc) {
 
 static void mergeCompilerAttributes(XMLElement* dst, const XMLElement* src) {
     for (const XMLAttribute* a = src->FirstAttribute(); a; a = a->Next()) {
-        if (std::string(a->Name()) == "meshdir") continue;
+        const std::string name = a->Name();
+        if (name == "meshdir" || name == "texturedir") continue;
         dst->SetAttribute(a->Name(), a->Value());
     }
 }
@@ -53,7 +54,7 @@ static void prefixNamesInTree(XMLElement* el, const std::string& prefix) {
     static const std::vector<const char*> kAttrs = {
         "name", "joint", "joint1", "joint2",
         "body", "body1", "body2",
-        "mesh", "material", "tendon",
+        "mesh", "material", "texture", "tendon",
         "site", "actuator", "childclass", "class"
     };
     for (const char* attr : kAttrs) {
@@ -99,6 +100,15 @@ static void absoluteMeshPaths(XMLElement* assetEl, const std::string& meshdir) {
     }
 }
 
+static void absoluteTexturePaths(XMLElement* assetEl, const std::string& texturedir) {
+    for (XMLElement* el = assetEl->FirstChildElement("texture");
+         el; el = el->NextSiblingElement("texture")) {
+        const char* file = el->Attribute("file");
+        if (file && file[0] != '/')
+            el->SetAttribute("file", (texturedir + "/" + file).c_str());
+    }
+}
+
 static std::string resolveMeshdir(const XMLElement* compilerEl,
                                    const std::string& modelPath) {
     if (!compilerEl) return {};
@@ -106,6 +116,15 @@ static std::string resolveMeshdir(const XMLElement* compilerEl,
     if (!md) return {};
     return std::filesystem::absolute(
         std::filesystem::path(modelPath).parent_path() / md).string();
+}
+
+static std::string resolveTexturedir(const XMLElement* compilerEl,
+                                      const std::string& modelPath) {
+    if (!compilerEl) return {};
+    const char* td = compilerEl->Attribute("texturedir");
+    if (!td) return {};
+    return std::filesystem::absolute(
+        std::filesystem::path(modelPath).parent_path() / td).string();
 }
 
 static void injectModel(const std::string& modelPath,
@@ -131,8 +150,20 @@ static void injectModel(const std::string& modelPath,
     std::string meshdir = resolveMeshdir(
         docRoot->FirstChildElement("compiler"), modelPath);
 
+    std::string texturedir = resolveTexturedir(
+        docRoot->FirstChildElement("compiler"), modelPath);
+
     if (XMLElement* ra = docRoot->FirstChildElement("asset"))
         normalizeMeshNames(ra);
+
+    // Resolve absolute paths BEFORE prefixing, so file= attributes are
+    // rewritten to absolute paths while names are still in their original form.
+    if (XMLElement* ra = docRoot->FirstChildElement("asset")) {
+        if (!meshdir.empty())
+            absoluteMeshPaths(ra, meshdir);
+        if (!texturedir.empty())
+            absoluteTexturePaths(ra, texturedir);
+    }
 
     prefixNamesInTree(docRoot, namePrefix);
 
@@ -141,8 +172,6 @@ static void injectModel(const std::string& modelPath,
         root->InsertEndChild(def->DeepClone(&scene));
 
     if (XMLElement* ra = docRoot->FirstChildElement("asset")) {
-        if (!meshdir.empty())
-            absoluteMeshPaths(ra, meshdir);
         deepCopyChildren(assetEl, scene, ra);
     }
 
