@@ -30,9 +30,10 @@
   <worldbody>
     <body name="table" pos="0 0 0">
 
+      <!-- 28mm thick plate -->
       <geom name="table_surface" class="table" type="mesh" mesh="table_plate"
             material="plate_mat"
-            pos="-0.42 0 0.674"
+            pos="-0.42 0 0.674" 
             euler="1.5708 0 0"
             friction="1.2 0.005 0.0001"
             solimp="0.99 0.99 0.001" solref="0.001 1"/>
