@@ -1,17 +1,16 @@
 <mujoco model="background">
-  <compiler angle="radian" autolimits="true"/>
+  <compiler angle="radian" autolimits="true" texturedir="assets"/>
 
   <asset>
-    <material name="box_mat" rgba="0.2 0.2 0.2 1" specular="0.4" shininess="0.2"/>
+    <texture name="bg_tex" type="2d" file="lab_background.png"/>
+    <material name="box_mat" texture="bg_tex"
+              texuniform="false" emission="0.7"
+              specular="0" shininess="0" reflectance="0"/>
   </asset>
 
   <worldbody>
-    <body name="box" pos="0 0 1">
-      <geom name="box_geom" type="box" size="0.02 2 1"
-            mass="0.1" material="box_mat" condim="6"
-            friction="0.3 0.005 0.001"
-            solimp="0.95 0.99 0.001" solref="0.02 1.0"/>
-      <site name="box_center" pos="0 0 0" size="0.003" rgba="1 0 0 1"/>
+    <body name="background" pos="0 0 1.0" euler="0 -1.5708 -1.5708">
+      <geom name="bg_geom" type="plane" size="2 1 0.1" material="box_mat" contype="0" conaffinity="0"/>
     </body>
   </worldbody>
 </mujoco>

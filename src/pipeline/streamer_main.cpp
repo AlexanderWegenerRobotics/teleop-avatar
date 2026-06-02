@@ -145,8 +145,9 @@ int main(int argc, char** argv) {
             std::string eye = cam_node["eye"].as<std::string>("mono");
             // "stereo" = single side-by-side combined stream (new approach).
             // "left"/"right" = legacy two-stream approach (kept for compatibility).
-            bool active = stereo ? (eye == "stereo" || eye == "left" || eye == "right")
-                                 : (eye == "mono");
+            bool active = (eye == "aux") ||
+                          (stereo ? (eye == "stereo" || eye == "left" || eye == "right")
+                                  : (eye == "mono"));
             if (!active) {
                 std::cout << "[INFO] Skipping camera (eye=" << eye
                           << ", stereo=" << stereo << "): "

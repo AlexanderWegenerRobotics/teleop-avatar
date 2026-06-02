@@ -20,6 +20,9 @@ stream_cameras:
   - camera:   "head_head_cam_right"
     shm_name: "avatar_cam_right"
     eye:      "right"
+  - camera:   "camera_right_rgb"
+    shm_name: "avatar_pip_cam"
+    eye:      "aux"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline process (avatar_pipeline binary)
@@ -59,6 +62,34 @@ cameras:
       output_dir: "logs"
       width:      640
       height:     480
+
+  # ── PiP camera (always active, independent of stereo mode) ─────────────────
+  - name:         "pip_cam"
+    eye:          "aux"
+    source_type:  "mujoco"
+    shm_name:     "avatar_pip_cam"
+    fps:          30
+    source_width:  640
+    source_height: 480
+    realsense_serial: ""
+
+    stream:
+      enabled:            true
+      host:               "127.0.0.1"
+      port:               5010
+      feedback_port:      5011
+      status_port:        5012
+      status_interval_ms: 500
+      bitrate_kbps:       1500
+      fec_percentage:     10
+      width:              640
+      height:             480
+
+    log:
+      enabled:    false
+      output_dir: "logs"
+      width:      320
+      height:     240
 
   # ── Stereo combined channel (active when stereo: true) ──────────────────
   # Reads both eye shm buffers in the same poll iteration and composites them

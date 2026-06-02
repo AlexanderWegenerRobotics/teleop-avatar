@@ -68,8 +68,9 @@ Simulation::Simulation(const YAML::Node& config) {
     if (stream_config["stream_cameras"] && stream_config["stream_cameras"].IsSequence()) {
         for (const auto& entry : stream_config["stream_cameras"]) {
             std::string eye = entry["eye"].as<std::string>("mono");
-            bool active = stereo_ ? (eye == "left" || eye == "right")
-                                  : (eye == "mono");
+            bool active = (eye == "aux") ||
+                          (stereo_ ? (eye == "left" || eye == "right")
+                                   : (eye == "mono"));
             if (!active) continue;
             StreamCamEntry sc;
             sc.camera_name = entry["camera"].as<std::string>("");
