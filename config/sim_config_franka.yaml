@@ -1,6 +1,6 @@
 rendering:
   enabled: false
-  fps: 30
+  fps: 15
 
 simulation:
   timestep: 0.001

@@ -72,8 +72,12 @@ static CameraChannelConfig parseCameraConfig(const YAML::Node& n) {
 
     if (n["stream"]) {
         c.stream_enabled = n["stream"]["enabled"].as<bool>(false);
-        if (c.stream_enabled)
+        if (c.stream_enabled) {
             c.stream = parseStreamConfig(n["stream"], c.fps);
+            // Propagate source dims so the streamer can rescale if needed.
+            c.stream.source_width  = c.source_width;
+            c.stream.source_height = c.source_height;
+        }
     }
 
     if (n["log"]) {

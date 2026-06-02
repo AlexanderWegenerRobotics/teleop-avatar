@@ -72,7 +72,12 @@ private:
 
 private:
     struct CamEntry { std::string name; int id; };
-    struct StreamCamEntry { std::string camera_name; std::string shm_name; };
+    struct StreamCamEntry {
+        std::string camera_name;
+        std::string shm_name;
+        int width  = 0;   // 0 = use global stream_width_
+        int height = 0;   // 0 = use global stream_height_
+    };
     std::vector<std::unique_ptr<SharedMemoryWriter>> shm_writers_;
 
     mjvScene    scn_;

@@ -1,9 +1,11 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
@@ -22,6 +24,11 @@ struct StreamerConfig {
     int         fec_percentage     = 10;
     int         stream_width       = 640;
     int         stream_height      = 480;
+    // Source dimensions as read from SHM / camera device.
+    // When these differ from stream_width/height, pushFrame will rescale.
+    // 0 means "same as stream_width/height" (no rescaling).
+    int         source_width       = 0;
+    int         source_height      = 0;
 };
 
 class VideoStreamer {

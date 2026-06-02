@@ -75,6 +75,8 @@ Simulation::Simulation(const YAML::Node& config) {
             StreamCamEntry sc;
             sc.camera_name = entry["camera"].as<std::string>("");
             sc.shm_name    = entry["shm_name"].as<std::string>("");
+            sc.width       = entry["width"].as<int>(0);
+            sc.height      = entry["height"].as<int>(0);
             if (!sc.camera_name.empty() && !sc.shm_name.empty())
                 stream_cameras_.push_back(std::move(sc));
         }
@@ -295,10 +297,13 @@ void Simulation::initOffscreenStreaming() {
 #ifndef _WIN32
         shm_unlink(sc.shm_name.c_str());
 #endif
+        int cw = sc.width  > 0 ? sc.width  : stream_width_;
+        int ch = sc.height > 0 ? sc.height : stream_height_;
         shm_writers_.push_back(
-            std::make_unique<SharedMemoryWriter>(sc.shm_name, stream_width_, stream_height_));
+            std::make_unique<SharedMemoryWriter>(sc.shm_name, cw, ch));
         std::cout << "[Streaming] Opened SHM writer: " << sc.shm_name
-                  << "  camera=" << sc.camera_name << std::endl;
+                  << "  camera=" << sc.camera_name
+                  << "  res=" << cw << "x" << ch << std::endl;
     }
     if (shm_writers_.empty())
         std::cerr << "[Streaming] Warning: no stream cameras configured — nothing will be written\n";
@@ -311,16 +316,24 @@ void Simulation::renderStreamFrame() {
     int r = snap_read_.load(std::memory_order_acquire);
     mjData* snap = snap_[r];
 
-    mjrRect viewport = {0, 0, stream_con_.offWidth, stream_con_.offHeight};
     mjr_setBuffer(mjFB_OFFSCREEN, &stream_con_);
 
-    std::vector<uint8_t> pixels(stream_width_ * stream_height_ * 3);
+    std::vector<uint8_t> pixels;
 
     for (size_t i = 0; i < stream_cameras_.size(); ++i) {
+        const auto& sc = stream_cameras_[i];
+        const int cw = sc.width  > 0 ? sc.width  : stream_width_;
+        const int ch = sc.height > 0 ? sc.height : stream_height_;
+
+        // Use a sub-viewport so MuJoCo renders and reads only cw×ch pixels.
+        // The offscreen context is sized to the maximum (stream_width_ × stream_height_)
+        // so any per-camera resolution ≤ that maximum works without reallocating.
+        mjrRect viewport = {0, 0, cw, ch};
+
         // Look up camera id by name.
         int cam_id = -1;
         for (const auto& c : render_cams_)
-            if (c.name == stream_cameras_[i].camera_name) { cam_id = c.id; break; }
+            if (c.name == sc.camera_name) { cam_id = c.id; break; }
         if (cam_id < 0) continue;
 
         mjvCamera mjcam;
@@ -331,13 +344,14 @@ void Simulation::renderStreamFrame() {
         mjv_updateScene(model, snap, &stream_vopt_, nullptr, &mjcam, mjCAT_ALL, &stream_scn_);
         mjr_render(viewport, &stream_scn_, &stream_con_);
 
+        pixels.resize(cw * ch * 3);
         mjr_readPixels(pixels.data(), nullptr, viewport, &stream_con_);
 
         // MuJoCo returns pixels bottom-up; flip to top-down for consumers.
-        for (int row = 0; row < stream_height_ / 2; ++row) {
-            uint8_t* top = pixels.data() + row * stream_width_ * 3;
-            uint8_t* bot = pixels.data() + (stream_height_ - 1 - row) * stream_width_ * 3;
-            std::swap_ranges(top, top + stream_width_ * 3, bot);
+        for (int row = 0; row < ch / 2; ++row) {
+            uint8_t* top = pixels.data() + row * cw * 3;
+            uint8_t* bot = pixels.data() + (ch - 1 - row) * cw * 3;
+            std::swap_ranges(top, top + cw * 3, bot);
         }
 
         shm_writers_[i]->write(pixels.data(), pixels.size());

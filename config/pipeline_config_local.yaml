@@ -23,6 +23,8 @@ stream_cameras:
   - camera:   "camera_right_rgb"
     shm_name: "avatar_pip_cam"
     eye:      "aux"
+    width:    640
+    height:   480
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline process (avatar_pipeline binary)
@@ -58,7 +60,7 @@ cameras:
       height:             960
 
     log:
-      enabled:    true
+      enabled:    false
       output_dir: "logs"
       width:      640
       height:     480
@@ -68,7 +70,7 @@ cameras:
     eye:          "aux"
     source_type:  "mujoco"
     shm_name:     "avatar_pip_cam"
-    fps:          30
+    fps:          15
     source_width:  640
     source_height: 480
     realsense_serial: ""
@@ -119,7 +121,7 @@ cameras:
       height:             960
 
     log:
-      enabled:    true
+      enabled:    false
       output_dir: "logs"
       width:      640
       height:     480
