@@ -162,14 +162,14 @@ devices:
 
   - name: camera_right
     type: sensor
-    enabled: False
+    enabled: True
     base_pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
 
   - name: camera_left
     type: sensor
-    enabled: False
+    enabled: True
     base_pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]

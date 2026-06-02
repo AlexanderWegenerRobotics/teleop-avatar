@@ -21,7 +21,12 @@ stream_cameras:
     shm_name: "avatar_cam_right"
     eye:      "right"
   - camera:   "camera_right_rgb"
-    shm_name: "avatar_pip_cam"
+    shm_name: "avatar_wrist_cam_right"
+    eye:      "aux"
+    width:    640
+    height:   480
+  - camera:   "camera_left_rgb"
+    shm_name: "avatar_wrist_cam_left"
     eye:      "aux"
     width:    640
     height:   480
@@ -65,11 +70,11 @@ cameras:
       width:      640
       height:     480
 
-  # ── PiP camera (always active, independent of stereo mode) ─────────────────
-  - name:         "pip_cam"
+  # ── PiP camera ─────────────────
+  - name:         "wrist_cam_right"
     eye:          "aux"
     source_type:  "mujoco"
-    shm_name:     "avatar_pip_cam"
+    shm_name:     "avatar_wrist_cam_right"
     fps:          15
     source_width:  640
     source_height: 480
@@ -81,6 +86,33 @@ cameras:
       port:               5010
       feedback_port:      5011
       status_port:        5012
+      status_interval_ms: 500
+      bitrate_kbps:       1500
+      fec_percentage:     10
+      width:              640
+      height:             480
+
+    log:
+      enabled:    false
+      output_dir: "logs"
+      width:      320
+      height:     240
+
+  - name:         "wrist_cam_left"
+    eye:          "aux"
+    source_type:  "mujoco"
+    shm_name:     "avatar_wrist_cam_left"
+    fps:          15
+    source_width:  640
+    source_height: 480
+    realsense_serial: ""
+
+    stream:
+      enabled:            true
+      host:               "127.0.0.1"
+      port:               5013
+      feedback_port:      5014
+      status_port:        5015
       status_interval_ms: 500
       bitrate_kbps:       1500
       fec_percentage:     10
