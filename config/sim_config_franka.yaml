@@ -108,7 +108,28 @@ objects:
     type: dynamic
     model_path: "../models/mujoco/props/box_red.xml"
     pose:
-      position: [0.8, 0.0, 0.6]
+      position: [0.8, 0.0, 0.718]
+      orientation: [1, 0, 0, 0]
+
+  - name: soda_can_1
+    type: dynamic
+    model_path: "../models/mujoco/props/soda_can_red.xml"
+    pose:
+      position: [0.8, -0.1, 0.688]
+      orientation: [1, 0, 0, 0]
+
+  - name: soda_can_2
+    type: dynamic
+    model_path: "../models/mujoco/props/soda_can_green.xml"
+    pose:
+      position: [0.6, -0.05, 0.688]
+      orientation: [1, 0, 0, 0]
+
+  - name: plastic_bin
+    type: dynamic
+    model_path: "../models/mujoco/props/plastic_box.xml"
+    pose:
+      position: [0.8, 0.2, 0.702]
       orientation: [1, 0, 0, 0]
 
   #- name: box_2

@@ -2,8 +2,8 @@
   <compiler angle="radian" autolimits="true" meshdir="assets" texturedir="assets"/>
 
   <asset>
-    <mesh name="can_body" file="soda_can_body.stl"/>
-    <mesh name="can_label" file="soda_can_label.stl"/>
+    <mesh name="can_body" file="soda_can_body.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="can_label" file="soda_can_label.stl" scale="0.001 0.001 0.001"/>
 
     <texture name="metal_tex" type="2d" file="metal_material.png"/>
     <material name="can_body_mat" texture="metal_tex" specular="0.8" shininess="0.5" reflectance="0.3"/>
