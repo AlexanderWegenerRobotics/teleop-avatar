@@ -150,7 +150,7 @@ set(SOURCES
     src/avatar.cpp
     src/arm_control.cpp
     src/head_control.cpp
-    src/interpolator.cpp
+    src/MotionGenerator.cpp
     src/network/udp_transport.cpp
     src/network/udp_reliable.cpp
     src/intention/intention_buffer.cpp

@@ -250,10 +250,12 @@ def plot_arm(name, df, out_dir, base=None):
     ax4.set_xlabel("time [s]")
     ax4.grid(True, alpha=0.3)
 
-    out_path = os.path.join(out_dir, f"{name}.png")
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
-    print(f"Saved → {out_path}")
-    plt.close()
+    plt.show()
+
+    #out_path = os.path.join(out_dir, f"{name}.png")
+    #plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    #print(f"Saved → {out_path}")
+    #plt.close()
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────

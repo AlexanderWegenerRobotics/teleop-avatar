@@ -75,6 +75,21 @@ devices:
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
 
+    control_mode: cartesian_impedance   # or: joint_ik
+    ik:
+      kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
+      kp_o:       6.0                         # task ori gain (1/s)
+      v_lin_max:  0.8                        # m/s  (matches interpolator max_linear_vel)
+      v_ang_max:  0.8                        # rad/s
+      lambda:     0.01                       # LM damping
+      mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
+      kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
+      qd_max:     [2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610]  # FR3 joint vel limits
+      t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
+      a_max:      10.0                       # rad/s^2 per-joint accel cap
+      gamma:      0.05                       # rad, joint-limit safety buffer
+      wtask:      [1, 1, 1, 1, 1, 1]         # task weights [posx3, orix3]
+
   - name: arm_right
     type: arm
     enabled: True
@@ -131,6 +146,21 @@ devices:
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
+
+    control_mode: cartesian_impedance   # or: joint_ik
+    ik:
+      kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
+      kp_o:       6.0                         # task ori gain (1/s)
+      v_lin_max:  0.8                        # m/s  (matches interpolator max_linear_vel)
+      v_ang_max:  0.8                        # rad/s
+      lambda:     0.01                       # LM damping
+      mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
+      kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
+      qd_max:     [2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610]  # FR3 joint vel limits
+      t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
+      a_max:      10.0                       # rad/s^2 per-joint accel cap
+      gamma:      0.05                       # rad, joint-limit safety buffer
+      wtask:      [1, 1, 1, 1, 1, 1]         # task weights [posx3, orix3]
 
   - name: head
     type: head

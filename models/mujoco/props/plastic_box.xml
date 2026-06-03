@@ -8,9 +8,9 @@
 
   <worldbody>
     <body name="plastic_box">
-      <inertial mass="0.2" pos="0 0 0" diaginertia="1e-4 1e-4 1e-4"/>
+      <freejoint name="box_joint"/>
+      <inertial mass="0.2" pos="0 0 0" diaginertia="5.4e-4 8.3e-4 1.0e-3"/>
       <geom name="plastic_box" mesh="plastic_box" type="mesh" material="plastic_mat" euler="1.5708 0 0"/>
     </body>
   </worldbody>
-
 </mujoco>

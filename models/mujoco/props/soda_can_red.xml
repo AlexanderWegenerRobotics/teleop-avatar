@@ -2,20 +2,20 @@
   <compiler angle="radian" autolimits="true" meshdir="assets" texturedir="assets"/>
 
   <asset>
-    <mesh name="can_body" file="soda_can_body.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="can_body"  file="soda_can_body.stl"  scale="0.001 0.001 0.001"/>
     <mesh name="can_label" file="soda_can_label.stl" scale="0.001 0.001 0.001"/>
 
     <texture name="metal_tex" type="2d" file="metal_material.png"/>
-    <material name="can_body_mat" texture="metal_tex" specular="0.8" shininess="0.5" reflectance="0.3"/>
+    <material name="can_body_mat"  texture="metal_tex" specular="0.8" shininess="0.5" reflectance="0.3"/>
     <material name="can_label_mat" rgba="0.72 0.07 0.07 1" specular="0.1" shininess="0.1" reflectance="0.0"/>
   </asset>
 
   <worldbody>
     <body name="soda_can">
-      <inertial mass="0.39" pos="0 0 0" diaginertia="5.3e-4 5.3e-4 2.1e-4"/>
-      <geom name="can_body" mesh="can_body" type="mesh" material="can_body_mat"/>
+      <freejoint name="can_joint"/>
+      <inertial mass="0.39" pos="0 0 0.0575" diaginertia="5.8e-4 5.8e-4 2.1e-4"/>
+      <geom name="can_body"  mesh="can_body"  type="mesh" material="can_body_mat"/>
       <geom name="can_label" mesh="can_label" type="mesh" material="can_label_mat" contype="0" conaffinity="0"/>
     </body>
   </worldbody>
-
 </mujoco>

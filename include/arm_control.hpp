@@ -10,7 +10,7 @@
 
 #include "sim_env/robot.hpp"
 #include "sim_env/gripper.hpp"
-#include "interpolator.hpp"
+#include "MotionGenerator.hpp"
 #include "network/udp_stream.hpp"
 #include "data_logger.hpp"
 #include "self_collision_protection.hpp"
@@ -18,6 +18,12 @@
 #include "common.hpp"
 
 class Simulation;
+
+// Low-level control mode selected per arm via the config key "control_mode".
+enum class ControlMode {
+    CARTESIAN_IMPEDANCE,  // default — unchanged Cartesian impedance + nullspace
+    JOINT_IK              // resolved-rate IK → joint impedance tracking q_ref
+};
 
 class ArmControl{
 public:
@@ -59,7 +65,7 @@ private:
     std::atomic<bool> bRunning;
     std::atomic<SysState> state_{SysState::OFFLINE};
     std::atomic<SysState> cmd_state_{SysState::OFFLINE};
-    Interpolator interpolator_;
+    MotionGenerator motion_gen_;
     using ArmStream = UdpStream<ArmCommandMsg, ArmStateMsg>;
     std::unique_ptr<ArmStream> transmission_;
     std::unique_ptr<DataLogger<ArmLogEntry>> logger_;
@@ -105,6 +111,8 @@ private:
     Vector7 recovery_target_q_ = Vector7::Zero();
     std::chrono::steady_clock::time_point recovery_start_time_;
     std::atomic<double> gripper_width_{0.0};
+
+    ControlMode control_mode_ = ControlMode::CARTESIAN_IMPEDANCE;
 
 private:
     Vector7 kp_joint_, kd_joint_, kp_joint_limit_, kd_joint_limit_;

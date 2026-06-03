@@ -1,6 +1,6 @@
 #include "arm_control.hpp"
 #include "common.hpp"
-#include "interpolator.hpp"
+#include "MotionGenerator.hpp"
 #include "self_collision_protection.hpp"
 #include "sim_env/gripper.hpp"
 #include "sim_env/model.hpp"
@@ -17,7 +17,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
 #endif
     , bRunning(false)
     , state_(SysState::OFFLINE)
-    , interpolator_(InterpolatorConfig{
+    , motion_gen_(InterpolatorConfig{
         .control_freq   = 1000,
         .comm_freq      = device_config["transmission"]["frequency"].as<int>(),
         .n_dof          = 7,
@@ -107,8 +107,50 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     max_tilt_angle_ = device_config["safety"]["max_tilt_angle"].as<double>();
     cmd_dt_ = 1.0 / static_cast<double>(device_config["transmission"]["frequency"].as<int>());
 
-    logger_ = std::make_unique<DataLogger<ArmLogEntry>>("../log/" + name_ + "_log.csv", armLogHeader, armLogRow, session_id);
+    // ── Control mode ─────────────────────────────────────────────────────────
+    control_mode_ = ControlMode::CARTESIAN_IMPEDANCE;
+    if (device_config["control_mode"]) {
+        std::string mode_str = device_config["control_mode"].as<std::string>();
+        if (mode_str == "joint_ik") {
+            control_mode_ = ControlMode::JOINT_IK;
+            std::cout << "[INFO] " << name_ << ": control mode = JOINT_IK" << std::endl;
+        } else {
+            std::cout << "[INFO] " << name_ << ": control mode = CARTESIAN_IMPEDANCE" << std::endl;
+        }
+    }
 
+    // ── Build IkConfig (always, so JOINT_IK can be enabled at any time) ──────
+    {
+        IkConfig ik_cfg;
+        ik_cfg.q0    = q0_;
+        ik_cfg.q_min = q_min_;
+        ik_cfg.q_max = q_max_;
+        // kMaxDq values match cartesianImpedanceControl's velocity damping limit
+        ik_cfg.qd_max = (Eigen::Matrix<double,7,1>()
+                         << 2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610).finished();
+
+        if (device_config["ik"]) {
+            const auto& ik = device_config["ik"];
+            if (ik["kp_p"]) {
+                auto v = ik["kp_p"].as<std::vector<double>>();
+                ik_cfg.Kp_p = Eigen::Vector3d(v[0], v[1], v[2]);
+            }
+            if (ik["kp_o"])       ik_cfg.Kp_o     = ik["kp_o"].as<double>();
+            if (ik["v_lin_max"])  ik_cfg.v_lin_max = ik["v_lin_max"].as<double>();
+            if (ik["v_ang_max"])  ik_cfg.v_ang_max = ik["v_ang_max"].as<double>();
+            if (ik["lambda"])     ik_cfg.lambda    = ik["lambda"].as<double>();
+            if (ik["mu"])         ik_cfg.mu        = ik["mu"].as<double>();
+            if (ik["kp_posture"]) ik_cfg.Kp_posture = yamlToVector<7>(ik["kp_posture"]);
+            if (ik["qd_max"])     ik_cfg.qd_max    = yamlToVector<7>(ik["qd_max"]);
+            if (ik["t_brake"])    ik_cfg.T_brake   = ik["t_brake"].as<double>();
+            if (ik["a_max"])      ik_cfg.a_max     = ik["a_max"].as<double>();
+            if (ik["gamma"])      ik_cfg.gamma     = ik["gamma"].as<double>();
+            if (ik["wtask"])      ik_cfg.Wtask     = yamlToVector<6>(ik["wtask"]);
+        }
+        motion_gen_.setIkConfig(ik_cfg);
+    }
+
+    logger_ = std::make_unique<DataLogger<ArmLogEntry>>("../log/" + name_ + "_log.csv", armLogHeader, armLogRow, session_id);
 }
 
 ArmControl::~ArmControl(){
@@ -127,7 +169,7 @@ void ArmControl::start(){
     model = &robot->loadModel();
 #endif
     Eigen::Map<const Vector7> q_init(current_state.q.data());
-    interpolator_.planJoint(q_init, q_init, ProfileType::TRAPEZOIDAL);
+    motion_gen_.planJoint(q_init, q_init, ProfileType::TRAPEZOIDAL);
     control_thread = std::thread(&ArmControl::runControlHandler, this);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     state_thread = std::thread(&ArmControl::runStateHandler, this);
@@ -148,6 +190,7 @@ void ArmControl::stop(){
 
 void ArmControl::runStateHandler(){
     constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 500));
+    constexpr double dt_state = 1.0 / 500.0;
     auto next_control_time = std::chrono::high_resolution_clock::now();
     SysState prev_state = state_;
     Eigen::VectorXd q_current = Eigen::VectorXd::Zero(7);
@@ -169,28 +212,56 @@ void ArmControl::runStateHandler(){
             has_cmd = false;
         }
 
+        // ── HOMING entry ──────────────────────────────────────────────────────
         if (state_ == SysState::HOMING && prev_state != SysState::HOMING) {
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
                 q_current = Eigen::Map<const Vector7>(current_state.q.data());
             }
-            interpolator_.planJoint(q_current, q0_, ProfileType::MINJERK);
+            motion_gen_.planJoint(q_current, q0_, ProfileType::MINJERK);
         }
+
+        // ── ENGAGED entry: seed IK to current robot state ─────────────────────
+        else if (state_ == SysState::ENGAGED && prev_state != SysState::ENGAGED
+                 && control_mode_ == ControlMode::JOINT_IK) {
+            franka::RobotState rs;
+            {
+                std::lock_guard<std::mutex> lock(state_mtx);
+                rs = current_state;
+            }
+            Vector7 q_seed = Eigen::Map<const Vector7>(rs.q.data());
+            Eigen::Isometry3d T_ee(Eigen::Map<const Eigen::Matrix4d>(rs.O_T_EE.data()));
+            motion_gen_.seedJointReference(q_seed);
+            motion_gen_.setCartesianGoal(T_ee);
+        }
+
+        // ── ENGAGED tick ──────────────────────────────────────────────────────
         else if (state_ == SysState::ENGAGED) {
             if (has_cmd) {
+                // Build command transform (same pre-processing as before)
                 Eigen::Isometry3d T_cmd = Eigen::Isometry3d::Identity();
                 Eigen::Vector3d pos(cmd.position[0], cmd.position[1], cmd.position[2]);
-                Eigen::Quaterniond q(cmd.quaternion[0], cmd.quaternion[1], cmd.quaternion[2], cmd.quaternion[3]);
+                Eigen::Quaterniond q(cmd.quaternion[0], cmd.quaternion[1],
+                                     cmd.quaternion[2], cmd.quaternion[3]);
                 q.normalize();
                 if (q.dot(prev_cmd_quat_) < 0.0) q.coeffs() *= -1.0;
                 prev_cmd_quat_ = q;
                 T_cmd.translation() = pos;
                 T_cmd.linear() = q.toRotationMatrix();
+
                 Eigen::Isometry3d T_target = transformCommandToBase(T_cmd);
                 target_pose_raw_ = T_base_ * T_target;
                 applySelfCollisionFilter(T_target);
                 validateTargetPose(T_target);
-                interpolator_.planCartesian(interpolator_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
+
+                if (control_mode_ == ControlMode::JOINT_IK) {
+                    // IK goal update — goal is frozen when commands stop
+                    motion_gen_.setCartesianGoal(T_target);
+                } else {
+                    // CARTESIAN_IMPEDANCE: plan interpolated trajectory as before
+                    motion_gen_.planCartesian(motion_gen_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
+                }
+
                 double target_width = (1.0 - static_cast<double>(cmd.gripper)) * 0.08;
 #ifdef WITH_FRANKA
                 gripper->move(target_width, 0.08);
@@ -199,16 +270,55 @@ void ArmControl::runStateHandler(){
 #endif
                 target_pose_ = T_base_ * T_target;
                 has_cmd = false;
-            } else {
-                Eigen::Isometry3d T_current_target = interpolator_.getCurrentCartesian();
+
+            } else if (control_mode_ == ControlMode::CARTESIAN_IMPEDANCE) {
+                // Existing SCP re-plan logic (unchanged, only runs in Cartesian mode)
+                Eigen::Isometry3d T_current_target = motion_gen_.getCurrentCartesian();
                 Eigen::Isometry3d T_filtered = T_current_target;
                 applySelfCollisionFilter(T_filtered);
 
                 double pos_change = (T_filtered.translation() - T_current_target.translation()).norm();
                 if (pos_change > 1e-6) {
-                    interpolator_.planCartesian(interpolator_.getCurrentCartesian(), T_filtered, ProfileType::LINEAR);
+                    motion_gen_.planCartesian(motion_gen_.getCurrentCartesian(), T_filtered, ProfileType::LINEAR);
                     target_pose_ = T_base_ * T_filtered;
                 }
+            }
+
+            // JOINT_IK: run one IK step every state-thread tick.
+            // When no new command arrives the goal is frozen → v_des → 0 → u → 0
+            // → q_ref holds → arm decelerates and holds naturally.
+            if (control_mode_ == ControlMode::JOINT_IK) {
+                franka::RobotState rs;
+                {
+                    std::lock_guard<std::mutex> lock(state_mtx);
+                    rs = current_state;
+                }
+                // Resolved-rate IK must be a FEEDFORWARD reference generator: evaluate the
+                // task error and Jacobian at the REFERENCE configuration q_ref, NOT at the
+                // measured state. Closing the loop on the measured pose puts an integrator
+                // around the compliant joint-impedance inner loop and produces an undamped
+                // Cartesian oscillation. Evaluating at q_ref decouples the reference from
+                // the robot: q_ref converges to the goal on its own, the impedance tracks it.
+                Vector7 q_ref = motion_gen_.getJointReference();
+
+                // Reference-configuration state copy (q := q_ref) so the existing
+                // RobotState-based model calls evaluate FK/Jacobian at q_ref. Works for
+                // both the sim model and real libfranka.
+                franka::RobotState rs_ref = rs;
+                Eigen::Map<Vector7>(rs_ref.q.data()) = q_ref;
+
+                auto J_array = model->zeroJacobian(franka::Frame::kEndEffector, rs_ref);
+                Matrix6x7 J  = Eigen::Map<Matrix6x7>(J_array.data());
+
+                std::array<double, 16> pose_arr;
+#ifdef WITH_FRANKA
+                pose_arr = model->pose(franka::Frame::kEndEffector, rs_ref.q, rs_ref.F_T_EE, rs_ref.EE_T_K);
+#else
+                pose_arr = model->EEPose(rs_ref.q);
+#endif
+                Eigen::Isometry3d x_ref(Eigen::Map<const Eigen::Matrix4d>(pose_arr.data()));
+
+                motion_gen_.stepIk(q_ref, J, x_ref, dt_state);
             }
         }
 
@@ -268,7 +378,7 @@ void ArmControl::updateRecovery() {
             return;
         }
         recovery_target_q_ = req.target_q;
-        interpolator_.planJoint(q_current, req.target_q, ProfileType::MINJERK);
+        motion_gen_.planJoint(q_current, req.target_q, ProfileType::MINJERK);
         recovery_.setMode(RecoveryMode::MOVING_TO_SAFE);
         state_ = SysState::RECOVERING;
         recovery_start_time_ = std::chrono::steady_clock::now();
@@ -286,10 +396,11 @@ void ArmControl::updateRecovery() {
                 dq = Eigen::Map<const Vector7>(current_state.dq.data());
             }
             Vector7 q_final = recovery_target_q_;
-            bool trajectory_done = interpolator_.isDone();
+            bool trajectory_done = motion_gen_.isDone();
             bool arrived = (q_final - q).cwiseAbs().maxCoeff() < 0.3;
             bool settled = dq.cwiseAbs().maxCoeff() < 0.07;
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - recovery_start_time_).count();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - recovery_start_time_).count();
             bool timed_out = trajectory_done && elapsed > 5;
             if ((trajectory_done && arrived && settled) || timed_out) {
                 Eigen::Isometry3d T_ee;
@@ -297,10 +408,11 @@ void ArmControl::updateRecovery() {
                     std::lock_guard<std::mutex> lock(state_mtx);
                     T_ee = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
                 }
-                interpolator_.planCartesian(T_ee, T_ee);
+                motion_gen_.planCartesian(T_ee, T_ee);
                 recovery_.setMode(RecoveryMode::WAITING_ACK);
                 if (timed_out) {
-                    std::cout << "[WARN]: " << name_ << " recovery timed out, residual joint err: " << (q_final - q).cwiseAbs().maxCoeff() << " rad" << std::endl;
+                    std::cout << "[WARN]: " << name_ << " recovery timed out, residual joint err: "
+                              << (q_final - q).cwiseAbs().maxCoeff() << " rad" << std::endl;
                 } else {
                     std::cout << "[INFO]: " << name_ << " recovery motion done, awaiting operator." << std::endl;
                 }
@@ -336,7 +448,7 @@ void ArmControl::updateStateMachine(SysState cmd_state){
             break;
         case SysState::HOMING:
             if(isHome()){
-                interpolator_.planCartesian(T_origin_, T_origin_);
+                motion_gen_.planCartesian(T_origin_, T_origin_);
                 state_ = SysState::AWAITING;
                 std::cout << "[INFO]: " << name_ << " is awaiting." << std::endl;
             }
@@ -382,7 +494,7 @@ void ArmControl::runControlHandler(){
     std::function<franka::Torques(const franka::RobotState&, franka::Duration)>
         control_callback = [&](const franka::RobotState& robot_state, franka::Duration) -> franka::Torques {
             
-            interpolator_.step();
+            motion_gen_.step();
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
                 current_state = robot_state;
@@ -392,32 +504,50 @@ void ArmControl::runControlHandler(){
             switch(state_){
                 case SysState::HOMING:
                 case SysState::RECOVERING:
+                    // Joint impedance tracking planJoint trajectory
                     ctrl_torque = jointImpedanceControl(robot_state);
                     break;
 
                 case SysState::AWAITING:
-                case SysState::ENGAGED:
+                    // Always hold Cartesian pose while awaiting engagement
                     ctrl_torque = cartesianImpedanceControl(robot_state);
+                    break;
+
+                case SysState::ENGAGED:
+                    if (control_mode_ == ControlMode::JOINT_IK)
+                        ctrl_torque = jointImpedanceControl(robot_state);
+                    else
+                        ctrl_torque = cartesianImpedanceControl(robot_state);
                     break;
 
                 default:
                     break;
             }
 
-            ctrl_torque = tau_prev_ + (ctrl_torque - tau_prev_).cwiseMax(-tau_rate_max_).cwiseMin(tau_rate_max_);
+            // Stay below Franka's hard torque-rate limit. tau_rate_max_ is the per-tick
+            // limit at 1 kHz (max_torque_rate/1000), i.e. exactly the hard limit; clamping
+            // to it makes us ride the boundary, which trips torque_discontinuity on timing
+            // jitter (reported rate == limit). The margin gives headroom.
+            constexpr double kRateMargin = 0.9;
+            const Vector7 tau_rate_step = tau_rate_max_ * kRateMargin;
+            ctrl_torque = tau_prev_ + (ctrl_torque - tau_prev_).cwiseMax(-tau_rate_step).cwiseMin(tau_rate_step);
             ctrl_torque = ctrl_torque.cwiseMax(-tau_max_).cwiseMin(tau_max_);
             tau_prev_ = ctrl_torque;
 
             if (logger_) {
-                double t = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - startTime_).count();
+                double t = std::chrono::duration<double>(
+                    std::chrono::high_resolution_clock::now() - startTime_).count();
                 Vector7 q_target = Vector7::Zero();
                 Matrix4 T_target = Matrix4::Identity();
+
                 if(state_ == SysState::HOMING || state_ == SysState::RECOVERING){
-                    q_target = interpolator_.getCurrentJoint();
-                    //T_target = model->forwardKinematics(q_target);
+                    q_target = motion_gen_.getCurrentJoint();
+                }
+                else if(state_ == SysState::ENGAGED && control_mode_ == ControlMode::JOINT_IK){
+                    q_target = motion_gen_.getJointReference();
                 }
                 else if(state_ == SysState::ENGAGED || state_ == SysState::AWAITING){
-                    Eigen::Isometry3d T_ee_target = interpolator_.getCurrentCartesian();
+                    Eigen::Isometry3d T_ee_target = motion_gen_.getCurrentCartesian();
                     T_target = T_ee_target.matrix();
                 }
 
@@ -451,10 +581,25 @@ Vector7 ArmControl::jointImpedanceControl(const franka::RobotState& rs) {
     Eigen::Map<const Vector7> q(rs.q.data());
     Eigen::Map<const Vector7> dq(rs.dq.data());
 
-    Vector7 q_target = interpolator_.getCurrentJoint();
+    // In JOINT_IK + ENGAGED: track the IK-computed joint reference.
+    // In HOMING / RECOVERING: track the interpolated joint plan as before.
+    Vector7 q_target;
+    Vector7 dq_ff = Vector7::Zero();   // velocity feedforward
+    if (control_mode_ == ControlMode::JOINT_IK &&
+        (state_ == SysState::ENGAGED || state_ == SysState::AWAITING)) {
+        q_target = motion_gen_.getJointReference();
+        // Feed the IK joint-velocity command forward into the D-term.
+        // Without this, the impedance can only react after the arm has already
+        // fallen behind q_ref.  With it, the arm tracks the velocity trajectory
+        // in real time and the effective lag drops from ~1/wn (100ms) to ~noise.
+        // This raises the stable Kp_p ceiling without requiring stiffer gains.
+        dq_ff = motion_gen_.getVelocityReference();
+    } else {
+        q_target = motion_gen_.getCurrentJoint();
+    }
 
-    Vector7 e = q_target - q;
-    Vector7 de = -dq;
+    Vector7 e  = q_target - q;
+    Vector7 de = dq_ff - dq;   // velocity error: feedforward ref minus actual
 
     auto coriolis_array = model->coriolis(rs);
     Vector7 tau_coriolis = Eigen::Map<Vector7>(coriolis_array.data());
@@ -470,7 +615,7 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Map<const Vector7> dq(rs.dq.data());
 
     Eigen::Isometry3d T_ee(Eigen::Map<const Eigen::Matrix4d>(rs.O_T_EE.data()));
-    Eigen::Isometry3d T_ee_target = interpolator_.getCurrentCartesian();
+    Eigen::Isometry3d T_ee_target = motion_gen_.getCurrentCartesian();
 
     Eigen::Vector3d pos_error = T_ee_target.translation() - T_ee.translation();
 
@@ -516,7 +661,6 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
             tau_vel_damp(i) = -80.0 * excess * (dq(i) > 0 ? 1.0 : -1.0);
     }
     return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq) + tau_vel_damp;
-    //return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq);
 }
 
 bool ArmControl::isHome() {
@@ -533,9 +677,6 @@ bool ArmControl::isHome() {
     bool velocity_settled = dq.cwiseAbs().maxCoeff() < 0.01;
 
     if (position_reached && velocity_settled) {
-        // Capture the home EE pose; this is the origin all command deltas are relative to.
-        // Orientation retargeting uses the constant R_ctrl_to_ee_ remap (see
-        // transformCommandToBase), so no per-home rotation needs to be computed here.
         T_origin_ = T_ee;
         return true;
     }
@@ -548,22 +689,8 @@ Eigen::Isometry3d ArmControl::transformCommandToBase(const Eigen::Isometry3d& T_
 
     Eigen::Isometry3d T_target = Eigen::Isometry3d::Identity();
 
-    // --- Translation: WORLD-frame referencing (unchanged) ---
-    // Command translation is a delta in the (HMD-yaw-aligned) world frame; rotate it
-    // into the base frame and offset from the captured home origin.
     T_target.translation() = T_origin_.translation() + R_w2b * T_cmd_world.translation();
 
-    // --- Orientation: BODY-frame (tool) referencing ---
-    // R_cmd = T_cmd_world.rotation() is the controller's rotation delta expressed in its
-    // OWN captured frame (R_origin_ctrl^-1 * R_current_ctrl, in protocol axes). We want
-    // the EE to rotate about its OWN axes by the same amount, so we re-express R_cmd in
-    // the EE/flange frame via the constant remap M = R_ctrl_to_ee_ and apply it as a
-    // body (right) rotation on the home EE orientation:
-    //     R_EE_world = R_EE_home * (M * R_cmd * M^T)
-    // In base coordinates (R_EE_home = R_base * R_origin, T_target.linear = R_base^T * R_EE_world):
-    //     T_target.linear = R_origin * (M * R_cmd * M^T)
-    // This makes "roll the wand about its long axis" map to "gripper spins about its
-    // approach axis" regardless of the operator's absolute hand pose.
     const Eigen::Matrix3d& M = R_ctrl_to_ee_;
     T_target.linear() = T_origin_.rotation() * (M * T_cmd_world.rotation() * M.transpose());
 
@@ -645,8 +772,8 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 
     if (!p_target.allFinite() || !q_target.coeffs().allFinite()) {
         std::cout << "[WARN] " << name_ << ": non-finite command - discarding packet.\n";
-        T_target.translation() = has_prev_valid_target_ ? prev_valid_target_pos_ : interpolator_.getCurrentCartesian().translation();
-        T_target.linear() = has_prev_valid_target_ ? prev_valid_target_rot_.toRotationMatrix() : interpolator_.getCurrentCartesian().rotation();
+        T_target.translation() = has_prev_valid_target_ ? prev_valid_target_pos_ : motion_gen_.getCurrentCartesian().translation();
+        T_target.linear() = has_prev_valid_target_ ? prev_valid_target_rot_.toRotationMatrix() : motion_gen_.getCurrentCartesian().rotation();
         return;
     }
 
