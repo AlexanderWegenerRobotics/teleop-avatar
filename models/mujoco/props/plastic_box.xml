@@ -1,0 +1,17 @@
+<mujoco model="plastic_box">
+  <compiler angle="radian" autolimits="true" meshdir="assets"/>
+
+  <asset>
+    <mesh name="plastic_box" file="plastic_box.stl"/>
+    <material name="plastic_mat" rgba="0.85 0.85 0.80 0.6"
+          specular="0.5" shininess="0.3" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <body name="plastic_box">
+      <inertial mass="0.2" pos="0 0 0" diaginertia="1e-4 1e-4 1e-4"/>
+      <geom name="plastic_box" mesh="plastic_box" type="mesh" material="plastic_mat"/>
+    </body>
+  </worldbody>
+
+</mujoco>
