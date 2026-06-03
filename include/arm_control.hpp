@@ -84,7 +84,12 @@ private:
     std::string name_;
     Eigen::Vector3d base_position_;
     Eigen::Quaterniond base_orientation_;
-    Eigen::Matrix3d R_tool;
+    // Constant change-of-basis mapping the controller's (protocol-frame) local axes
+    // to the EE/flange local axes. Used for body-frame (tool) orientation retargeting.
+    // Loaded from config key "controller_axis_map"; defaults to identity. Must be a
+    // proper rotation (det = +1) - typically a signed permutation read off the
+    // single-axis rotation test.
+    Eigen::Matrix3d R_ctrl_to_ee_ = Eigen::Matrix3d::Identity();
     Eigen::Isometry3d T_base_;
     Eigen::Isometry3d target_pose_, target_pose_raw_;
     Vector7 q0_, q_min_, q_max_;

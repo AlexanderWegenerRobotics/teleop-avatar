@@ -31,6 +31,17 @@ devices:
     base_pose:
       position: [0, 0.4, 1.277]
       orientation: [0.5, -0.5,  0.5, -0.5]
+    # Controller-frame -> EE/flange-frame axis remap for body-frame orientation retargeting.
+    # Columns = controller local axes (X,Y,Z); rows = EE/flange local axes (X,Y,Z).
+    # Each row/col is a single +/-1 (signed permutation). Determinant MUST be +1.
+    # rows = EE X,Y,Z ; cols = ctrl X,Y,Z. Cyclic map (det = +1):
+    #   ctrl X (forward twist) -> EE Z (gripper spin/approach axis)  <- bottle-cap
+    #   ctrl Y -> EE X ,  ctrl Z -> EE Y. Signs differ from arm_right because the left
+    #   arm is mirror-mounted (base ori [0.5,-0.5,0.5,-0.5]). Confirmed by test. det = +1.
+    controller_axis_map:
+      - [0, 1, 0]
+      - [0, 0, 1]
+      - [1, 0, 0]
     q0: [-0.3, -1.1, 0.3, -2.0, 0.5, 2.9, -0.9]
     #q0: [0.0, -1.2, 0.17, -1.58, 0, 1.6, 0.0]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
@@ -73,6 +84,11 @@ devices:
     base_pose:
       position: [0, -0.4, 1.277]
       orientation: [0.5, 0.5, 0.5, 0.5]
+    # Controller-frame -> EE/flange-frame axis remap (see arm_left for details).
+    controller_axis_map:
+      - [0, -1,  0]
+      - [0,  0, -1]
+      - [1,  0,  0]
     q0: [0.3, -1.1, -0.3, -2.0, -0.5, 2.9, 0.9]
     #q0: [0.0, -1.2, -0.17, -1.58, 0, 1.6, 0.0]
     #max_torque: [40, 40, 40, 40, 6, 6, 6]       # sim: [87, 87, 87, 87, 12, 12, 12]

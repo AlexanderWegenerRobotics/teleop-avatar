@@ -34,9 +34,30 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     base_position_ = Eigen::Vector3d(pos[0], pos[1], pos[2]);
     base_orientation_ = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]);
 
-    // R_tool is computed analytically once T_origin_ is captured at home
-    // (see isHome() and reOrigin()).  Set identity here as a safe default.
-    R_tool = Eigen::Matrix3d::Identity();
+    // Controller-frame -> EE/flange-frame axis remap for body-frame orientation
+    // retargeting. Defaults to identity (passthrough). Fill from the single-axis test.
+    R_ctrl_to_ee_ = Eigen::Matrix3d::Identity();
+    if (device_config["controller_axis_map"]) {
+        auto rows = device_config["controller_axis_map"].as<std::vector<std::vector<double>>>();
+        if (rows.size() == 3 && rows[0].size() == 3 && rows[1].size() == 3 && rows[2].size() == 3) {
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    R_ctrl_to_ee_(i, j) = rows[i][j];
+        } else {
+            std::cout << "[WARN] " << device_config["name"].as<std::string>()
+                      << ": controller_axis_map must be 3x3 - using identity." << std::endl;
+        }
+    }
+    {
+        double det = R_ctrl_to_ee_.determinant();
+        Eigen::Matrix3d orth_err = R_ctrl_to_ee_.transpose() * R_ctrl_to_ee_ - Eigen::Matrix3d::Identity();
+        if (std::abs(det - 1.0) > 1e-6 || orth_err.cwiseAbs().maxCoeff() > 1e-6) {
+            std::cout << "[WARN] " << device_config["name"].as<std::string>()
+                      << ": controller_axis_map is not a proper rotation (det=" << det
+                      << "). Check signs/handedness - orientation retargeting will be wrong."
+                      << std::endl;
+        }
+    }
 
     T_base_ = Eigen::Isometry3d::Identity();
     T_base_.translation() = base_position_;
@@ -512,15 +533,10 @@ bool ArmControl::isHome() {
     bool velocity_settled = dq.cwiseAbs().maxCoeff() < 0.01;
 
     if (position_reached && velocity_settled) {
+        // Capture the home EE pose; this is the origin all command deltas are relative to.
+        // Orientation retargeting uses the constant R_ctrl_to_ee_ remap (see
+        // transformCommandToBase), so no per-home rotation needs to be computed here.
         T_origin_ = T_ee;
-        // R_tool maps controller axes to EE body axes so that:
-        //   R_base * R_origin * R_tool = I
-        // => world-frame EE angular velocity == commanded angular velocity.
-        // Derivation: T_target.linear() = R_origin * R_tool * R_cmd * R_tool^T
-        //             R_EE_world = R_base * T_target.linear()
-        //             = R_cmd * R_base * R_origin   (with R_tool = R_origin^T * R_base^T)
-        //             so ω_world = ω_cmd for any command axis.
-        R_tool = T_origin_.rotation().transpose() * T_base_.rotation().transpose();
         return true;
     }
     return false;
@@ -531,8 +547,25 @@ Eigen::Isometry3d ArmControl::transformCommandToBase(const Eigen::Isometry3d& T_
     Eigen::Matrix3d R_w2b = T_base_.rotation().transpose();
 
     Eigen::Isometry3d T_target = Eigen::Isometry3d::Identity();
+
+    // --- Translation: WORLD-frame referencing (unchanged) ---
+    // Command translation is a delta in the (HMD-yaw-aligned) world frame; rotate it
+    // into the base frame and offset from the captured home origin.
     T_target.translation() = T_origin_.translation() + R_w2b * T_cmd_world.translation();
-    T_target.linear() = T_origin_.rotation() * R_tool * T_cmd_world.rotation() * R_tool.transpose();
+
+    // --- Orientation: BODY-frame (tool) referencing ---
+    // R_cmd = T_cmd_world.rotation() is the controller's rotation delta expressed in its
+    // OWN captured frame (R_origin_ctrl^-1 * R_current_ctrl, in protocol axes). We want
+    // the EE to rotate about its OWN axes by the same amount, so we re-express R_cmd in
+    // the EE/flange frame via the constant remap M = R_ctrl_to_ee_ and apply it as a
+    // body (right) rotation on the home EE orientation:
+    //     R_EE_world = R_EE_home * (M * R_cmd * M^T)
+    // In base coordinates (R_EE_home = R_base * R_origin, T_target.linear = R_base^T * R_EE_world):
+    //     T_target.linear = R_origin * (M * R_cmd * M^T)
+    // This makes "roll the wand about its long axis" map to "gripper spins about its
+    // approach axis" regardless of the operator's absolute hand pose.
+    const Eigen::Matrix3d& M = R_ctrl_to_ee_;
+    T_target.linear() = T_origin_.rotation() * (M * T_cmd_world.rotation() * M.transpose());
 
     return T_target;
 }
@@ -663,7 +696,6 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 void ArmControl::reOrigin() {
     std::lock_guard<std::mutex> lock(state_mtx);
     T_origin_ = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
-    R_tool = T_origin_.rotation().transpose() * T_base_.rotation().transpose();
 }
 
 void ArmControl::restartLogger(const std::string& path) {
