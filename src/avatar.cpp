@@ -52,6 +52,22 @@ Avatar::Avatar(const YAML::Node& config) {
     }
     std::filesystem::create_directories(log_base_dir_);
 
+    int max_index = -1;
+    for (const auto& entry : std::filesystem::directory_iterator(log_base_dir_)) {
+        if (!entry.is_directory()) continue;
+        const std::string name = entry.path().filename().string();
+        bool all_digits = !name.empty() && std::all_of(name.begin(), name.end(), ::isdigit);
+        if (!all_digits) continue;
+        try {
+            int idx = std::stoi(name);
+            if (idx > max_index) max_index = idx;
+        } catch (...) {}
+    }
+    if (max_index >= 0) {
+        episode_index_ = max_index + 1;
+        std::cout << "[AVATAR-INFO]: Resuming from episode " << episode_index_ << std::endl;
+    }
+
     episode_sock_ = socket(AF_INET, SOCK_DGRAM, 0);
 #ifdef _WIN32
     DWORD timeout_ms = 1000;

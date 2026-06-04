@@ -1,0 +1,48 @@
+<mujoco model="plastic_box">
+  <compiler angle="radian" autolimits="true" meshdir="assets"/>
+
+  <asset>
+    <mesh name="plastic_box" file="plastic_box.stl" scale="0.0005 0.0005 0.0005"/>
+    <material name="plastic_mat" rgba="0.85 0.85 0.80 0.6" specular="0.5" shininess="0.3" reflectance="0.2"/>
+  </asset>
+
+  <default>
+    <default class="box_wall">
+      <geom condim="6" friction="0.8 0.005 0.0001"
+            solimp="0.99 0.99 0.001" solref="0.01 1"
+            rgba="0 0 0 0"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="plastic_box">
+      <freejoint name="box_joint"/>
+      <inertial mass="0.2" pos="0 0 0" diaginertia="5.4e-4 8.3e-4 1.0e-3"/>
+
+      <!-- Visual mesh only — no collision -->
+      <geom name="plastic_box_visual" mesh="plastic_box" type="mesh"
+            material="plastic_mat" euler="1.5708 0 0"
+            contype="0" conaffinity="0"/>
+
+      <!-- Collision walls — invisible (rgba 0 0 0 0), sized to the box interior.
+           Adjust these sizes/positions to match your actual STL dimensions.
+           Assumes box is ~200x150x100mm with ~3mm wall thickness. -->
+
+      <!-- Floor -->
+      <geom name="col_floor" class="box_wall" type="box"
+            size="0.097 0.072 0.003" pos="0 0 -0.047"/>
+      <!-- Front wall -->
+      <geom name="col_front" class="box_wall" type="box"
+            size="0.003 0.072 0.047" pos="0.097 0 0"/>
+      <!-- Back wall -->
+      <geom name="col_back" class="box_wall" type="box"
+            size="0.003 0.072 0.047" pos="-0.097 0 0"/>
+      <!-- Left wall -->
+      <geom name="col_left" class="box_wall" type="box"
+            size="0.100 0.003 0.047" pos="0 0.072 0"/>
+      <!-- Right wall -->
+      <geom name="col_right" class="box_wall" type="box"
+            size="0.100 0.003 0.047" pos="0 -0.072 0"/>
+    </body>
+  </worldbody>
+</mujoco>

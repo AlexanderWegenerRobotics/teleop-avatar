@@ -1,4 +1,5 @@
 avatar:
+  log_dir: "../logs"
   transmission:
     remote_ip: "127.0.0.1"
     send_port: 8000
@@ -75,7 +76,7 @@ devices:
       kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
       qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]  # FR3 joint vel limits, ~8% buffer below hard limits
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
-      a_max:      10.0                       # rad/s^2 per-joint accel cap
+      a_max:      15.0                       # rad/s^2 per-joint accel cap
       gamma:      0.05                       # rad, joint-limit safety buffer
       wtask:      [1, 1, 1, 1, 1, 1]         # task weights [posx3, orix3]
 
@@ -136,15 +137,15 @@ devices:
     control_mode: joint_ik   # or: joint_ik | cartesian_impedance
     ik:
       kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
-      kp_o:       6.0                         # task ori gain (1/s)
-      v_lin_max:  1.0                        # m/s  (matches interpolator max_linear_vel)
-      v_ang_max:  2.0                        # rad/s
+      kp_o:       18.0                        # task ori gain (1/s)
+      v_lin_max:  2.0                        # m/s  (matches interpolator max_linear_vel)
+      v_ang_max:  6.0                        # rad/s
       lambda:     0.01                       # LM damping
       mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
       kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
-      qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]  # FR3 joint vel limits, ~8% buffer below hard limits
+      qd_max:     [2.5, 2.5, 2.5, 2.5, 4.0, 4.0, 4.0]  # FR3 limits; wrist (5-7) raised for angular speed
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
-      a_max:      10.0                       # rad/s^2 per-joint accel cap
+      a_max:      80.0                       # rad/s^2 per-joint accel cap
       gamma:      0.05                       # rad, joint-limit safety buffer
       wtask:      [1, 1, 1, 1, 1, 1]         # task weights [posx3, orix3]
 

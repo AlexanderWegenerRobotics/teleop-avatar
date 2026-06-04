@@ -136,22 +136,8 @@ objects:
     type: dynamic
     model_path: "../models/mujoco/props/plastic_box.xml"
     pose:
-      position: [0.6, 0.2, 0.702]
+      position: [0.58, 0.2, 0.702]
       orientation: [1, 0, 0, 0]
-
-  #- name: box_2
-  #  type: dynamic
-  #  model_path: "../models/mujoco/props/box_green.xml"
-  #  pose:
-  #    position: [0.8, 0.3, 0.6]
-  #    orientation: [1, 0, 0, 0]
-
-  #- name: box_3
-  #  type: dynamic
-  #  model_path: "../models/mujoco/props/box_blue.xml"
-  #  pose:
-  #    position: [0.8, -0.3, 0.6]
-  #    orientation: [1, 0, 0, 0]
 
   - name: target_right
     type: mocap
