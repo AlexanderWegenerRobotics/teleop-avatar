@@ -6,6 +6,9 @@
 #include "sim_env/model.hpp"
 #include <chrono>
 #include <iostream>
+#include <thread>
+
+namespace { constexpr double kGripperMaxWidth = 0.08; }
 
 ArmControl::ArmControl(const YAML::Node& device_config, const std::string& session_id)
 #ifdef WITH_FRANKA
@@ -203,6 +206,7 @@ void ArmControl::runStateHandler(){
         if (transmission_ && transmission_->hasNew()) {
             cmd = transmission_->getRecvData();
             has_cmd = true;
+            desired_gripper_closed_.store(cmd.gripper > 0.5f);
         }
 
         updateRecovery();
@@ -262,12 +266,6 @@ void ArmControl::runStateHandler(){
                     motion_gen_.planCartesian(motion_gen_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
                 }
 
-                double target_width = (1.0 - static_cast<double>(cmd.gripper)) * 0.08;
-#ifdef WITH_FRANKA
-                gripper->move(target_width, 0.08);
-#else
-                gripper->setWidth(target_width);
-#endif
                 target_pose_ = T_base_ * T_target;
                 has_cmd = false;
 
@@ -356,6 +354,9 @@ void ArmControl::runStateHandler(){
             state_msg.recovering    = (state_ == SysState::RECOVERING) ? 1 : 0;
             transmission_->setSendData(state_msg);
         }
+
+        const bool grasp_allowed = (state_ == SysState::ENGAGED || state_ == SysState::PAUSED);
+        applyGripper(grasp_allowed && desired_gripper_closed_.load());
 
         gripper_width_.store(gripper->readOnce().width);
 
@@ -823,6 +824,25 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 void ArmControl::reOrigin() {
     std::lock_guard<std::mutex> lock(state_mtx);
     T_origin_ = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
+}
+
+void ArmControl::applyGripper(bool close) {
+    if (close == gripper_close_applied_) return;
+#ifdef WITH_FRANKA
+    if (gripper_busy_.exchange(true)) return;
+    const double width = close ? 0.0 : kGripperMaxWidth;
+    std::thread([this, close, width]() {
+        try {
+            if (close) gripper->grasp(width, 0.1, 40.0);
+            else       gripper->move(width, 0.1);
+        } catch (...) {}
+        gripper_busy_.store(false);
+    }).detach();
+    gripper_close_applied_ = close;
+#else
+    gripper->setWidth(close ? 0.0 : kGripperMaxWidth);
+    gripper_close_applied_ = close;
+#endif
 }
 
 void ArmControl::restartLogger(const std::string& path) {

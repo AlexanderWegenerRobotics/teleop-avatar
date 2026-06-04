@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#include <iostream>
 
 namespace franka {
 
@@ -19,8 +20,8 @@ void Gripper::set_simulation(Simulation& sim, const std::string& device_name) {
 
 double Gripper::currentWidth() {
     if (!sim_) return 0.0;
-    return commanded_width_.load(); 
-    //return sim_->getGripperWidth(name_);
+    //return commanded_width_.load(); 
+    return sim_->getGripperWidth(name_);
 }
 
 void Gripper::commandWidth(double width) {

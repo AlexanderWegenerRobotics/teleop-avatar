@@ -50,6 +50,8 @@ Simulation::Simulation(const YAML::Node& config) {
 
     ctrl_buffer_.assign(model->nu, 0.0);
     buildActuatorIndex();
+    for (const auto& [name, gid] : gripper_ids_)
+        if (gid >= 0) ctrl_buffer_[gid] = 255.0;
     applyInitialPositions();
 
     render_enabled_ = sim_config["rendering"] && sim_config["rendering"]["enabled"].as<bool>(false);
@@ -420,11 +422,12 @@ void Simulation::setCtrl(const std::string& deviceName,
 void Simulation::setGripper(const std::string& deviceName, double width) {
     auto it = gripper_ids_.find(deviceName);
     if (it == gripper_ids_.end() || it->second < 0) {
-        //std::cerr << "[Simulation] setGripper: device '" << deviceName << "' has no gripper actuator defined\n";
+        std::cerr << "[Simulation] setGripper: no actuator found for device '" << deviceName << "' (id=" << (it != gripper_ids_.end() ? it->second : -999) << ")\n";
         return;
     }
 
-    double half_width = std::clamp(width, 0.0, 0.08) / 2.0;
+    constexpr double kMinWidth = 0.006;   // prevent finger mesh penetration at full close
+    double half_width = std::clamp(width, kMinWidth, 0.08) / 2.0;
     double ctrl_value = (half_width / 0.04) * 255.0;
 
     std::lock_guard<std::mutex> lock(ctrl_mtx_);
@@ -499,6 +502,11 @@ void Simulation::applyInitialPositions() {
         }
         for (size_t i = 0; i < dev.q0.size() && i < joints.size(); ++i)
             data->qpos[model->jnt_qposadr[joints[i]]] = dev.q0[i];
+    }
+    for (int j = 0; j < model->njnt; ++j) {
+        const char* jname = mj_id2name(model, mjOBJ_JOINT, j);
+        if (jname && std::string(jname).find("finger_joint") != std::string::npos)
+            data->qpos[model->jnt_qposadr[j]] = 0.04;
     }
     mj_forward(model, data);
 }

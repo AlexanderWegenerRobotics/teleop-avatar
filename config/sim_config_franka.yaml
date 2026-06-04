@@ -97,20 +97,6 @@ objects:
       position: [0, -1.5, 0]
       orientation: [0.7071, 0, 0, 0.7071]
 
-  - name: right_base_frame
-    type: visual
-    model_path: "../models/mujoco/props/coordinate_frame.xml"
-    pose:
-      position: [0, -0.6, 0.8]
-      orientation: [0.5, 0.5, 0.5, 0.5]
-
-  - name: box_1
-    type: dynamic
-    model_path: "../models/mujoco/props/box_red.xml"
-    pose:
-      position: [0.8, 0.0, 0.718]
-      orientation: [1, 0, 0, 0]
-
   - name: soda_can_1
     type: dynamic
     model_path: "../models/mujoco/props/soda_can_red.xml"
@@ -120,16 +106,37 @@ objects:
 
   - name: soda_can_2
     type: dynamic
-    model_path: "../models/mujoco/props/soda_can_green.xml"
+    model_path: "../models/mujoco/props/soda_can_red.xml"
     pose:
       position: [0.6, -0.05, 0.688]
       orientation: [1, 0, 0, 0]
 
-  - name: plastic_bin
+  - name: soda_can_3
+    type: dynamic
+    model_path: "../models/mujoco/props/soda_can_green.xml"
+    pose:
+      position: [0.8, -0.2, 0.688]
+      orientation: [1, 0, 0, 0]
+
+  - name: soda_can_4
+    type: dynamic
+    model_path: "../models/mujoco/props/soda_can_green.xml"
+    pose:
+      position: [0.7, -0.1, 0.688]
+      orientation: [1, 0, 0, 0]
+
+  - name: plastic_bin_red
     type: dynamic
     model_path: "../models/mujoco/props/plastic_box.xml"
     pose:
-      position: [0.8, 0.2, 0.702]
+      position: [0.85, 0.2, 0.702]
+      orientation: [1, 0, 0, 0]
+
+  - name: plastic_bin_green
+    type: dynamic
+    model_path: "../models/mujoco/props/plastic_box.xml"
+    pose:
+      position: [0.6, 0.2, 0.702]
       orientation: [1, 0, 0, 0]
 
   #- name: box_2
@@ -149,7 +156,7 @@ objects:
   - name: target_right
     type: mocap
     model_path: "../models/mujoco/props/target_frame.xml"
-    enabled: True
+    enabled: False
     pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
@@ -157,7 +164,7 @@ objects:
   - name: target_left
     type: mocap
     model_path: "../models/mujoco/props/target_frame.xml"
-    enabled: True
+    enabled: False
     pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
@@ -165,7 +172,7 @@ objects:
   - name: target_raw_right
     type: mocap
     model_path: "../models/mujoco/props/target_frame.xml"
-    enabled: True
+    enabled: False
     pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
@@ -173,21 +180,10 @@ objects:
   - name: target_raw_left
     type: mocap
     model_path: "../models/mujoco/props/target_frame.xml"
-    enabled: True
+    enabled: False
     pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
-
-  - name: place_pose
-    type: mocap
-    model_path: "../models/mujoco/props/target_frame.xml"
-    enabled: True
-    pose:
-      position: [0, 0, 0]
-      orientation: [1, 0, 0, 0]
-
-
-
 
 
 cameras:

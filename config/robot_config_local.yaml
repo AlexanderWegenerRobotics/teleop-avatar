@@ -73,7 +73,7 @@ devices:
       lambda:     0.01                       # LM damping
       mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
       kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
-      qd_max:     [2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610]  # FR3 joint vel limits
+      qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]  # FR3 joint vel limits, ~8% buffer below hard limits
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
       a_max:      10.0                       # rad/s^2 per-joint accel cap
       gamma:      0.05                       # rad, joint-limit safety buffer
@@ -142,7 +142,7 @@ devices:
       lambda:     0.01                       # LM damping
       mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
       kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
-      qd_max:     [2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610]  # FR3 joint vel limits
+      qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]  # FR3 joint vel limits, ~8% buffer below hard limits
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
       a_max:      10.0                       # rad/s^2 per-joint accel cap
       gamma:      0.05                       # rad, joint-limit safety buffer

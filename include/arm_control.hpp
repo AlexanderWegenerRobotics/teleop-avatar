@@ -85,6 +85,7 @@ private:
     void applySelfCollisionFilter(Eigen::Isometry3d& T_target);
     void validateTargetPose(Eigen::Isometry3d& T_target);
     Vector7 jointLimitAvoidanceTorque(const Vector7& q, const Vector7& dq);
+    void applyGripper(bool close);
 
 private:
     std::string name_;
@@ -111,6 +112,9 @@ private:
     Vector7 recovery_target_q_ = Vector7::Zero();
     std::chrono::steady_clock::time_point recovery_start_time_;
     std::atomic<double> gripper_width_{0.0};
+    std::atomic<bool>   desired_gripper_closed_{false};
+    std::atomic<bool>   gripper_busy_{false};
+    bool                gripper_close_applied_{true};
 
     ControlMode control_mode_ = ControlMode::CARTESIAN_IMPEDANCE;
 

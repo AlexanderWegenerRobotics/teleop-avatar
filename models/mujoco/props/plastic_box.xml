@@ -10,7 +10,12 @@
     <body name="plastic_box">
       <freejoint name="box_joint"/>
       <inertial mass="0.2" pos="0 0 0" diaginertia="5.4e-4 8.3e-4 1.0e-3"/>
-      <geom name="plastic_box" mesh="plastic_box" type="mesh" material="plastic_mat" euler="1.5708 0 0"/>
+      <geom name="plastic_box" mesh="plastic_box" type="mesh"
+            material="plastic_mat" euler="1.5708 0 0"
+            condim="6"
+            friction="0.8 0.005 0.0001"
+            solimp="0.99 0.99 0.001"
+            solref="0.01 1"/>
     </body>
   </worldbody>
 </mujoco>
