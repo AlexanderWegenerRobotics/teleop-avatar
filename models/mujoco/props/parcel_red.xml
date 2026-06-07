@@ -1,0 +1,88 @@
+<mujoco model="parcel_red">
+  <compiler angle="radian" autolimits="true" texturedir="assets"/>
+
+  <asset>
+    <texture name="carton_tex"     type="2d" file="carton_texture.png"/>
+    <texture name="side_label_tex" type="cube" file="side_label_red.png"/>
+    <texture name="top_label_tex"  type="2d" file="label_red.png"/>
+
+    <material name="carton_mat" texture="carton_tex" texrepeat="1 1"
+              specular="0.05" shininess="0.02" reflectance="0.0"/>
+    <material name="side_label_mat" texture="side_label_tex" texrepeat="1 1"
+              texuniform="false" specular="0.1" shininess="0.05" reflectance="0.0"/>
+    <material name="top_label_mat" texture="top_label_tex" texrepeat="1 1"
+              texuniform="false" specular="0.1" shininess="0.05" reflectance="0.0"/>
+    <material name="seam_mat" rgba="0.15 0.08 0.04 1"
+              specular="0.0" shininess="0.0" reflectance="0.0"/>
+    <material name="tape_mat" rgba="0.92 0.85 0.50 0.35"
+              specular="0.95" shininess="0.7" reflectance="0.4"/>
+  </asset>
+
+  <worldbody>
+    <body name="parcel_red">
+      <freejoint name="parcel_joint"/>
+      <inertial mass="0.3" pos="0 0 0" diaginertia="6.0e-4 6.0e-4 9.0e-4"/>
+
+      <!-- Cardboard body -->
+      <geom name="carton_body" type="box"
+            size="0.030 0.030 0.0225"
+            material="carton_mat"
+            condim="6"
+            friction="0.8 0.005 0.0001"
+            solimp="0.99 0.99 0.001" solref="0.01 1"/>
+
+      <!-- Side labels -->
+      <geom name="side_label_pos_y" type="box"
+            size="0.018 0.00005 0.01575"
+            pos="0 0.03005 0"
+            euler="0 0 3.1416"
+            material="side_label_mat"
+            contype="0" conaffinity="0"/>
+      <geom name="side_label_neg_y" type="box"
+            size="0.018 0.00005 0.01575"
+            pos="0 -0.03005 0"
+            material="side_label_mat"
+            contype="0" conaffinity="0"/>
+
+      <!-- Seam line across top -->
+      <geom name="seam" type="box"
+            size="0.030 0.0004 0.00004"
+            pos="0 0 0.02255"
+            euler="0 0 1.5708"
+            material="seam_mat"
+            contype="0" conaffinity="0"/>
+
+      <!-- Tape: top strip -->
+      <geom name="tape_top" type="box"
+            size="0.030 0.006 0.00004"
+            pos="0 0 0.02256"
+            euler="0 0 1.5708"
+            material="tape_mat"
+            contype="0" conaffinity="0"/>
+
+      <!-- Tape: wraps down +Y side face, 2cm down from top -->
+      <geom name="tape_side_pos_y" type="box"
+            size="0.010 0.00004 0.006"
+            pos="0 0.03001 0.01255"
+            euler="0 1.5708 0"
+            material="tape_mat"
+            contype="0" conaffinity="0"/>
+
+      <!-- Tape: wraps down -Y side face, 2cm down from top -->
+      <geom name="tape_side_neg_y" type="box"
+            size="0.010 0.00004 0.006"
+            pos="0 -0.03001 0.01255"
+            euler="0 1.5708 0"
+            material="tape_mat"
+            contype="0" conaffinity="0"/>
+
+      <!-- Top label — on top of tape -->
+      <geom name="top_label" type="box"
+            size="0.022 0.016 0.00005"
+            pos="0 0 0.02258"
+            material="top_label_mat"
+            contype="0" conaffinity="0"/>
+
+    </body>
+  </worldbody>
+</mujoco>

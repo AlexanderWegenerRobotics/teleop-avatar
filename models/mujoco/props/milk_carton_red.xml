@@ -1,0 +1,24 @@
+<mujoco model="milk_carton">
+  <compiler angle="radian" autolimits="true" meshdir="assets" texturedir="assets"/>
+
+  <asset>
+    <!-- <mesh name="carton_body"  file="milk_carton_body.stl"  scale="0.001 0.001 0.001"/> -->
+    <!-- <mesh name="catton_label" file="milk_carton_label.stl" scale="0.001 0.001 0.001"/> -->
+     
+    <mesh name="carton_body"  file="milk_carton_body.stl"  scale="0.000821 0.000821 0.000821"/>
+    <mesh name="catton_label" file="milk_carton_label.stl" scale="0.000821 0.000821 0.000821"/>
+
+    <texture name="metal_tex" type="2d" file="metal_material.png"/>
+    <material name="carton_body_mat"  rgba="1 1 1 1" specular="0.8" shininess="0.5" reflectance="0.3"/>
+    <material name="catton_label_mat" rgba="0.72 0.07 0.07 1" specular="0.1" shininess="0.1" reflectance="0.0"/>
+  </asset>
+
+  <worldbody>
+    <body name="milk_carton">
+      <freejoint name="can_joint"/>
+      <inertial mass="0.39" pos="0 0 0.0575" diaginertia="5.8e-4 5.8e-4 2.1e-4"/>
+      <geom name="carton_body"  mesh="carton_body"  type="mesh" material="carton_body_mat"/>
+      <geom name="catton_label" mesh="catton_label" type="mesh" material="catton_label_mat" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>
