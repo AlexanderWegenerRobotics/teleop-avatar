@@ -40,9 +40,10 @@ LISTEN_PORT = 9100
 
 SPAWN_X_RANGE = (0.55, 0.85)
 SPAWN_Y_RANGE = (-0.30, 0.30)
-SPAWN_Z       = 0.688
+SPAWN_Z       = 0.725
 
-MIN_OBJECT_DIST = 0.12
+MIN_OBJECT_DIST  = 0.12
+MIN_BIN_DIST     = 0.18
 
 MODE_WEIGHTS = {0: 0.5, 1: 0.5}
 
@@ -75,17 +76,31 @@ def build_bin_mapping(sim_cfg: dict) -> dict:
     return mapping
 
 
-def sample_positions(n, rng):
+def build_bin_positions(sim_cfg: dict) -> list:
+    positions = []
+    for obj in sim_cfg.get("objects", []):
+        if obj.get("role") == "bin":
+            pos = obj.get("pose", {}).get("position", None)
+            if pos:
+                positions.append((pos[0], pos[1]))
+    return positions
+
+
+def sample_positions(n, bin_positions, rng):
     positions = []
     for _ in range(n):
         for attempt in range(200):
             x = rng.uniform(*SPAWN_X_RANGE)
             y = rng.uniform(*SPAWN_Y_RANGE)
-            ok = all(
+            far_from_objects = all(
                 math.hypot(x - px, y - py) >= MIN_OBJECT_DIST
                 for px, py, _ in positions
             )
-            if ok:
+            far_from_bins = all(
+                math.hypot(x - bx, y - by) >= MIN_BIN_DIST
+                for bx, by in bin_positions
+            )
+            if far_from_objects and far_from_bins:
                 positions.append((x, y, SPAWN_Z))
                 break
         else:
@@ -96,9 +111,9 @@ def sample_positions(n, rng):
     return positions
 
 
-def sample_episode(all_objects, bin_mapping, n_objects, rng):
+def sample_episode(all_objects, bin_mapping, bin_positions, n_objects, rng):
     active = all_objects[:n_objects]
-    positions = sample_positions(len(active), rng)
+    positions = sample_positions(len(active), bin_positions, rng)
 
     spawned = []
     for obj, (x, y, z) in zip(active, positions):
@@ -121,9 +136,10 @@ def sample_episode(all_objects, bin_mapping, n_objects, rng):
 
 
 def run(sim_config_path, n_objects):
-    sim_cfg     = load_sim_config(sim_config_path)
-    all_objects = build_object_defs(sim_cfg)
-    bin_mapping = build_bin_mapping(sim_cfg)
+    sim_cfg       = load_sim_config(sim_config_path)
+    all_objects   = build_object_defs(sim_cfg)
+    bin_mapping   = build_bin_mapping(sim_cfg)
+    bin_positions = build_bin_positions(sim_cfg)
 
     if not all_objects:
         log.error("No pickable objects found — exiting.")
@@ -132,6 +148,7 @@ def run(sim_config_path, n_objects):
     n_objects = min(n_objects, len(all_objects))
     log.info("Loaded %d pickable objects, will spawn %d per episode.", len(all_objects), n_objects)
     log.info("Bin mapping: %s", bin_mapping)
+    log.info("Bin positions (excluded zone): %s", bin_positions)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((LISTEN_HOST, LISTEN_PORT))
@@ -149,7 +166,7 @@ def run(sim_config_path, n_objects):
             seed = random.randint(0, 2**31 - 1)
             rng  = random.Random(seed)
 
-            episode = sample_episode(all_objects, bin_mapping, n_objects, rng)
+            episode = sample_episode(all_objects, bin_mapping, bin_positions, n_objects, rng)
             episode["seed"] = seed
 
             sock.sendto(msgpack.packb(episode), addr)

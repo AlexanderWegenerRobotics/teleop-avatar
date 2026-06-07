@@ -7,7 +7,7 @@
 #include <vector>
 
 struct LoggerConfig {
-    std::string output_dir  = "logs";   // episodes are written to {output_dir}/{index:03d}/images.hdf5
+    std::string output_dir  = "../logs";   // episodes are written to {output_dir}/{index:03d}/images_{camera_name}.hdf5
     std::string camera_name = "camera"; // used as HDF5 dataset path: observations/images/{camera_name}
     int         width       = 224;
     int         height      = 224;

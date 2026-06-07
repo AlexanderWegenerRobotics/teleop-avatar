@@ -70,9 +70,7 @@ static hid_t make1DDataset(hid_t file, const char* path) {
     hid_t props = H5Pcreate(H5P_DATASET_CREATE);
     H5Pset_chunk(props, 1, chunk);
 
-    hid_t dset = H5Dcreate2(file, path,
-                             H5T_STD_U64LE, space,
-                             H5P_DEFAULT, props, H5P_DEFAULT);
+    hid_t dset = H5Dcreate2(file, path,  H5T_STD_U64LE, space, H5P_DEFAULT, props, H5P_DEFAULT);
     H5Pclose(props);
     H5Sclose(space);
     return dset;
@@ -119,7 +117,8 @@ void VideoLogger::startEpisode(const std::string& session_id, int episode_index)
     namespace fs = std::filesystem;
     fs::path dir = fs::path(config_.output_dir) / idx_buf;
     fs::create_directories(dir);
-    std::string path = (dir / "images.hdf5").string();
+    std::string filename = "images_" + config_.camera_name + ".hdf5";
+    std::string path = (dir / filename).string();
 
     // Write with the earliest compatible format so any HDF5 1.8+ reader (h5py, etc.) can open it.
     hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);

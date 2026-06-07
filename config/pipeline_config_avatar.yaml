@@ -46,7 +46,7 @@ cameras:
 
     log:
       enabled:      false
-      output_dir:   "logs"
+      output_dir:   "../logs"
       width:        640
       height:       480
       center_crop:  false     # crop largest 1:1 square from centre before resizing

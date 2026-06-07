@@ -46,7 +46,7 @@ Avatar::Avatar(const YAML::Node& config) {
     if (auto* a = getArm("arm_right")) a->setCollisionImportanceWeight(1.0);
     if (auto* a = getArm("arm_left"))  a->setCollisionImportanceWeight(1.0);
 
-    log_base_dir_ = "logs";
+    log_base_dir_ = "../logs";
     if (sys_config["avatar"]["log_dir"]){
         std::cout << "Found log dir" << std::endl;
         log_base_dir_ = sys_config["avatar"]["log_dir"].as<std::string>();
