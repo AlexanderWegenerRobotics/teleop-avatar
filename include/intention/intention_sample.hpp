@@ -68,14 +68,18 @@ struct IntentionSample {
     uint64_t frame_id     = 0;
     uint64_t timestamp_ns = 0;
     bool     gaze_valid   = false;
-    std::vector<float>       slot_belief;    // softmax over slots + none, length = slots.size() + 1
-    std::vector<uint8_t>     slot_types;     // SlotType for each slot, for logging
-    std::vector<std::string> slot_names;     // for logging
+    float    gaze_px_x    = 0.0f;
+    float    gaze_px_y    = 0.0f;
+    std::vector<float>       slot_belief;
+    std::vector<uint8_t>     slot_types;
+    std::vector<std::string> slot_names;
+    std::vector<float>       slot_px_u;      // projected center pixel u per slot (-1 if behind camera)
+    std::vector<float>       slot_px_v;      // projected center pixel v per slot (-1 if behind camera)
     Eigen::Isometry3d T_ee_left;
     Eigen::Isometry3d T_ee_right;
     float gripper_left  = 0.0f;
     float gripper_right = 0.0f;
-    std::vector<float> slot_distances;       // 2 EEFs x N pick/place slots, interleaved
+    std::vector<float> slot_distances;
 };
 
 struct IntentionLogEntry {
@@ -83,20 +87,26 @@ struct IntentionLogEntry {
     uint64_t frame_id;
     uint64_t timestamp_ns;
     uint8_t  gaze_valid;
-    std::array<float,   11> slot_belief;    // 10 slots + none
+    float    gaze_px_x;
+    float    gaze_px_y;
+    std::array<float,   11> slot_belief;
     std::array<uint8_t, 10> slot_types;
+    std::array<float,   10> slot_px_u;      // projected center pixel u per slot
+    std::array<float,   10> slot_px_v;      // projected center pixel v per slot
     std::array<double, 3> ee_left_pos;
     std::array<double, 3> ee_right_pos;
     float gripper_left;
     float gripper_right;
-    std::array<float, 20> slot_distances;  // 2 EEF x 10 slots max
+    std::array<float, 20> slot_distances;
     uint8_t n_slots;
 };
 
 inline std::string intentionLogHeader() {
-    std::string h = "time;frame_id;timestamp_ns;gaze_valid;";
+    std::string h = "time;frame_id;timestamp_ns;gaze_valid;gaze_px_x;gaze_px_y;";
     for (int i = 0; i < 11; ++i) h += "slot_belief_" + std::to_string(i) + ";";
     for (int i = 0; i < 10; ++i) h += "slot_type_"   + std::to_string(i) + ";";
+    for (int i = 0; i < 10; ++i) h += "slot_px_u_"   + std::to_string(i) + ";";
+    for (int i = 0; i < 10; ++i) h += "slot_px_v_"   + std::to_string(i) + ";";
     h += "ee_left_x;ee_left_y;ee_left_z;";
     h += "ee_right_x;ee_right_y;ee_right_z;";
     h += "gripper_left;gripper_right;";
@@ -106,16 +116,20 @@ inline std::string intentionLogHeader() {
 }
 
 inline std::string intentionLogRow(const IntentionLogEntry& e) {
-    std::string r = std::to_string(e.time)         + ";";
-    r += std::to_string(e.frame_id)                + ";";
-    r += std::to_string(e.timestamp_ns)            + ";";
-    r += std::to_string(e.gaze_valid)              + ";";
+    std::string r = std::to_string(e.time)        + ";";
+    r += std::to_string(e.frame_id)               + ";";
+    r += std::to_string(e.timestamp_ns)           + ";";
+    r += std::to_string(e.gaze_valid)             + ";";
+    r += std::to_string(e.gaze_px_x)              + ";";
+    r += std::to_string(e.gaze_px_y)              + ";";
     for (auto v : e.slot_belief)    r += std::to_string(v) + ";";
     for (auto v : e.slot_types)     r += std::to_string(v) + ";";
+    for (auto v : e.slot_px_u)      r += std::to_string(v) + ";";
+    for (auto v : e.slot_px_v)      r += std::to_string(v) + ";";
     for (auto v : e.ee_left_pos)    r += std::to_string(v) + ";";
     for (auto v : e.ee_right_pos)   r += std::to_string(v) + ";";
-    r += std::to_string(e.gripper_left)            + ";";
-    r += std::to_string(e.gripper_right)           + ";";
+    r += std::to_string(e.gripper_left)           + ";";
+    r += std::to_string(e.gripper_right)          + ";";
     for (auto v : e.slot_distances) r += std::to_string(v) + ";";
     r += std::to_string(e.n_slots) + "\n";
     return r;

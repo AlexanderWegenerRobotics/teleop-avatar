@@ -27,6 +27,8 @@ void IntentionRecognizer::push(const IntentionSample& sample) {
     entry.frame_id      = sample.frame_id;
     entry.timestamp_ns  = sample.timestamp_ns;
     entry.gaze_valid    = static_cast<uint8_t>(sample.gaze_valid);
+    entry.gaze_px_x     = sample.gaze_px_x;
+    entry.gaze_px_y     = sample.gaze_px_y;
     entry.gripper_left  = sample.gripper_left;
     entry.gripper_right = sample.gripper_right;
     entry.n_slots       = static_cast<uint8_t>(std::min(sample.slot_types.size(), size_t(10)));
@@ -38,6 +40,13 @@ void IntentionRecognizer::push(const IntentionSample& sample) {
     entry.slot_types.fill(0);
     for (size_t i = 0; i < std::min(sample.slot_types.size(), size_t(10)); ++i)
         entry.slot_types[i] = sample.slot_types[i];
+
+    entry.slot_px_u.fill(-1.0f);
+    entry.slot_px_v.fill(-1.0f);
+    for (size_t i = 0; i < std::min(sample.slot_px_u.size(), size_t(10)); ++i) {
+        entry.slot_px_u[i] = sample.slot_px_u[i];
+        entry.slot_px_v[i] = sample.slot_px_v[i];
+    }
 
     auto lp = sample.T_ee_left.translation();
     entry.ee_left_pos  = {lp.x(), lp.y(), lp.z()};

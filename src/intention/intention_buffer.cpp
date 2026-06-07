@@ -79,11 +79,21 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
             sample.slot_names.push_back(slot.name);
         }
 
+        sample.gaze_px_x = gaze.gaze_px_x;
+        sample.gaze_px_y = gaze.gaze_px_y;
+
         sample.slot_belief = computeBelief(
             gaze.gaze_px_x, gaze.gaze_px_y,
             kernels,
             R_CH,
             config_.head_position);
+
+        for (const auto& k : kernels) {
+            float u = -1.0f, v = -1.0f;
+            projectToImage(k.center, R_CH, config_.head_position, u, v);
+            sample.slot_px_u.push_back(u);
+            sample.slot_px_v.push_back(v);
+        }
 
         // Distances: 2 EEFs x N pick/place slots, interleaved [left_slot0, right_slot0, ...]
         for (const auto& slot : snap.slots) {
