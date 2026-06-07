@@ -126,9 +126,7 @@ public:
         meta_file_.flush();
     }
 
-    void writeEpisodeConfig(double pick_x, double pick_y, double pick_z,
-                            double place_x, double place_y, double place_z,
-                            int mode)
+    void writeEpisodeConfig(int seed, int mode, const std::string& color_bin_mapping)
     {
         double t = std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - startTime_).count();
@@ -137,10 +135,9 @@ public:
                    << episode_id_ << ";"
                    << "episode_config" << ";"
                    << t << ";"
-                   << "" << ";"   // reason column (empty for config)
-                   << pick_x  << ";" << pick_y  << ";" << pick_z  << ";"
-                   << place_x << ";" << place_y << ";" << place_z << ";"
-                   << mode << "\n";
+                   << seed << ";"
+                   << mode << ";"
+                   << color_bin_mapping << "\n";
         meta_file_.flush();
     }
 
@@ -158,9 +155,7 @@ private:
         if (!meta_file_)
             throw std::runtime_error("DataLogger: failed to open meta file: " + meta_path);
 
-        // Extended header: includes episode config columns
-        meta_file_ << "session_id;episode_id;event;time_s;reason;"
-                      "pick_x;pick_y;pick_z;place_x;place_y;place_z;mode\n";
+        meta_file_ << "session_id;episode_id;event;time_s;seed;mode;color_bin_mapping\n";
         meta_file_.flush();
     }
 
@@ -168,12 +163,12 @@ private:
         double t = std::chrono::duration<double>(
             std::chrono::high_resolution_clock::now() - startTime_).count();
         std::lock_guard<std::mutex> lock(meta_mtx_);
-        // Pad the config columns with empty fields for non-config events
         meta_file_ << session_id_ << ";"
                    << episode_id_ << ";"
                    << event       << ";"
                    << t           << ";"
-                   << reason      << ";;;;;;;\n";
+                   << ";" << ";"
+                   << reason      << "\n";
         meta_file_.flush();
     }
 
@@ -274,29 +269,56 @@ inline std::string headLogRow(const HeadLogEntry& e) {
 }
 
 struct SceneLogEntry {
-    double time;
-    double object_x, object_y, object_z;
-    double object_qw, object_qx, object_qy, object_qz;
-    double pick_x, pick_y, pick_z;
-    double place_x, place_y, place_z;
-    int    mode;
+    static constexpr int MAX_OBJECTS = 4;
+    static constexpr int MAX_BINS    = 4;
+
+    double time = 0.0;
+    int    mode = 0;
+    int    seed = 0;
+
+    int n_objects = 0;
+    std::array<std::string,           MAX_OBJECTS> object_names;
+    std::array<std::array<double, 3>, MAX_OBJECTS> object_pos{};
+    std::array<std::array<double, 4>, MAX_OBJECTS> object_quat{};
+
+    int n_bins = 0;
+    std::array<std::string,           MAX_BINS> bin_names;
+    std::array<std::array<double, 3>, MAX_BINS> bin_pos{};
+    std::array<std::array<double, 4>, MAX_BINS> bin_quat{};
 };
 
 inline std::string sceneLogHeader() {
-    return "time;"
-           "object_x;object_y;object_z;"
-           "object_qw;object_qx;object_qy;object_qz;"
-           "pick_x;pick_y;pick_z;"
-           "place_x;place_y;place_z;"
-           "mode\n";
+    std::string h = "time;mode;seed;";
+    for (int i = 0; i < SceneLogEntry::MAX_OBJECTS; ++i) {
+        std::string p = "obj" + std::to_string(i) + "_";
+        h += p + "name;" + p + "x;" + p + "y;" + p + "z;"
+           + p + "qw;" + p + "qx;" + p + "qy;" + p + "qz;";
+    }
+    for (int i = 0; i < SceneLogEntry::MAX_BINS; ++i) {
+        std::string p = "bin" + std::to_string(i) + "_";
+        h += p + "name;" + p + "x;" + p + "y;" + p + "z;"
+           + p + "qw;" + p + "qx;" + p + "qy;" + p + "qz;";
+    }
+    h += "n_objects;n_bins\n";
+    return h;
 }
 
 inline std::string sceneLogRow(const SceneLogEntry& e) {
-    std::string r = std::to_string(e.time) + ";";
-    r += std::to_string(e.object_x)  + ";" + std::to_string(e.object_y)  + ";" + std::to_string(e.object_z)  + ";";
-    r += std::to_string(e.object_qw) + ";" + std::to_string(e.object_qx) + ";" + std::to_string(e.object_qy) + ";" + std::to_string(e.object_qz) + ";";
-    r += std::to_string(e.pick_x)    + ";" + std::to_string(e.pick_y)    + ";" + std::to_string(e.pick_z)    + ";";
-    r += std::to_string(e.place_x)   + ";" + std::to_string(e.place_y)   + ";" + std::to_string(e.place_z)   + ";";
-    r += std::to_string(e.mode) + "\n";
+    std::string r = std::to_string(e.time) + ";" + std::to_string(e.mode) + ";" + std::to_string(e.seed) + ";";
+    for (int i = 0; i < SceneLogEntry::MAX_OBJECTS; ++i) {
+        const auto& p = e.object_pos[i];
+        const auto& q = e.object_quat[i];
+        r += e.object_names[i] + ";";
+        r += std::to_string(p[0]) + ";" + std::to_string(p[1]) + ";" + std::to_string(p[2]) + ";";
+        r += std::to_string(q[0]) + ";" + std::to_string(q[1]) + ";" + std::to_string(q[2]) + ";" + std::to_string(q[3]) + ";";
+    }
+    for (int i = 0; i < SceneLogEntry::MAX_BINS; ++i) {
+        const auto& p = e.bin_pos[i];
+        const auto& q = e.bin_quat[i];
+        r += e.bin_names[i] + ";";
+        r += std::to_string(p[0]) + ";" + std::to_string(p[1]) + ";" + std::to_string(p[2]) + ";";
+        r += std::to_string(q[0]) + ";" + std::to_string(q[1]) + ";" + std::to_string(q[2]) + ";" + std::to_string(q[3]) + ";";
+    }
+    r += std::to_string(e.n_objects) + ";" + std::to_string(e.n_bins) + "\n";
     return r;
 }

@@ -1,96 +1,141 @@
 """
 episode_config_server.py
 ------------------------
-Lightweight UDP server that runs alongside the Avatar process.
-When Avatar resets and needs a new episode configuration, it sends a
-request here and we reply with randomised pick/place poses and task mode.
-
-Later: replace sample_pick_pose() / sample_place_pose() with object
-detection output while keeping the same UDP interface.
+UDP server that randomizes carton positions each episode and returns
+full per-object spawn configs to the Avatar process.
 
 Protocol (msgpack over UDP):
   Request  <- Avatar: {"type": "request_episode_config"}
   Response -> Avatar: {
-      "pick_x":  float,  # world frame, metres
-      "pick_y":  float,
-      "pick_z":  float,
-      "place_x": float,
-      "place_y": float,
-      "place_z": float,
-      "mode":    int     # 0 = unimanual, 1 = bimanual
+      "seed":              int,
+      "mode":              int,      # 0=unimanual, 1=bimanual
+      "color_bin_mapping": str,      # JSON, e.g. '{"red":"bin_1","blue":"bin_2"}'
+      "objects": [
+          {"name": str, "color": str, "model_path": str, "x": float, "y": float, "z": float},
+          ...
+      ]
   }
+
+Objects with role=bin are NOT included in the response; their positions are fixed
+in the sim_config and the Avatar reads them directly from there at startup.
 """
 
-import socket
-import random
+import argparse
+import json
 import logging
+import math
+import random
+import socket
+import sys
+from pathlib import Path
+
 import msgpack
+import yaml
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("episode_config_server")
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
 LISTEN_HOST = "127.0.0.1"
-LISTEN_PORT = 9100          # Avatar sends requests here
+LISTEN_PORT = 9100
 
-# Workspace bounds (world frame, metres) — tune to your table / arm reach
-PICK_X_RANGE  = (0.55, 0.90)
-PICK_Y_RANGE  = (-0.35, 0.05)
-PICK_Z        = 0.425          # table surface + half box height, fixed
+SPAWN_X_RANGE = (0.55, 0.85)
+SPAWN_Y_RANGE = (-0.30, 0.30)
+SPAWN_Z       = 0.688
 
-PLACE_X_RANGE = (0.65, 0.90)
-PLACE_Y_RANGE = (-0.35, 0.05)
-PLACE_Z       = 0.425  # same height as pick
+MIN_OBJECT_DIST = 0.12
 
-MIN_PICK_PLACE_DIST = 0.10    # metres — avoid degenerate episodes
-
-# Task mode distribution
-# 0 = unimanual (left arm only)
-# 1 = bimanual  (left picks, handover, right places)
 MODE_WEIGHTS = {0: 0.5, 1: 0.5}
 
 
-# ---------------------------------------------------------------------------
-# Sampling
-# ---------------------------------------------------------------------------
-
-def sample_pick_pose():
-    x = random.uniform(*PICK_X_RANGE)
-    y = random.uniform(*PICK_Y_RANGE)
-    return x, y, PICK_Z
+def load_sim_config(path: str) -> dict:
+    with open(path) as f:
+        return yaml.safe_load(f)
 
 
-def sample_place_pose(pick_x, pick_y):
-    """Sample a place pose that is far enough from the pick pose."""
-    for _ in range(100):
-        x = random.uniform(*PLACE_X_RANGE)
-        y = random.uniform(*PLACE_Y_RANGE)
-        dist = ((x - pick_x) ** 2 + (y - pick_y) ** 2) ** 0.5
-        if dist >= MIN_PICK_PLACE_DIST:
-            return x, y, PLACE_Z
-    log.warning("Could not sample place pose satisfying min distance, sampling independently")
-    x = random.uniform(*PLACE_X_RANGE)
-    y = random.uniform(*PLACE_Y_RANGE)
-    return x, y, PLACE_Z
+def build_object_defs(sim_cfg: dict) -> list:
+    objects = []
+    for obj in sim_cfg.get("objects", []):
+        if obj.get("role") == "object":
+            objects.append({
+                "name":       obj["name"],
+                "color":      obj.get("color", "unknown"),
+                "model_path": obj.get("model_path", ""),
+            })
+    if not objects:
+        log.warning("No objects with role=object found in sim_config — check your YAML.")
+    return objects
 
 
-def sample_mode():
+def build_bin_mapping(sim_cfg: dict) -> dict:
+    mapping = {}
+    for obj in sim_cfg.get("objects", []):
+        if obj.get("role") == "bin":
+            color = obj.get("color", "unknown")
+            mapping[color] = obj["name"]
+    return mapping
+
+
+def sample_positions(n, rng):
+    positions = []
+    for _ in range(n):
+        for attempt in range(200):
+            x = rng.uniform(*SPAWN_X_RANGE)
+            y = rng.uniform(*SPAWN_Y_RANGE)
+            ok = all(
+                math.hypot(x - px, y - py) >= MIN_OBJECT_DIST
+                for px, py, _ in positions
+            )
+            if ok:
+                positions.append((x, y, SPAWN_Z))
+                break
+        else:
+            x = rng.uniform(*SPAWN_X_RANGE)
+            y = rng.uniform(*SPAWN_Y_RANGE)
+            positions.append((x, y, SPAWN_Z))
+            log.warning("Could not place object %d with min-distance constraint; placed anyway.", len(positions))
+    return positions
+
+
+def sample_episode(all_objects, bin_mapping, n_objects, rng):
+    active = all_objects[:n_objects]
+    positions = sample_positions(len(active), rng)
+
+    spawned = []
+    for obj, (x, y, z) in zip(active, positions):
+        spawned.append({
+            "name":       obj["name"],
+            "color":      obj["color"],
+            "model_path": obj["model_path"],
+            "x": x, "y": y, "z": z,
+        })
+
     modes = list(MODE_WEIGHTS.keys())
     weights = list(MODE_WEIGHTS.values())
-    return random.choices(modes, weights=weights, k=1)[0]
+    mode = rng.choices(modes, weights=weights, k=1)[0]
+
+    return {
+        "mode":              mode,
+        "color_bin_mapping": json.dumps(bin_mapping),
+        "objects":           spawned,
+    }
 
 
-# ---------------------------------------------------------------------------
-# Server
-# ---------------------------------------------------------------------------
+def run(sim_config_path, n_objects):
+    sim_cfg     = load_sim_config(sim_config_path)
+    all_objects = build_object_defs(sim_cfg)
+    bin_mapping = build_bin_mapping(sim_cfg)
 
-def run():
+    if not all_objects:
+        log.error("No pickable objects found — exiting.")
+        sys.exit(1)
+
+    n_objects = min(n_objects, len(all_objects))
+    log.info("Loaded %d pickable objects, will spawn %d per episode.", len(all_objects), n_objects)
+    log.info("Bin mapping: %s", bin_mapping)
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((LISTEN_HOST, LISTEN_PORT))
-    log.info(f"Listening on {LISTEN_HOST}:{LISTEN_PORT}")
+    log.info("Listening on %s:%d", LISTEN_HOST, LISTEN_PORT)
 
     while True:
         try:
@@ -98,36 +143,41 @@ def run():
             msg = msgpack.unpackb(raw, raw=False)
 
             if msg.get("type") != "request_episode_config":
-                log.warning(f"Unknown message type: {msg.get('type')}")
+                log.warning("Unknown message type: %s", msg.get("type"))
                 continue
 
-            pick_x, pick_y, pick_z     = sample_pick_pose()
-            place_x, place_y, place_z  = sample_place_pose(pick_x, pick_y)
-            mode                       = sample_mode()
+            seed = random.randint(0, 2**31 - 1)
+            rng  = random.Random(seed)
 
-            response = {
-                "pick_x":  pick_x,
-                "pick_y":  pick_y,
-                "pick_z":  pick_z,
-                "place_x": place_x,
-                "place_y": place_y,
-                "place_z": place_z,
-                "mode":    mode,
-            }
+            episode = sample_episode(all_objects, bin_mapping, n_objects, rng)
+            episode["seed"] = seed
 
-            sock.sendto(msgpack.packb(response), addr)
+            sock.sendto(msgpack.packb(episode), addr)
 
-            mode_str = "unimanual" if mode == 0 else "bimanual"
+            names = [o["name"] for o in episode["objects"]]
             log.info(
-                f"Episode config sent to {addr} | "
-                f"pick=({pick_x:.3f},{pick_y:.3f},{pick_z:.3f}) "
-                f"place=({place_x:.3f},{place_y:.3f},{place_z:.3f}) "
-                f"mode={mode_str}"
+                "Episode sent | seed=%d mode=%s objects=%s",
+                seed,
+                "bimanual" if episode["mode"] else "unimanual",
+                names,
             )
+            for o in episode["objects"]:
+                log.info("  %s (%s) -> (%.3f, %.3f, %.3f)", o["name"], o["color"], o["x"], o["y"], o["z"])
 
         except Exception as e:
-            log.error(f"Error: {e}")
+            log.error("Error: %s", e, exc_info=True)
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description="Episode config server")
+    parser.add_argument(
+        "--sim-config",
+        default=str(Path(__file__).parent.parent / "config" / "sim_config_franka.yaml"),
+        help="Path to sim_config_franka.yaml",
+    )
+    parser.add_argument(
+        "--n-objects", type=int, default=4,
+        help="Number of objects to spawn per episode (1=smoke test, 4=full dataset)",
+    )
+    args = parser.parse_args()
+    run(args.sim_config, args.n_objects)

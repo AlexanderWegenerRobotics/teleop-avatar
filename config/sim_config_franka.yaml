@@ -97,46 +97,64 @@ objects:
       position: [0, -1.5, 0]
       orientation: [0.7071, 0, 0, 0.7071]
 
-  - name: soda_can_1
+  - name: object_1
     type: dynamic
-    model_path: "../models/mujoco/props/soda_can_red.xml"
+    role: object
+    color: red
+    body_name: parcel_red
+    model_path: "../models/mujoco/props/parcel_red.xml"
     pose:
-      position: [0.8, -0.1, 0.688]
+      position: [0.65, -0.20, 0.725]
       orientation: [1, 0, 0, 0]
 
-  - name: soda_can_2
+  - name: object_2
     type: dynamic
-    model_path: "../models/mujoco/props/soda_can_red.xml"
+    role: object
+    color: red
+    body_name: parcel_red
+    model_path: "../models/mujoco/props/parcel_red.xml"
     pose:
-      position: [0.6, -0.05, 0.688]
+      position: [0.65, 0.10, 0.725]
       orientation: [1, 0, 0, 0]
 
-  - name: soda_can_3
+  - name: object_3
     type: dynamic
-    model_path: "../models/mujoco/props/soda_can_green.xml"
+    role: object
+    color: blue
+    body_name: parcel_blue
+    model_path: "../models/mujoco/props/parcel_blue.xml"
     pose:
-      position: [0.8, -0.2, 0.688]
+      position: [0.65, 0.0, 0.725]
       orientation: [1, 0, 0, 0]
 
-  - name: soda_can_4
+  - name: object_4
     type: dynamic
-    model_path: "../models/mujoco/props/soda_can_green.xml"
+    role: object
+    color: blue
+    body_name: parcel_blue
+    model_path: "../models/mujoco/props/parcel_blue.xml"
     pose:
-      position: [0.7, -0.1, 0.688]
+      position: [0.65, 0.30, 0.725]
       orientation: [1, 0, 0, 0]
 
-  - name: plastic_bin_red
+  - name: bin_1
     type: dynamic
+    role: bin
+    color: red
+    body_name: plastic_box
     model_path: "../models/mujoco/props/plastic_box.xml"
     pose:
-      position: [0.85, 0.2, 0.702]
+      position: [0.83, 0.14, 0.702]
       orientation: [1, 0, 0, 0]
 
-  - name: plastic_bin_green
+  - name: bin_2
     type: dynamic
+    role: bin
+    color: blue
+    body_name: plastic_box
     model_path: "../models/mujoco/props/plastic_box.xml"
     pose:
-      position: [0.58, 0.2, 0.702]
+      position: [0.83, -0.14, 0.702]
       orientation: [1, 0, 0, 0]
 
   - name: target_right

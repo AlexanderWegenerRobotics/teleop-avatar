@@ -264,6 +264,6 @@ void HeadControl::restartLogger(const std::string& path) {
     logger_->restart(path);
 }
 
-void HeadControl::writeEpisodeConfig(double px, double py, double pz, double gx, double gy, double gz, int mode) {
-    logger_->writeEpisodeConfig(px, py, pz, gx, gy, gz, mode);
+void HeadControl::writeEpisodeConfig(int seed, int mode, const std::string& color_bin_mapping) {
+    logger_->writeEpisodeConfig(seed, mode, color_bin_mapping);
 }

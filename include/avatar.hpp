@@ -1,6 +1,8 @@
 #include <yaml-cpp/yaml.h>
 #include <atomic>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "network/platform_socket.hpp"
 
@@ -64,16 +66,36 @@ private:
     socket_t         episode_sock_  = kInvalidSocket;
     int              episode_index_ = 0;
 
-    struct EpisodeConfig {
-        double pick_x, pick_y, pick_z;
-        double place_x, place_y, place_z;
-        int    mode;
+    struct ObjectDef {
+        std::string name;
+        std::string mujoco_body;
+        std::string color;
+        std::string model_path;
+        double fixed_x = 0, fixed_y = 0, fixed_z = 0;
     };
+
+    struct SpawnedObject {
+        std::string name;
+        std::string color;
+        std::string model_path;
+        double x = 0, y = 0, z = 0;
+    };
+
+    struct EpisodeConfig {
+        int                       seed = 0;
+        int                       mode = 0;
+        std::string               color_bin_mapping;
+        std::vector<SpawnedObject> objects;
+    };
+
+    std::vector<ObjectDef> object_defs_;
+    std::vector<ObjectDef> bin_defs_;
+
     EpisodeConfig current_episode_cfg_{};
 
     EpisodeConfig requestEpisodeConfig();
     void          startNewEpisodeFolder();
-    void applyEpisodeConfig(const EpisodeConfig& cfg);
+    void          applyEpisodeConfig(const EpisodeConfig& cfg);
 
     std::unique_ptr<IntentionBuffer>     intention_buffer_;
     std::unique_ptr<IntentionRecognizer> intention_recognizer_;

@@ -4,6 +4,7 @@
 #include "data_logger.hpp"
 #include "intention/annotation_msg.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <filesystem>
 #include "network/platform_socket.hpp"
@@ -205,6 +206,27 @@ Avatar::Avatar(const YAML::Node& config) {
     sim_ = std::make_shared<Simulation>(config);
 
     YAML::Node sim_config = YAML::LoadFile(config["sim_config"].as<std::string>());
+
+    for (const auto& obj : sim_config["objects"]) {
+        if (!obj["role"]) continue;
+        const std::string role      = obj["role"].as<std::string>();
+        const std::string name      = obj["name"].as<std::string>();
+        const std::string body_name = obj["body_name"].as<std::string>("");
+        const std::string color     = obj["color"].as<std::string>("");
+        const std::string mp        = obj["model_path"].as<std::string>("");
+        ObjectDef def;
+        def.name        = name;
+        def.mujoco_body = name + "_" + body_name;
+        def.color       = color;
+        def.model_path  = mp;
+        if (obj["pose"] && obj["pose"]["position"]) {
+            auto p = obj["pose"]["position"].as<std::vector<double>>();
+            def.fixed_x = p[0]; def.fixed_y = p[1]; def.fixed_z = p[2];
+        }
+        if (role == "object") object_defs_.push_back(def);
+        else if (role == "bin") bin_defs_.push_back(def);
+    }
+
     std::unordered_map<std::string, YAML::Node> sim_devs;
     for (const auto& sd : sim_config["devices"])
         sim_devs[sd["name"].as<std::string>()] = YAML::Node(sd);
@@ -354,24 +376,34 @@ void Avatar::start(){
                     snap.head_tilt = static_cast<float>(head_state.q[1]);
                 }
 
-                Eigen::Vector3d obj_pos;
-                Eigen::Quaterniond obj_quat;
-                if (sim_->getFreeBodyPose("box_1_box", obj_pos, obj_quat)) {
+                for (const auto& so : current_episode_cfg_.objects) {
+                    auto it = std::find_if(object_defs_.begin(), object_defs_.end(),
+                        [&](const ObjectDef& d){ return d.name == so.name; });
+                    if (it == object_defs_.end()) continue;
+                    Eigen::Vector3d p; Eigen::Quaterniond q;
+                    if (!sim_->getFreeBodyPose(it->mujoco_body, p, q)) continue;
                     ObjectSlot s;
-                    s.name    = "box_1";
+                    s.name    = so.name;
                     s.type    = SlotType::PICK_OBJ;
                     s.T_world = Eigen::Isometry3d::Identity();
-                    s.T_world.translation() = obj_pos;
-                    s.T_world.linear()      = obj_quat.toRotationMatrix();
+                    s.T_world.translation() = p;
+                    s.T_world.linear()      = q.toRotationMatrix();
                     snap.slots.push_back(std::move(s));
                 }
 
-                {
+                for (const auto& bin : bin_defs_) {
+                    Eigen::Vector3d p; Eigen::Quaterniond q;
+                    if (!sim_->getFreeBodyPose(bin.mujoco_body, p, q)) {
+                        p = Eigen::Vector3d(bin.fixed_x, bin.fixed_y, bin.fixed_z);
+                        q = Eigen::Quaterniond::Identity();
+                    }
                     ObjectSlot s;
-                    s.name    = "place_pose";
-                    s.type    = SlotType::PLACE_POSE;
-                    s.T_world = Eigen::Isometry3d::Identity();
-                    s.T_world.translation() = Eigen::Vector3d(current_episode_cfg_.place_x, current_episode_cfg_.place_y, current_episode_cfg_.place_z);
+                    s.name         = bin.name;
+                    s.type         = SlotType::PLACE_POSE;
+                    s.T_world      = Eigen::Isometry3d::Identity();
+                    s.T_world.translation() = p;
+                    s.T_world.linear()      = q.toRotationMatrix();
+                    s.half_extents = Eigen::Vector3d(0.120, 0.100, 0.145);
                     snap.slots.push_back(std::move(s));
                 }
 
@@ -379,29 +411,38 @@ void Avatar::start(){
             }
 
             if (scene_logger_) {
-                Eigen::Vector3d obj_pos;
-                Eigen::Quaterniond obj_quat;
-                if (sim_->getFreeBodyPose("box_1_box", obj_pos, obj_quat)) {
-                    double t = std::chrono::duration<double>(
-                        std::chrono::high_resolution_clock::now() - loop_start_time).count();
-                    SceneLogEntry entry{};
-                    entry.time      = t;
-                    entry.object_x  = obj_pos.x();
-                    entry.object_y  = obj_pos.y();
-                    entry.object_z  = obj_pos.z();
-                    entry.object_qw = obj_quat.w();
-                    entry.object_qx = obj_quat.x();
-                    entry.object_qy = obj_quat.y();
-                    entry.object_qz = obj_quat.z();
-                    entry.pick_x    = current_episode_cfg_.pick_x;
-                    entry.pick_y    = current_episode_cfg_.pick_y;
-                    entry.pick_z    = current_episode_cfg_.pick_z;
-                    entry.place_x   = current_episode_cfg_.place_x;
-                    entry.place_y   = current_episode_cfg_.place_y;
-                    entry.place_z   = current_episode_cfg_.place_z;
-                    entry.mode      = current_episode_cfg_.mode;
-                    scene_logger_->write(entry);
+                double t = std::chrono::duration<double>(
+                    std::chrono::high_resolution_clock::now() - loop_start_time).count();
+                SceneLogEntry entry{};
+                entry.time = t;
+                entry.mode = current_episode_cfg_.mode;
+                entry.seed = current_episode_cfg_.seed;
+
+                for (size_t i = 0; i < object_defs_.size() && i < SceneLogEntry::MAX_OBJECTS; ++i) {
+                    Eigen::Vector3d p; Eigen::Quaterniond q;
+                    if (sim_->getFreeBodyPose(object_defs_[i].mujoco_body, p, q)) {
+                        entry.object_pos [i] = {p.x(), p.y(), p.z()};
+                        entry.object_quat[i] = {q.w(), q.x(), q.y(), q.z()};
+                    }
+                    entry.object_names[i] = object_defs_[i].name;
                 }
+                entry.n_objects = static_cast<int>(std::min(object_defs_.size(),
+                    static_cast<size_t>(SceneLogEntry::MAX_OBJECTS)));
+
+                for (size_t i = 0; i < bin_defs_.size() && i < SceneLogEntry::MAX_BINS; ++i) {
+                    Eigen::Vector3d p; Eigen::Quaterniond q;
+                    if (!sim_->getFreeBodyPose(bin_defs_[i].mujoco_body, p, q)) {
+                        p = Eigen::Vector3d(bin_defs_[i].fixed_x, bin_defs_[i].fixed_y, bin_defs_[i].fixed_z);
+                        q = Eigen::Quaterniond::Identity();
+                    }
+                    entry.bin_pos [i] = {p.x(), p.y(), p.z()};
+                    entry.bin_quat[i] = {q.w(), q.x(), q.y(), q.z()};
+                    entry.bin_names[i] = bin_defs_[i].name;
+                }
+                entry.n_bins = static_cast<int>(std::min(bin_defs_.size(),
+                    static_cast<size_t>(SceneLogEntry::MAX_BINS)));
+
+                scene_logger_->write(entry);
             }
         #endif
 
@@ -447,15 +488,21 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
     sendto(episode_sock_, req_buf.data(), static_cast<int>(req_buf.size()), 0,
            reinterpret_cast<sockaddr*>(&server_addr), static_cast<int>(sizeof(server_addr)));
 
-    char recv_buf[1024];
+    char recv_buf[8192];
     socklen_t addr_len = static_cast<socklen_t>(sizeof(server_addr));
     ssize_t n = recvfrom(episode_sock_, recv_buf, static_cast<int>(sizeof(recv_buf)), 0,
                          reinterpret_cast<sockaddr*>(&server_addr), &addr_len);
 
     EpisodeConfig cfg{};
-    cfg.pick_x  = 0.65; cfg.pick_y  =  0.10; cfg.pick_z  = 0.62;
-    cfg.place_x = 0.65; cfg.place_y = -0.10; cfg.place_z = 0.62;
-    cfg.mode    = 0;
+    cfg.mode = 0;
+    for (const auto& def : object_defs_) {
+        SpawnedObject so;
+        so.name       = def.name;
+        so.color      = def.color;
+        so.model_path = def.model_path;
+        so.x = def.fixed_x; so.y = def.fixed_y; so.z = def.fixed_z;
+        cfg.objects.push_back(so);
+    }
 
     if (n <= 0) {
         std::cerr << "[AVATAR-WARN]: Episode config server unreachable, using defaults" << std::endl;
@@ -464,16 +511,28 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
 
     try {
         auto oh = msgpack::unpack(recv_buf, n);
-        auto obj = oh.get();
+        auto root = oh.get();
         std::map<std::string, msgpack::object> fields;
-        obj.convert(fields);
-        cfg.pick_x  = fields.at("pick_x").as<double>();
-        cfg.pick_y  = fields.at("pick_y").as<double>();
-        cfg.pick_z  = fields.at("pick_z").as<double>();
-        cfg.place_x = fields.at("place_x").as<double>();
-        cfg.place_y = fields.at("place_y").as<double>();
-        cfg.place_z = fields.at("place_z").as<double>();
-        cfg.mode    = fields.at("mode").as<int>();
+        root.convert(fields);
+
+        cfg.seed = fields.at("seed").as<int>();
+        cfg.mode = fields.at("mode").as<int>();
+        cfg.color_bin_mapping = fields.at("color_bin_mapping").as<std::string>();
+
+        cfg.objects.clear();
+        auto obj_list = fields.at("objects").as<std::vector<msgpack::object>>();
+        for (const auto& item : obj_list) {
+            std::map<std::string, msgpack::object> o;
+            item.convert(o);
+            SpawnedObject so;
+            so.name       = o.at("name").as<std::string>();
+            so.color      = o.at("color").as<std::string>();
+            so.model_path = o.at("model_path").as<std::string>();
+            so.x          = o.at("x").as<double>();
+            so.y          = o.at("y").as<double>();
+            so.z          = o.at("z").as<double>();
+            cfg.objects.push_back(so);
+        }
     } catch (const std::exception& e) {
         std::cerr << "[AVATAR-WARN]: Failed to parse episode config: " << e.what() << std::endl;
     }
@@ -511,14 +570,21 @@ void Avatar::startNewEpisodeFolder() {
 }
 
 void Avatar::applyEpisodeConfig(const EpisodeConfig& cfg) {
-    std::cout << "[AVATAR-INFO]: Episode config - "
-              << "pick=(" << cfg.pick_x << "," << cfg.pick_y << "," << cfg.pick_z << ") "
-              << "place=(" << cfg.place_x << "," << cfg.place_y << "," << cfg.place_z << ") "
-              << "mode=" << (cfg.mode == 0 ? "unimanual" : "bimanual") << std::endl;
+    std::cout << "[AVATAR-INFO]: Episode config seed=" << cfg.seed
+              << " mode=" << (cfg.mode == 0 ? "unimanual" : "bimanual")
+              << " n_objects=" << cfg.objects.size() << std::endl;
 
 #ifndef WITH_FRANKA
-    sim_->setFreeBodyPose("box_1_box", Eigen::Vector3d(cfg.pick_x, cfg.pick_y, cfg.pick_z), Eigen::Quaterniond::Identity());
-    sim_->setFramePose("place_pose_frame", Eigen::Vector3d(cfg.place_x, cfg.place_y, cfg.place_z), Eigen::Quaterniond::Identity());
+    for (const auto& so : cfg.objects) {
+        auto it = std::find_if(object_defs_.begin(), object_defs_.end(),
+            [&](const ObjectDef& d){ return d.name == so.name; });
+        if (it == object_defs_.end()) continue;
+        sim_->setFreeBodyPose(it->mujoco_body,
+            Eigen::Vector3d(so.x, so.y, so.z),
+            Eigen::Quaterniond::Identity());
+        std::cout << "[AVATAR-INFO]:   " << so.name << " (" << so.color
+                  << ") -> (" << so.x << "," << so.y << "," << so.z << ")" << std::endl;
+    }
 #endif
 }
 
@@ -551,9 +617,8 @@ void Avatar::processResetAllCompletion() {
     markEpisodeStart();
 
     for (auto& arm : arm_instances)
-        arm->writeEpisodeConfig(current_episode_cfg_.pick_x, current_episode_cfg_.pick_y, current_episode_cfg_.pick_z,
-                                current_episode_cfg_.place_x, current_episode_cfg_.place_y, current_episode_cfg_.place_z,
-                                current_episode_cfg_.mode);
+        arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode,
+                                current_episode_cfg_.color_bin_mapping);
 
     reset_all_pending_.store(false);
 
