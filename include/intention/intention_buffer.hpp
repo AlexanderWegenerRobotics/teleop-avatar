@@ -35,15 +35,20 @@ private:
                     const Eigen::Vector3d& t_WH,
                     float& u, float& v) const;
 
+    struct SlotKernel {
+        Eigen::Vector3d center;
+        Eigen::Vector3d half_extents = Eigen::Vector3d::Zero();
+    };
+
+    float slotLikelihood(float gaze_u, float gaze_v,
+                         const SlotKernel& kernel,
+                         const Eigen::Matrix3d& R_CH,
+                         const Eigen::Vector3d& t_WH) const;
+
     std::vector<float> computeBelief(float gaze_u, float gaze_v,
-                                    const std::vector<Eigen::Vector3d>& p_world,
+                                    const std::vector<SlotKernel>& kernels,
                                     const Eigen::Matrix3d& R_CH,
                                     const Eigen::Vector3d& t_WH) const;
-
-    std::vector<float> computeBelief(
-        float gaze_u, float gaze_v,
-        const std::vector<Eigen::Vector3d>& p_world,
-        const Eigen::Isometry3d& T_cam_world) const;
 
     IntentionBufferConfig config_;
 

@@ -65,24 +65,23 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
         Eigen::Matrix3d R_tilt = Eigen::AngleAxisd(snap.head_tilt, Eigen::Vector3d::UnitY()).toRotationMatrix();
         Eigen::Matrix3d R_CH   = R_tilt * R_pan;
 
-        // Build slot list: EEFs first (from snap.T_ee_*), then pick/place slots
-        std::vector<Eigen::Vector3d> all_positions;
-        all_positions.push_back(snap.T_ee_left.translation());
-        all_positions.push_back(snap.T_ee_right.translation());
+        std::vector<SlotKernel> kernels;
+        kernels.push_back({snap.T_ee_left.translation()});
+        kernels.push_back({snap.T_ee_right.translation()});
         sample.slot_types.push_back(static_cast<uint8_t>(SlotType::EE_LEFT));
         sample.slot_types.push_back(static_cast<uint8_t>(SlotType::EE_RIGHT));
         sample.slot_names.push_back("ee_left");
         sample.slot_names.push_back("ee_right");
 
         for (const auto& slot : snap.slots) {
-            all_positions.push_back(slot.T_world.translation());
+            kernels.push_back({slot.T_world.translation(), slot.half_extents});
             sample.slot_types.push_back(static_cast<uint8_t>(slot.type));
             sample.slot_names.push_back(slot.name);
         }
 
         sample.slot_belief = computeBelief(
             gaze.gaze_px_x, gaze.gaze_px_y,
-            all_positions,
+            kernels,
             R_CH,
             config_.head_position);
 
@@ -190,29 +189,59 @@ bool IntentionBuffer::projectToImage(const Eigen::Vector3d& p_world,
     return true;
 }
 
+float IntentionBuffer::slotLikelihood(float gaze_u, float gaze_v,
+                                      const SlotKernel& kernel,
+                                      const Eigen::Matrix3d& R_CH,
+                                      const Eigen::Vector3d& t_WH) const
+{
+    float sigma2 = config_.gaze_sigma_px * config_.gaze_sigma_px;
+
+    auto gaussian = [&](const Eigen::Vector3d& p) -> float {
+        float u, v;
+        if (!projectToImage(p, R_CH, t_WH, u, v)) return 0.0f;
+        float du = gaze_u - u;
+        float dv = gaze_v - v;
+        return std::exp(-(du * du + dv * dv) / (2.0f * sigma2));
+    };
+
+    float best = gaussian(kernel.center);
+
+    const Eigen::Vector3d& h = kernel.half_extents;
+    if (h.squaredNorm() < 1e-8) return best;
+
+    const double dx = h.x();
+    const double dy = h.y();
+    const double dz = h.z();
+
+    const std::array<Eigen::Vector3d, 8> corners = {{
+        kernel.center + Eigen::Vector3d( dx,  dy,  dz),
+        kernel.center + Eigen::Vector3d(-dx,  dy,  dz),
+        kernel.center + Eigen::Vector3d( dx, -dy,  dz),
+        kernel.center + Eigen::Vector3d(-dx, -dy,  dz),
+        kernel.center + Eigen::Vector3d( dx,  dy, -dz),
+        kernel.center + Eigen::Vector3d(-dx,  dy, -dz),
+        kernel.center + Eigen::Vector3d( dx, -dy, -dz),
+        kernel.center + Eigen::Vector3d(-dx, -dy, -dz),
+    }};
+
+    for (const auto& c : corners)
+        best = std::max(best, gaussian(c));
+
+    return best;
+}
+
 std::vector<float> IntentionBuffer::computeBelief(
     float gaze_u, float gaze_v,
-    const std::vector<Eigen::Vector3d>& p_world,
+    const std::vector<SlotKernel>& kernels,
     const Eigen::Matrix3d& R_CH,
     const Eigen::Vector3d& t_WH) const
 {
-    int N = static_cast<int>(p_world.size());
+    int N = static_cast<int>(kernels.size());
     std::vector<float> belief(N + 1, 0.0f);
 
-    float sigma2 = config_.gaze_sigma_px * config_.gaze_sigma_px;
+    for (int i = 0; i < N; ++i)
+        belief[i] = slotLikelihood(gaze_u, gaze_v, kernels[i], R_CH, t_WH);
 
-    for (int i = 0; i < N; ++i) {
-        float u, v;
-        if (!projectToImage(p_world[i], R_CH, t_WH, u, v)) {
-            belief[i] = 0.0f;
-            continue;
-        }
-        float du = gaze_u - u;
-        float dv = gaze_v - v;
-        belief[i] = std::exp(-(du * du + dv * dv) / (2.0f * sigma2));
-    }
-
-    //belief[N] = 1.0f / static_cast<float>(N + 1);
     belief[N] = 0.1f;
 
     float total = std::accumulate(belief.begin(), belief.end(), 0.0f);

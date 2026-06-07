@@ -37,6 +37,7 @@ struct ObjectSlot {
     std::string       name;
     SlotType          type;
     Eigen::Isometry3d T_world;
+    Eigen::Vector3d   half_extents = Eigen::Vector3d::Zero();
 };
 
 struct StateSnapshot {
