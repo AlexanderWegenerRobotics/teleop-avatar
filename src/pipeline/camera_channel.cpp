@@ -96,8 +96,14 @@ void CameraChannel::stop() {
         logger_->stopEpisode("channel_stop");
 }
 
-void CameraChannel::onEpisodeStart(const std::string& session_id, int episode_index) {
-    if (logger_) logger_->startEpisode(session_id, episode_index);
+void CameraChannel::onEpisodeStart(const std::string& session_id, int episode_index,
+                                    const std::string& log_dir) {
+    if (!logger_) return;
+    try {
+        logger_->startEpisode(session_id, episode_index, log_dir);
+    } catch (const std::exception& e) {
+        std::cerr << "[CameraChannel:" << config_.name << "] startEpisode failed: " << e.what() << std::endl;
+    }
 }
 
 void CameraChannel::onEpisodeEnd(const std::string& /*session_id*/,

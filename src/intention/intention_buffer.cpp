@@ -45,8 +45,9 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
         snap_opt = interpolate(gaze.frame_id);
 
     IntentionSample sample;
-    sample.frame_id     = gaze.frame_id;
-    sample.timestamp_ns = gaze.timestamp_ns;
+    sample.frame_id             = gaze.frame_id;
+    sample.timestamp_ns         = gaze.timestamp_ns;
+    sample.timestamp_arrival_ns = gaze.timestamp_arrival_ns;
 
     if (!snap_opt) {
         sample.gaze_valid = false;

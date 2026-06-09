@@ -104,7 +104,8 @@ private:
     std::string logger_host_;
     int         logger_port_        = 0;
     socket_t    logger_sock_        = kInvalidSocket;
-    int         current_episode_idx_ = -1;   // -1 = no active episode
+    int         current_episode_idx_    = -1;  // -1 = no active episode
+    std::string current_episode_folder_;      // absolute path set by startNewEpisodeFolder
 
     void sendEpisodeEvent(const std::string& type, const std::string& reason);
 };

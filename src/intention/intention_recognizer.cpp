@@ -23,10 +23,11 @@ void IntentionRecognizer::push(const IntentionSample& sample) {
         std::chrono::high_resolution_clock::now() - start_time_).count();
 
     IntentionLogEntry entry{};
-    entry.time          = t;
-    entry.frame_id      = sample.frame_id;
-    entry.timestamp_ns  = sample.timestamp_ns;
-    entry.gaze_valid    = static_cast<uint8_t>(sample.gaze_valid);
+    entry.time                 = t;
+    entry.frame_id             = sample.frame_id;
+    entry.timestamp_ns         = sample.timestamp_ns;
+    entry.timestamp_arrival_ns = sample.timestamp_arrival_ns;
+    entry.gaze_valid           = static_cast<uint8_t>(sample.gaze_valid);
     entry.gaze_px_x     = sample.gaze_px_x;
     entry.gaze_px_y     = sample.gaze_px_y;
     entry.gripper_left  = sample.gripper_left;

@@ -12,6 +12,7 @@ struct EpisodeEventMsg {
     std::string session_id;      // avatar session timestamp string
     int32_t     episode_index = -1;  // zero-based, matches avatar's episode folder index
     std::string reason;          // for episode_end: "operator_idle", "operator_pause", "reset_all", …
+    std::string log_dir;         // absolute path to this episode's folder (set by avatar on episode_start)
 
-    MSGPACK_DEFINE_MAP(type, session_id, episode_index, reason)
+    MSGPACK_DEFINE_MAP(type, session_id, episode_index, reason, log_dir)
 };

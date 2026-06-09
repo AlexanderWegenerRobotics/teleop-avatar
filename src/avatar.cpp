@@ -218,6 +218,9 @@ Avatar::Avatar(const YAML::Node& config) {
             if (!intention_buffer_) return;
             GazeSampleMsg gaze;
             payload.convert(gaze);
+            gaze.timestamp_arrival_ns = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
             intention_buffer_->fuseGaze(gaze);
         });
     }
@@ -569,6 +572,9 @@ void Avatar::startNewEpisodeFolder() {
     std::snprintf(idx_buf, sizeof(idx_buf), "%03d", episode_index_++);
     std::string folder = log_base_dir_ + "/" + std::string(idx_buf);
     std::filesystem::create_directories(folder);
+    // Store the canonical absolute path so the pipeline process can use it directly,
+    // regardless of its own working directory.
+    current_episode_folder_ = std::filesystem::absolute(folder).string();
 
     for (auto& arm : arm_instances) {
         std::string path = folder + "/" + arm->getDeviceName() + ".csv";
@@ -788,6 +794,7 @@ void Avatar::sendEpisodeEvent(const std::string& type, const std::string& reason
     msg.session_id     = session_id_;
     msg.episode_index  = current_episode_idx_;
     msg.reason         = reason;
+    msg.log_dir        = current_episode_folder_;  // absolute path; empty for episode_end (fine)
 
     msgpack::sbuffer buf;
     msgpack::pack(buf, msg);

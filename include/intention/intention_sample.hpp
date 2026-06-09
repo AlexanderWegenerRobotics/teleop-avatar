@@ -56,18 +56,20 @@ struct StateSnapshot {
 };
 
 struct GazeSampleMsg {
-    uint64_t frame_id      = 0;
-    float    gaze_px_x     = 0.0f;
-    float    gaze_px_y     = 0.0f;
-    uint64_t timestamp_ns  = 0;
+    uint64_t frame_id             = 0;
+    float    gaze_px_x            = 0.0f;
+    float    gaze_px_y            = 0.0f;
+    uint64_t timestamp_ns         = 0;  // operator-side capture time (sent over network)
+    uint64_t timestamp_arrival_ns = 0;  // avatar-side receive time (stamped locally, not serialised)
 
     MSGPACK_DEFINE_MAP(frame_id, gaze_px_x, gaze_px_y, timestamp_ns)
 };
 
 struct IntentionSample {
-    uint64_t frame_id     = 0;
-    uint64_t timestamp_ns = 0;
-    bool     gaze_valid   = false;
+    uint64_t frame_id             = 0;
+    uint64_t timestamp_ns         = 0;  // operator-side gaze capture time
+    uint64_t timestamp_arrival_ns = 0;  // avatar-side gaze receive time
+    bool     gaze_valid           = false;
     float    gaze_px_x    = 0.0f;
     float    gaze_px_y    = 0.0f;
     std::vector<float>       slot_belief;
@@ -85,7 +87,8 @@ struct IntentionSample {
 struct IntentionLogEntry {
     double   time;
     uint64_t frame_id;
-    uint64_t timestamp_ns;
+    uint64_t timestamp_ns;          // operator-side gaze capture time
+    uint64_t timestamp_arrival_ns;  // avatar-side gaze receive time
     uint8_t  gaze_valid;
     float    gaze_px_x;
     float    gaze_px_y;
@@ -102,7 +105,7 @@ struct IntentionLogEntry {
 };
 
 inline std::string intentionLogHeader() {
-    std::string h = "time;frame_id;timestamp_ns;gaze_valid;gaze_px_x;gaze_px_y;";
+    std::string h = "time;frame_id;timestamp_ns;timestamp_arrival_ns;gaze_valid;gaze_px_x;gaze_px_y;";
     for (int i = 0; i < 11; ++i) h += "slot_belief_" + std::to_string(i) + ";";
     for (int i = 0; i < 10; ++i) h += "slot_type_"   + std::to_string(i) + ";";
     for (int i = 0; i < 10; ++i) h += "slot_px_u_"   + std::to_string(i) + ";";
@@ -116,10 +119,11 @@ inline std::string intentionLogHeader() {
 }
 
 inline std::string intentionLogRow(const IntentionLogEntry& e) {
-    std::string r = std::to_string(e.time)        + ";";
-    r += std::to_string(e.frame_id)               + ";";
-    r += std::to_string(e.timestamp_ns)           + ";";
-    r += std::to_string(e.gaze_valid)             + ";";
+    std::string r = std::to_string(e.time)                 + ";";
+    r += std::to_string(e.frame_id)                        + ";";
+    r += std::to_string(e.timestamp_ns)                    + ";";
+    r += std::to_string(e.timestamp_arrival_ns)            + ";";
+    r += std::to_string(e.gaze_valid)                      + ";";
     r += std::to_string(e.gaze_px_x)              + ";";
     r += std::to_string(e.gaze_px_y)              + ";";
     for (auto v : e.slot_belief)    r += std::to_string(v) + ";";

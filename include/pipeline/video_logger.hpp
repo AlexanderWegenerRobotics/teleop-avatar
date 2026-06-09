@@ -42,7 +42,11 @@ public:
 
     // Opens a new HDF5 file and creates extendable datasets.
     // If an episode is already active it is closed first.
-    void startEpisode(const std::string& session_id, int episode_index);
+    // Opens a new HDF5 file.  If log_dir is non-empty it is used directly as the
+    // episode directory (absolute path supplied by the avatar); otherwise the directory
+    // is constructed as {output_dir}/{episode_index:03d}/ as before.
+    void startEpisode(const std::string& session_id, int episode_index,
+                      const std::string& log_dir = "");
 
     // Finalises the HDF5 file and writes closing attributes.
     void stopEpisode(const std::string& reason);

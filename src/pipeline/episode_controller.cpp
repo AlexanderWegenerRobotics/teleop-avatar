@@ -79,8 +79,9 @@ void EpisodeController::run() {
             if (msg.type == "episode_start") {
                 std::cout << "[EpisodeController] episode_start"
                           << " session=" << msg.session_id
-                          << " idx="     << msg.episode_index << std::endl;
-                if (start_cb_) start_cb_(msg.session_id, msg.episode_index);
+                          << " idx="     << msg.episode_index
+                          << " log_dir=" << msg.log_dir << std::endl;
+                if (start_cb_) start_cb_(msg.session_id, msg.episode_index, msg.log_dir);
 
             } else if (msg.type == "episode_end") {
                 std::cout << "[EpisodeController] episode_end"

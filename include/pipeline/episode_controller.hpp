@@ -11,7 +11,8 @@
 // Fires callbacks so CameraChannels can open/close HDF5 episodes in sync.
 class EpisodeController {
 public:
-    using StartCallback = std::function<void(const std::string& session_id, int episode_index)>;
+    using StartCallback = std::function<void(const std::string& session_id, int episode_index,
+                                             const std::string& log_dir)>;
     using EndCallback   = std::function<void(const std::string& session_id, int episode_index,
                                              const std::string& reason)>;
 

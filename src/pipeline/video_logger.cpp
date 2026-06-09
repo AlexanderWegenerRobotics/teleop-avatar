@@ -107,15 +107,21 @@ void VideoLogger::stopEpisodeLocked(const std::string& reason) {
     episode_active_ = false;
 }
 
-void VideoLogger::startEpisode(const std::string& session_id, int episode_index) {
+void VideoLogger::startEpisode(const std::string& session_id, int episode_index,
+                                const std::string& log_dir) {
     std::lock_guard<std::mutex> lk(mutex_);
     if (episode_active_) stopEpisodeLocked("interrupted");
 
-    char idx_buf[8];
-    std::snprintf(idx_buf, sizeof(idx_buf), "%03d", episode_index);
-
     namespace fs = std::filesystem;
-    fs::path dir = fs::path(config_.output_dir) / idx_buf;
+    fs::path dir;
+    if (!log_dir.empty()) {
+        // Use the path supplied by the avatar (already created, absolute).
+        dir = fs::path(log_dir);
+    } else {
+        char idx_buf[8];
+        std::snprintf(idx_buf, sizeof(idx_buf), "%03d", episode_index);
+        dir = fs::path(config_.output_dir) / idx_buf;
+    }
     fs::create_directories(dir);
     std::string filename = "images_" + config_.camera_name + ".hdf5";
     std::string path = (dir / filename).string();
@@ -125,8 +131,11 @@ void VideoLogger::startEpisode(const std::string& session_id, int episode_index)
     H5Pset_libver_bounds(fapl, H5F_LIBVER_EARLIEST, H5F_LIBVER_LATEST);
     impl_->file_id = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl);
     H5Pclose(fapl);
-    if (impl_->file_id == H5I_INVALID_HID)
-        throw std::runtime_error("[VideoLogger] H5Fcreate failed: " + path);
+    if (impl_->file_id == H5I_INVALID_HID) {
+        std::cerr << "[VideoLogger:" << config_.camera_name << "] H5Fcreate failed: " << path
+                  << " — logging disabled for this episode." << std::endl;
+        return;
+    }
 
     // Groups: /observations/images/
     hid_t obs_grp = H5Gcreate2(impl_->file_id, "/observations",

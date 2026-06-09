@@ -48,8 +48,8 @@ cameras:
     source_type:  "mujoco"
     shm_name:     "avatar_cam"
     fps:           30
-    source_width:  1280
-    source_height: 960
+    source_width:  960
+    source_height: 720
     realsense_serial: ""
 
     stream:
@@ -136,8 +136,8 @@ cameras:
     stereo_combined:   true
     stereo_partner_shm: "avatar_cam_right"     # right eye (composited alongside)
     fps:               30
-    source_width:      1280                    # single-eye width (source)
-    source_height:     960
+    source_width:      960                    # single-eye width (source)
+    source_height:     720
     realsense_serial:  ""
 
     stream:

@@ -176,8 +176,9 @@ int main(int argc, char** argv) {
     int ep_port = cfg["episode_listener_port"].as<int>(7000);
     g_episode_ctrl = std::make_unique<EpisodeController>(ep_port);
 
-    g_episode_ctrl->onEpisodeStart([](const std::string& sess, int idx) {
-        for (auto& ch : g_channels) ch->onEpisodeStart(sess, idx);
+    g_episode_ctrl->onEpisodeStart([](const std::string& sess, int idx,
+                                       const std::string& log_dir) {
+        for (auto& ch : g_channels) ch->onEpisodeStart(sess, idx, log_dir);
     });
     g_episode_ctrl->onEpisodeEnd([](const std::string& sess, int idx,
                                     const std::string& reason) {

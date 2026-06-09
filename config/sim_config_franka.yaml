@@ -140,27 +140,27 @@ objects:
   - name: bin_1
     type: dynamic
     role: bin
-    color: red
+    color: blue
     body_name: plastic_box_blue
     model_path: "../models/mujoco/props/plastic_box_blue.xml"
     pose:
-      position: [0.86, 0.14, 0.702]
+      position: [0.86, 0.10, 0.702]
       orientation: [1, 0, 0, 0]
 
   - name: bin_2
     type: dynamic
     role: bin
-    color: blue
+    color: red
     body_name: plastic_box_red
     model_path: "../models/mujoco/props/plastic_box_red.xml"
     pose:
-      position: [0.86, -0.14, 0.702]
+      position: [0.86, -0.10, 0.702]
       orientation: [1, 0, 0, 0]
 
   - name: target_right
     type: mocap
     model_path: "../models/mujoco/props/target_frame.xml"
-    enabled: False
+    enabled: True
     pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
@@ -176,7 +176,7 @@ objects:
   - name: target_raw_right
     type: mocap
     model_path: "../models/mujoco/props/target_frame.xml"
-    enabled: False
+    enabled: True
     pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]

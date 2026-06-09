@@ -125,7 +125,7 @@ devices:
     safety:
       workspace_min: [0.4, -0.4, 0.688]
       workspace_max: [1.1,  0.4, 1.6]
-      table_height_world: 0.688
+      table_height_world: 0.588
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
       max_command_velocity: 3.0       # sim: 3.0
@@ -141,9 +141,9 @@ devices:
       v_lin_max:  2.0                        # m/s  (matches interpolator max_linear_vel)
       v_ang_max:  6.0                        # rad/s
       lambda:     0.01                       # LM damping
-      mu:         0.05                       # posture-term weight; keep << lambda to not attenuate task
-      kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
-      qd_max:     [2.5, 2.5, 2.5, 2.5, 4.0, 4.0, 4.0]  # FR3 limits; wrist (5-7) raised for angular speed
+      mu:         0.1                       # posture-term weight; keep << lambda to not attenuate task
+      kp_posture: [3, 3, 4, 4, 1, 1, 1]     # redundancy pull toward q0 - raise to fight bad configs
+      qd_max:     [2.5, 2.5, 2.5, 2.5, 4.0, 4.0, 4.0]  # FR3 limits
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
       a_max:      80.0                       # rad/s^2 per-joint accel cap
       gamma:      0.05                       # rad, joint-limit safety buffer

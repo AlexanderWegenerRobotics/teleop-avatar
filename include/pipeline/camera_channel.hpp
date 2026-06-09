@@ -48,7 +48,8 @@ public:
     void stop();
 
     // Called by EpisodeController callbacks — thread-safe.
-    void onEpisodeStart(const std::string& session_id, int episode_index);
+    void onEpisodeStart(const std::string& session_id, int episode_index,
+                        const std::string& log_dir = "");
     void onEpisodeEnd(const std::string& session_id, int episode_index,
                       const std::string& reason);
 
