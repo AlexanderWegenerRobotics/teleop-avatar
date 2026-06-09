@@ -141,20 +141,20 @@ objects:
     type: dynamic
     role: bin
     color: red
-    body_name: plastic_box
-    model_path: "../models/mujoco/props/plastic_box.xml"
+    body_name: plastic_box_blue
+    model_path: "../models/mujoco/props/plastic_box_blue.xml"
     pose:
-      position: [0.83, 0.14, 0.702]
+      position: [0.86, 0.14, 0.702]
       orientation: [1, 0, 0, 0]
 
   - name: bin_2
     type: dynamic
     role: bin
     color: blue
-    body_name: plastic_box
-    model_path: "../models/mujoco/props/plastic_box.xml"
+    body_name: plastic_box_red
+    model_path: "../models/mujoco/props/plastic_box_red.xml"
     pose:
-      position: [0.83, -0.14, 0.702]
+      position: [0.86, -0.14, 0.702]
       orientation: [1, 0, 0, 0]
 
   - name: target_right

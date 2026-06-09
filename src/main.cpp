@@ -5,6 +5,13 @@
 #include <cmath>
 #include <atomic>
 #include <csignal>
+#include <ctime>
+#include <fstream>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #ifndef WITH_FRANKA
 #include <GLFW/glfw3.h>
@@ -15,24 +22,72 @@
 
 static std::atomic<bool> g_shutdown_requested{false};
 
+// ---------- crash / unhandled-exception helpers ----------
+
+static void logCrash(const char* reason)
+{
+    // Print to stderr (visible in terminal) and also append to a sidecar file.
+    std::time_t t = std::time(nullptr);
+    char ts[32];
+    std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", std::localtime(&t));
+
+    std::string msg = std::string("\n[CRASH ") + ts + "] " + reason + "\n";
+    std::cerr << msg << std::flush;
+
+    std::ofstream f("../avatar_crash.log", std::ios::app);
+    if (f) f << msg;
+}
+
 #ifdef _WIN32
+static LONG WINAPI sehHandler(EXCEPTION_POINTERS* ep)
+{
+    char buf[128];
+    snprintf(buf, sizeof(buf), "SEH exception code 0x%08lX at 0x%p",
+             ep->ExceptionRecord->ExceptionCode,
+             ep->ExceptionRecord->ExceptionAddress);
+    logCrash(buf);
+    // Let Windows produce a crash dump / default dialog.
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 static BOOL WINAPI ctrlHandler(DWORD) {
     g_shutdown_requested.store(true);
     return TRUE;
 }
 #else
-static void sigHandler(int) {
-    g_shutdown_requested.store(true);
+static void sigHandler(int sig) {
+    if (sig == SIGINT || sig == SIGTERM)
+        g_shutdown_requested.store(true);
+    else {
+        logCrash(sig == SIGSEGV ? "SIGSEGV" : sig == SIGABRT ? "SIGABRT" : "fatal signal");
+        std::_Exit(1);
+    }
 }
 #endif
 
+static void terminateHandler()
+{
+    if (auto ep = std::current_exception()) {
+        try { std::rethrow_exception(ep); }
+        catch (const std::exception& e) { logCrash((std::string("unhandled exception: ") + e.what()).c_str()); }
+        catch (...) { logCrash("unhandled exception (unknown type)"); }
+    } else {
+        logCrash("std::terminate called (no active exception — likely pure-virtual or thread abort)");
+    }
+    std::_Exit(1);
+}
+
 int main() {
+    std::set_terminate(terminateHandler);
+
 #ifdef _WIN32
+    SetUnhandledExceptionFilter(sehHandler);
     SetConsoleCtrlHandler(ctrlHandler, TRUE);
     timeBeginPeriod(1);
 #else
     signal(SIGINT,  sigHandler);
     signal(SIGTERM, sigHandler);
+    signal(SIGSEGV, sigHandler);
+    signal(SIGABRT, sigHandler);
 #endif
 
     try {
@@ -41,7 +96,11 @@ int main() {
         Avatar avatar(config);
 
 #ifdef WITH_FRANKA
-        std::thread avatar_thread([&]() { avatar.start(); });
+        std::thread avatar_thread([&]() {
+            try { avatar.start(); }
+            catch (const std::exception& e) { logCrash((std::string("avatar thread: ") + e.what()).c_str()); g_shutdown_requested.store(true); }
+            catch (...) { logCrash("avatar thread: unknown exception"); g_shutdown_requested.store(true); }
+        });
         std::cout << "Avatar started (Franka mode)" << std::endl;
         while (!g_shutdown_requested.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -75,7 +134,17 @@ int main() {
 
         sim->start();
         std::thread avatar_thread([&]() {
-            avatar.start();
+            try {
+                avatar.start();
+            } catch (const std::exception& e) {
+                logCrash((std::string("avatar thread: ") + e.what()).c_str());
+                sim->stop();
+                g_shutdown_requested.store(true);
+            } catch (...) {
+                logCrash("avatar thread: unknown exception");
+                sim->stop();
+                g_shutdown_requested.store(true);
+            }
         });
         std::cout << "Avatar started" << std::endl;
 

@@ -38,12 +38,12 @@ log = logging.getLogger("episode_config_server")
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 9100
 
-SPAWN_X_RANGE = (0.55, 0.85)
+SPAWN_X_RANGE = (0.45, 0.78)   # extended towards torso; capped below bin front edge (x≈0.767)
 SPAWN_Y_RANGE = (-0.30, 0.30)
 SPAWN_Z       = 0.725
 
 MIN_OBJECT_DIST  = 0.12
-MIN_BIN_DIST     = 0.18
+MIN_BIN_DIST     = 0.20        # slightly increased; bins now at x=0.86 (smaller footprint)
 
 MODE_WEIGHTS = {0: 0.5, 1: 0.5}
 

@@ -54,8 +54,8 @@ devices:
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
 
     safety:
-      workspace_min: [0.6, -0.4, 0.688]
-      workspace_max: [1.0,  0.4, 1.6]
+      workspace_min: [0.4, -0.4, 0.688]
+      workspace_max: [1.1,  0.4, 1.6]
       table_height_world: 0.688
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
@@ -123,8 +123,8 @@ devices:
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
     safety:
-      workspace_min: [0.6, -0.4, 0.688]
-      workspace_max: [1.0,  0.4, 1.6]
+      workspace_min: [0.4, -0.4, 0.688]
+      workspace_max: [1.1,  0.4, 1.6]
       table_height_world: 0.688
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
@@ -141,7 +141,7 @@ devices:
       v_lin_max:  2.0                        # m/s  (matches interpolator max_linear_vel)
       v_ang_max:  6.0                        # rad/s
       lambda:     0.01                       # LM damping
-      mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
+      mu:         0.05                       # posture-term weight; keep << lambda to not attenuate task
       kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
       qd_max:     [2.5, 2.5, 2.5, 2.5, 4.0, 4.0, 4.0]  # FR3 limits; wrist (5-7) raised for angular speed
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)

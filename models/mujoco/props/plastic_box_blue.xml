@@ -1,0 +1,62 @@
+<mujoco model="bin_blue">
+  <compiler angle="radian" autolimits="true" texturedir="assets"/>
+
+  <asset>
+    <material name="plastic_mat"
+              rgba="0.72 0.74 0.76 1.0"
+              specular="0.5" shininess="0.1" reflectance="0.0"/>
+    <texture name="bin_label_tex" type="2d" file="bin_label_blue.png"/>
+    <material name="bin_label_mat"
+              texture="bin_label_tex"
+              texrepeat="1 1" texuniform="false"
+              emission="0.6"
+              specular="0.0" shininess="0.0" reflectance="0.0"/>
+  </asset>
+
+  <default>
+    <default class="box_wall">
+      <geom material="plastic_mat" condim="6"
+            friction="0.6 0.005 0.0001"
+            solimp="0.99 0.99 0.001" solref="0.01 1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="bin_blue">
+      <inertial mass="0.35" pos="0 0 0.04" diaginertia="4e-4 6e-4 8e-4"/>
+
+      <!-- Floor: X reduced 10% → 0.100 * 0.9 = 0.090 -->
+      <geom name="floor" class="box_wall" type="box"
+            size="0.090 0.075 0.0015" pos="0 0 0.0015"/>
+
+      <!-- Short walls (±X) -->
+      <geom name="wall_pos_x" class="box_wall" type="box"
+            size="0.0015 0.075 0.040" pos="0.0915 0 0.040"/>
+      <geom name="wall_neg_x" class="box_wall" type="box"
+            size="0.0015 0.075 0.040" pos="-0.0915 0 0.040"/>
+
+      <!-- Long walls (±Y) — 0.090 + 0.0015 + 0.0015 = 0.0930 -->
+      <geom name="wall_pos_y" class="box_wall" type="box"
+            size="0.0930 0.0015 0.040" pos="0 0.0765 0.040"/>
+      <geom name="wall_neg_y" class="box_wall" type="box"
+            size="0.0930 0.0015 0.040" pos="0 -0.0765 0.040"/>
+
+      <!-- Label on +X wall — working rotation kept as-is -->
+      <geom name="bin_label_pos_x" type="plane"
+            size="0.045 0.02 0.001"
+            pos="0.0931 0 0.040"
+            euler="0 1.5708 1.5708"
+            material="bin_label_mat"
+            contype="0" conaffinity="0"/>
+
+      <!-- Label on -X wall — flipped 180 around Z -->
+      <geom name="bin_label_neg_x" type="plane"
+            size="0.045 0.02 0.001"
+            pos="-0.0931 0 0.040"
+            euler="0 -1.5708 -1.5708"
+            material="bin_label_mat"
+            contype="0" conaffinity="0"/>
+
+    </body>
+  </worldbody>
+</mujoco>

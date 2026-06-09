@@ -31,57 +31,85 @@ if not exist "%STREAMER%" (
     exit /b 1
 )
 
-rem --- working directory for both processes: must be build/ so ../config and ../models resolve ---
 set "WORK_DIR=%SCRIPT_DIR%\build"
+set "LOG_OUT=%SCRIPT_DIR%\avatar_stdout.log"
+set "LOG_ERR=%SCRIPT_DIR%\avatar_stderr.log"
+set "CRASH_LOG=%SCRIPT_DIR%\avatar_crash.log"
+set "PS_FILE=%TEMP%\avatar_monitor_%RANDOM%.ps1"
 
-echo [LAUNCH]: Starting avatar...
-start /D "%WORK_DIR%" "" /B "%AVATAR%"
+echo [LAUNCH]: Starting avatar  ^(stdout: avatar_stdout.log  stderr: avatar_stderr.log^)
 
-rem Capture PID of the most recently started avatar.exe via PowerShell
-for /f %%P in ('powershell -NoProfile -Command ^
-    "Get-Process avatar -EA SilentlyContinue | Sort-Object StartTime -Desc | Select -First 1 -Exp Id"') do set "AVATAR_PID=%%P"
+rem --- Write the PowerShell monitor script line by line.
+rem     Using individual >> redirections avoids cmd mis-parsing parentheses inside
+rem     the (echo ... ) > file block form.  Parentheses in PS code that fall
+rem     outside double-quoted strings are written as ^( ^) so cmd emits ( ).
+del "%PS_FILE%" 2>nul
 
-if not defined AVATAR_PID (
-    echo [ERROR]: Failed to get avatar PID.
-    exit /b 1
-)
+>>"%PS_FILE%" echo $avatarExe   = '%AVATAR%'
+>>"%PS_FILE%" echo $streamerExe = '%STREAMER%'
+>>"%PS_FILE%" echo $workDir     = '%WORK_DIR%'
+>>"%PS_FILE%" echo $logOut      = '%LOG_OUT%'
+>>"%PS_FILE%" echo $logErr      = '%LOG_ERR%'
+>>"%PS_FILE%" echo $crashLog    = '%CRASH_LOG%'
+>>"%PS_FILE%" echo.
+>>"%PS_FILE%" echo $avProc = Start-Process -FilePath $avatarExe -WorkingDirectory $workDir -RedirectStandardOutput $logOut -RedirectStandardError $logErr -PassThru -NoNewWindow
+>>"%PS_FILE%" echo if ^(-not $avProc^) { Write-Host '[ERROR]: Failed to start avatar.exe'; exit 1 }
+>>"%PS_FILE%" echo $avPid = $avProc.Id
+>>"%PS_FILE%" echo Write-Host "[LAUNCH]: avatar PID=$avPid"
+>>"%PS_FILE%" echo.
+>>"%PS_FILE%" echo Start-Sleep -Seconds 2
+>>"%PS_FILE%" echo.
+>>"%PS_FILE%" echo $stProc = Start-Process -FilePath $streamerExe -WorkingDirectory $workDir -PassThru -NoNewWindow
+>>"%PS_FILE%" echo if ^(-not $stProc^) {
+>>"%PS_FILE%" echo     Write-Host '[ERROR]: Failed to start avatar_pipeline.exe'
+>>"%PS_FILE%" echo     Stop-Process -Id $avProc.Id -Force -EA SilentlyContinue
+>>"%PS_FILE%" echo     exit 1
+>>"%PS_FILE%" echo }
+>>"%PS_FILE%" echo $stPid = $stProc.Id
+>>"%PS_FILE%" echo Write-Host "[LAUNCH]: streamer PID=$stPid"
+>>"%PS_FILE%" echo Write-Host '[LAUNCH]: Press Ctrl+C to stop both.'
+>>"%PS_FILE%" echo.
+>>"%PS_FILE%" echo function Show-Log {
+>>"%PS_FILE%" echo     param^([string]$Path, [string]$Label, [int]$MaxLines = 30^)
+>>"%PS_FILE%" echo     if ^(Test-Path $Path^) {
+>>"%PS_FILE%" echo         $lines = Get-Content $Path -Tail $MaxLines
+>>"%PS_FILE%" echo         if ^($lines^) {
+>>"%PS_FILE%" echo             Write-Host "--- $Label ---"
+>>"%PS_FILE%" echo             $lines ^| ForEach-Object { Write-Host "  $_" }
+>>"%PS_FILE%" echo             Write-Host '---'
+>>"%PS_FILE%" echo         }
+>>"%PS_FILE%" echo     }
+>>"%PS_FILE%" echo }
+>>"%PS_FILE%" echo.
+>>"%PS_FILE%" echo try {
+>>"%PS_FILE%" echo     while ^($true^) {
+>>"%PS_FILE%" echo         if ^($avProc.HasExited^) {
+>>"%PS_FILE%" echo             $code = $avProc.ExitCode
+>>"%PS_FILE%" echo             Write-Host ''
+>>"%PS_FILE%" echo             if ^($code -eq 0^) {
+>>"%PS_FILE%" echo                 Write-Host '[LAUNCH]: avatar exited cleanly.'
+>>"%PS_FILE%" echo             } else {
+>>"%PS_FILE%" echo                 Write-Host "[LAUNCH]: avatar exited with error code $code."
+>>"%PS_FILE%" echo             }
+>>"%PS_FILE%" echo             Show-Log $logOut 'avatar stdout'
+>>"%PS_FILE%" echo             Show-Log $logErr 'avatar stderr'
+>>"%PS_FILE%" echo             if ^(Test-Path $crashLog^) { Show-Log $crashLog 'crash log' 100 }
+>>"%PS_FILE%" echo             break
+>>"%PS_FILE%" echo         }
+>>"%PS_FILE%" echo         if ^($stProc.HasExited^) {
+>>"%PS_FILE%" echo             $stCode = $stProc.ExitCode
+>>"%PS_FILE%" echo             Write-Host "[LAUNCH]: avatar_pipeline exited with code $stCode."
+>>"%PS_FILE%" echo             break
+>>"%PS_FILE%" echo         }
+>>"%PS_FILE%" echo         Start-Sleep -Milliseconds 500
+>>"%PS_FILE%" echo     }
+>>"%PS_FILE%" echo } finally {
+>>"%PS_FILE%" echo     Write-Host ''
+>>"%PS_FILE%" echo     Write-Host '[LAUNCH]: Shutting down...'
+>>"%PS_FILE%" echo     if ^(-not $stProc.HasExited^) { Stop-Process -Id $stProc.Id -Force -EA SilentlyContinue }
+>>"%PS_FILE%" echo     if ^(-not $avProc.HasExited^) { Stop-Process -Id $avProc.Id -Force -EA SilentlyContinue }
+>>"%PS_FILE%" echo     Write-Host '[LAUNCH]: All processes stopped.'
+>>"%PS_FILE%" echo }
 
-timeout /t 2 /nobreak > nul
-
-echo [LAUNCH]: Starting avatar_pipeline...
-start /D "%WORK_DIR%" "" /B "%STREAMER%"
-
-for /f %%P in ('powershell -NoProfile -Command ^
-    "Get-Process avatar_pipeline -EA SilentlyContinue | Sort-Object StartTime -Desc | Select -First 1 -Exp Id"') do set "STREAMER_PID=%%P"
-
-if not defined STREAMER_PID (
-    echo [ERROR]: Failed to get avatar_pipeline PID.
-    if defined AVATAR_PID taskkill /PID %AVATAR_PID% /F >nul 2>&1
-    exit /b 1
-)
-
-echo [LAUNCH]: avatar PID=%AVATAR_PID% ^| streamer PID=%STREAMER_PID%
-
-rem --- hand off monitoring to PowerShell (try/finally survives Ctrl+C) ---
-(
-    echo $avId = %AVATAR_PID%
-    echo $stId = %STREAMER_PID%
-    echo $av = Get-Process -Id $avId -EA SilentlyContinue
-    echo $st = Get-Process -Id $stId -EA SilentlyContinue
-    echo Write-Host '[LAUNCH]: Press Ctrl+C to stop both.'
-    echo try {
-    echo     while ^($true^) {
-    echo         if ^(-not $av -or $av.HasExited^) { Write-Host '[LAUNCH]: avatar exited.'; break }
-    echo         if ^(-not $st -or $st.HasExited^) { Write-Host '[LAUNCH]: avatar_pipeline exited.'; break }
-    echo         Start-Sleep -Milliseconds 500
-    echo     }
-    echo } finally {
-    echo     Write-Host ''
-    echo     Write-Host '[LAUNCH]: Shutting down...'
-    echo     if ^($st -and -not $st.HasExited^) { Stop-Process -Id $stId -Force -EA SilentlyContinue }
-    echo     if ^($av -and -not $av.HasExited^) { Stop-Process -Id $avId -Force -EA SilentlyContinue }
-    echo     Write-Host '[LAUNCH]: All processes stopped.'
-    echo }
-) > "%TEMP%\avatar_monitor.ps1"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\avatar_monitor.ps1"
-del "%TEMP%\avatar_monitor.ps1" > nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_FILE%"
+del "%PS_FILE%" 2>nul

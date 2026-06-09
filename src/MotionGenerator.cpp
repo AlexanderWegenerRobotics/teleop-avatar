@@ -375,7 +375,8 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
     // ── Normal equations ─────────────────────────────────────────────────────
     // Objective: min || J u - v_des ||²_W  +  λ||u||²  +  μ||u - u_post||²
     // Normal eq: (J^T W J + (λ+μ)I) u = J^T W v_des + μ u_post
-    Eigen::Matrix<double,7,1> u_post = c.Kp_posture.cwiseProduct(c.q0 - q);
+    //Eigen::Matrix<double,7,1> u_post = c.Kp_posture.cwiseProduct(c.q0 - q);
+    Eigen::Matrix<double,7,1> u_post = c.Kp_posture.cwiseProduct(c.q0 - q_ref_);
 
     Eigen::Matrix<double,7,6> JtW = J.transpose() * c.Wtask.asDiagonal();
     Eigen::Matrix<double,7,7> A   = JtW * J + (c.lambda + c.mu) * Eigen::Matrix<double,7,7>::Identity();

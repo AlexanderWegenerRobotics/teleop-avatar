@@ -194,6 +194,26 @@ Avatar::Avatar(const YAML::Node& config) {
                       << " conf=" << ann.confidence << "\n";
         });
 
+        cmd_channel_->registerHandler("episode_restart", [this](const ReliableEnvelope& env, const msgpack::object& payload) {
+            std::string label = "operator_home";
+            if (payload.type == msgpack::type::MAP) {
+                std::map<std::string, msgpack::object> fields;
+                payload.convert(fields);
+                auto it = fields.find("label");
+                if (it != fields.end())
+                    label = it->second.as<std::string>();
+            }
+            markEpisodeEnd(label);
+            current_episode_cfg_ = requestEpisodeConfig();
+            applyEpisodeConfig(current_episode_cfg_);
+            startNewEpisodeFolder();
+            markEpisodeStart();
+            for (auto& arm : arm_instances)
+                arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode,
+                                        current_episode_cfg_.color_bin_mapping);
+            std::cout << "[AVATAR-INFO]: Episode restart (" << label << ")" << std::endl;
+        });
+
         cmd_channel_->registerHandler("gaze_sample", [this](const ReliableEnvelope& env, const msgpack::object& payload) {
             if (!intention_buffer_) return;
             GazeSampleMsg gaze;
@@ -403,7 +423,11 @@ void Avatar::start(){
                     s.T_world      = Eigen::Isometry3d::Identity();
                     s.T_world.translation() = p;
                     s.T_world.linear()      = q.toRotationMatrix();
-                    s.half_extents = Eigen::Vector3d(0.120, 0.100, 0.145);
+                    // Half-extents of the blue plastic bin (plastic_box_blue.xml):
+                    // X: outer wall at ±(0.0915+0.0015) = ±0.093 m
+                    // Y: outer wall at ±(0.0765+0.0015) = ±0.078 m
+                    // Z: wall height 0.080 m, half = 0.040 m (from bin base)
+                    s.half_extents = Eigen::Vector3d(0.093, 0.078, 0.040);
                     snap.slots.push_back(std::move(s));
                 }
 
@@ -595,11 +619,6 @@ void Avatar::processResetAllCompletion() {
         if (!arm->recovery().isWaitingAck()) return;
     }
 
-    current_episode_cfg_ = requestEpisodeConfig();
-    applyEpisodeConfig(current_episode_cfg_);
-
-    startNewEpisodeFolder();
-
     for (auto& arm : arm_instances) {
         arm->reOrigin();
         arm->recovery().confirmResume();
@@ -612,13 +631,6 @@ void Avatar::processResetAllCompletion() {
     cmd_requested_.store(SysState::ENGAGED);
     if (cmd_channel_) cmd_channel_->setState(SysState::ENGAGED);
     requestAllDevices(SysState::ENGAGED);
-    if (scene_logger_) scene_logger_->enable(true);
-
-    markEpisodeStart();
-
-    for (auto& arm : arm_instances)
-        arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode,
-                                current_episode_cfg_.color_bin_mapping);
 
     reset_all_pending_.store(false);
 
@@ -665,9 +677,6 @@ void Avatar::updateStateMachine(SysState cmd_state){
             else if(cmd_state == SysState::ENGAGED && allInState(SysState::AWAITING)){
                 requestAllDevices(SysState::ENGAGED);
                 state_ = SysState::ENGAGED;
-                startNewEpisodeFolder();
-                markEpisodeStart();
-                if (scene_logger_) scene_logger_->enable(true);
                 std::cout << "[AVATAR-INFO]: Engage system." << std::endl;
             }
             break;

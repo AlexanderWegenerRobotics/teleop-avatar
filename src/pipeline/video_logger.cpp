@@ -174,7 +174,7 @@ void VideoLogger::startEpisode(const std::string& session_id, int episode_index)
     impl_->frame_count = 0;
     episode_active_    = true;
 
-    std::cout << "[VideoLogger:" << config_.camera_name << "] Episode started → " << path << std::endl;
+    std::cout << "[VideoLogger:" << config_.camera_name << "] Episode started -> " << path << std::endl;
 }
 
 void VideoLogger::stopEpisode(const std::string& reason) {
