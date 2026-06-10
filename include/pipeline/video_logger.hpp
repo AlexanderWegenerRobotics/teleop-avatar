@@ -1,9 +1,13 @@
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 struct LoggerConfig {
@@ -30,6 +34,10 @@ struct LoggerConfig {
 //
 // File attributes: session_id, episode_index, end_reason, frame_count
 //
+// Crop/resize, compression and HDF5 I/O run on a dedicated writer thread; the caller's
+// writeFrame() only copies the frame into a bounded queue and returns, dropping frames
+// when the writer falls behind so logging never blocks the capture/stream pipeline.
+//
 // Usage:
 //   logger.startEpisode(session_id, episode_index);
 //   // per frame:
@@ -40,27 +48,37 @@ public:
     explicit VideoLogger(const LoggerConfig& config);
     ~VideoLogger();
 
-    // Opens a new HDF5 file and creates extendable datasets.
-    // If an episode is already active it is closed first.
-    // Opens a new HDF5 file.  If log_dir is non-empty it is used directly as the
-    // episode directory (absolute path supplied by the avatar); otherwise the directory
-    // is constructed as {output_dir}/{episode_index:03d}/ as before.
+    // Queues a new-episode command; the writer thread opens the HDF5 file. If log_dir is
+    // non-empty it is the episode directory (absolute, supplied by the avatar); otherwise
+    // {output_dir}/{episode_index:03d}/ is used. Any active episode is closed first.
     void startEpisode(const std::string& session_id, int episode_index,
                       const std::string& log_dir = "");
 
-    // Finalises the HDF5 file and writes closing attributes.
+    // Queues an end-of-episode command and blocks until the writer has drained the queue
+    // and finalised the file, so the episode file is complete on return.
     void stopEpisode(const std::string& reason);
 
-    // Appends one frame. If log resolution differs from (src_w, src_h) the frame
-    // is area-averaged downscaled before writing. No-op when no episode is active.
+    // Copies one frame into the writer queue and returns immediately; drops the frame if
+    // the queue is full. No-op when no episode is active.
     void writeFrame(const uint8_t* rgb, uint32_t src_w, uint32_t src_h,
                     uint64_t timestamp_ns, uint64_t frame_id);
 
-    bool isActive() const { std::lock_guard<std::mutex> lk(mutex_); return episode_active_; }
+    bool isActive() const { return episode_active_.load(); }
 
 private:
-    // Internal stop — caller must already hold mutex_.
-    void stopEpisodeLocked(const std::string& reason);
+    // Writer-thread main loop: serially opens, writes and closes the HDF5 file.
+    void writerLoop();
+
+    // Writer thread: creates the HDF5 file and extendable datasets for one episode.
+    void openEpisodeImpl(const std::string& session_id, int episode_index,
+                         const std::string& log_dir);
+
+    // Writer thread: writes closing attributes and closes the HDF5 file.
+    void closeEpisodeImpl(const std::string& reason);
+
+    // Writer thread: crops/resizes one frame and appends it to the open datasets.
+    void writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t src_h,
+                        uint64_t timestamp_ns, uint64_t frame_id);
 
     // Area-weighted downscale. Handles arbitrary src→dst ratios.
     void resizeFrame(const uint8_t* src, uint32_t src_w, uint32_t src_h,
@@ -68,8 +86,32 @@ private:
 
     LoggerConfig config_;
 
-    mutable std::mutex mutex_;   // guards episode_active_ + impl_ handle access
-    bool         episode_active_ = false;
+    // One unit of work handed from the capture thread to the writer thread.
+    struct Job {
+        enum class Kind { Open, Frame, Close };
+        Kind                 kind = Kind::Frame;
+        std::vector<uint8_t> rgb;
+        uint32_t             src_w = 0, src_h = 0;
+        uint64_t             timestamp_ns = 0, frame_id = 0;
+        std::string          session_id, log_dir, reason;
+        int                  episode_index = 0;
+    };
+
+    std::atomic<bool> episode_active_{false};
+    std::atomic<bool> running_{false};
+
+    mutable std::mutex      queue_mutex_;
+    std::condition_variable queue_cv_;   // wakes the writer when work arrives
+    std::condition_variable drain_cv_;   // wakes stopEpisode when the writer is idle
+    std::deque<Job>         queue_;
+    size_t                  queued_frames_  = 0;   // # of Frame jobs currently queued
+    bool                    processing_     = false;
+    std::atomic<uint64_t>   dropped_frames_{0};
+    static constexpr size_t kMaxQueuedFrames = 16;
+
+    std::thread writer_;
+
+    // Writer-thread scratch buffers.
     std::vector<uint8_t> crop_buf_;
     std::vector<uint8_t> resize_buf_;
 

@@ -8,6 +8,8 @@
 #endif
 
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
@@ -49,12 +51,15 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
     }
 
     // ── Streamer (optional) ───────────────────────────────────────────────
+    // When this channel both streams and logs, the streamer tees its already-encoded
+    // H.264 to a per-episode file (no separate CPU encode/resize/gzip).
     if (config_.stream_enabled) {
+        config_.stream.log_enabled = config_.log_enabled;
         streamer_ = std::make_unique<VideoStreamer>(config_.stream);
     }
 
-    // ── Logger (optional) ─────────────────────────────────────────────────
-    if (config_.log_enabled) {
+    // ── Logger (raw-HDF5 fallback, only for log-only channels with no stream) ──
+    if (config_.log_enabled && !config_.stream_enabled) {
         LoggerConfig lcfg   = config_.log;
         lcfg.camera_name    = config_.name;
         logger_ = std::make_unique<VideoLogger>(lcfg);
@@ -98,16 +103,36 @@ void CameraChannel::stop() {
 
 void CameraChannel::onEpisodeStart(const std::string& session_id, int episode_index,
                                     const std::string& log_dir) {
-    if (!logger_) return;
-    try {
-        logger_->startEpisode(session_id, episode_index, log_dir);
-    } catch (const std::exception& e) {
-        std::cerr << "[CameraChannel:" << config_.name << "] startEpisode failed: " << e.what() << std::endl;
+    if (!config_.log_enabled) return;
+
+    if (streamer_) {
+        namespace fs = std::filesystem;
+        fs::path dir;
+        if (!log_dir.empty()) {
+            dir = fs::path(log_dir);
+        } else {
+            char idx_buf[8];
+            std::snprintf(idx_buf, sizeof(idx_buf), "%03d", episode_index);
+            dir = fs::path(config_.log.output_dir) / idx_buf;
+        }
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        streamer_->startEncodedLog((dir / ("video_" + config_.name + ".h264")).string());
+        return;
+    }
+
+    if (logger_) {
+        try {
+            logger_->startEpisode(session_id, episode_index, log_dir);
+        } catch (const std::exception& e) {
+            std::cerr << "[CameraChannel:" << config_.name << "] startEpisode failed: " << e.what() << std::endl;
+        }
     }
 }
 
 void CameraChannel::onEpisodeEnd(const std::string& /*session_id*/,
                                   int /*episode_index*/,
                                   const std::string& reason) {
+    if (streamer_ && config_.log_enabled) { streamer_->stopEncodedLog(); return; }
     if (logger_) logger_->stopEpisode(reason);
 }

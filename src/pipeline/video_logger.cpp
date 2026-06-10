@@ -80,37 +80,139 @@ static hid_t make1DDataset(hid_t file, const char* path) {
 // Constructor / Destructor
 // ---------------------------------------------------------------------------
 
+// Starts the background writer thread.
 VideoLogger::VideoLogger(const LoggerConfig& config)
     : config_(config), impl_(std::make_unique<Impl>())
-{}
+{
+    running_ = true;
+    writer_  = std::thread(&VideoLogger::writerLoop, this);
+}
 
+// Finalises any open episode and joins the writer thread.
 VideoLogger::~VideoLogger() {
-    stopEpisode("destructor");   // no-op if already stopped; acquires mutex internally
+    stopEpisode("destructor");
+    running_ = false;
+    queue_cv_.notify_all();
+    if (writer_.joinable()) writer_.join();
 }
 
 // ---------------------------------------------------------------------------
-// Episode lifecycle
+// Episode lifecycle (public: enqueue + signal)
 // ---------------------------------------------------------------------------
 
-// Internal: must be called with mutex_ already held.
-void VideoLogger::stopEpisodeLocked(const std::string& reason) {
-    if (!episode_active_) return;
-
-    writeStrAttr(impl_->file_id, "end_reason",   reason);
-    writeI32Attr(impl_->file_id, "frame_count",  static_cast<int32_t>(impl_->frame_count));
-
-    std::cout << "[VideoLogger:" << config_.camera_name << "] Episode stopped."
-              << " frames=" << impl_->frame_count
-              << " reason=" << reason << std::endl;
-
-    impl_->close();
-    episode_active_ = false;
-}
-
+// Queues a close (if needed) then an open command for the writer thread.
 void VideoLogger::startEpisode(const std::string& session_id, int episode_index,
                                 const std::string& log_dir) {
-    std::lock_guard<std::mutex> lk(mutex_);
-    if (episode_active_) stopEpisodeLocked("interrupted");
+    {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        if (episode_active_.load()) {
+            Job close_job;
+            close_job.kind   = Job::Kind::Close;
+            close_job.reason = "interrupted";
+            queue_.push_back(std::move(close_job));
+        }
+        Job open_job;
+        open_job.kind          = Job::Kind::Open;
+        open_job.session_id    = session_id;
+        open_job.episode_index = episode_index;
+        open_job.log_dir       = log_dir;
+        queue_.push_back(std::move(open_job));
+        episode_active_ = true;
+    }
+    queue_cv_.notify_one();
+}
+
+// Queues a close command and blocks until the writer has drained and finalised the file.
+void VideoLogger::stopEpisode(const std::string& reason) {
+    if (!episode_active_.exchange(false)) return;
+
+    {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        Job close_job;
+        close_job.kind   = Job::Kind::Close;
+        close_job.reason = reason;
+        queue_.push_back(std::move(close_job));
+    }
+    queue_cv_.notify_one();
+
+    std::unique_lock<std::mutex> lk(queue_mutex_);
+    drain_cv_.wait(lk, [this] { return queue_.empty() && !processing_; });
+}
+
+// ---------------------------------------------------------------------------
+// Frame submission (public: copy + enqueue, drop when full)
+// ---------------------------------------------------------------------------
+
+// Copies the frame into the writer queue, dropping it if the writer is behind.
+void VideoLogger::writeFrame(const uint8_t* rgb, uint32_t src_w, uint32_t src_h,
+                              uint64_t timestamp_ns, uint64_t frame_id) {
+    if (!episode_active_.load()) return;
+
+    {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        if (queued_frames_ >= kMaxQueuedFrames) {
+            ++dropped_frames_;
+            return;
+        }
+        Job job;
+        job.kind         = Job::Kind::Frame;
+        job.rgb.assign(rgb, rgb + static_cast<size_t>(src_w) * src_h * 3);
+        job.src_w        = src_w;
+        job.src_h        = src_h;
+        job.timestamp_ns = timestamp_ns;
+        job.frame_id     = frame_id;
+        queue_.push_back(std::move(job));
+        ++queued_frames_;
+    }
+    queue_cv_.notify_one();
+}
+
+// ---------------------------------------------------------------------------
+// Writer thread
+// ---------------------------------------------------------------------------
+
+// Pops jobs in order and dispatches them to the HDF5 open/write/close handlers.
+void VideoLogger::writerLoop() {
+    while (true) {
+        Job job;
+        {
+            std::unique_lock<std::mutex> lk(queue_mutex_);
+            queue_cv_.wait(lk, [this] { return !queue_.empty() || !running_.load(); });
+            if (queue_.empty()) {
+                if (!running_.load()) break;
+                continue;
+            }
+            job = std::move(queue_.front());
+            queue_.pop_front();
+            if (job.kind == Job::Kind::Frame) --queued_frames_;
+            processing_ = true;
+        }
+
+        switch (job.kind) {
+            case Job::Kind::Open:
+                openEpisodeImpl(job.session_id, job.episode_index, job.log_dir);
+                break;
+            case Job::Kind::Frame:
+                writeFrameImpl(job.rgb.data(), job.src_w, job.src_h, job.timestamp_ns, job.frame_id);
+                break;
+            case Job::Kind::Close:
+                closeEpisodeImpl(job.reason);
+                break;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(queue_mutex_);
+            processing_ = false;
+            if (queue_.empty()) drain_cv_.notify_all();
+        }
+    }
+}
+
+// Writer thread: creates the HDF5 file and extendable datasets for one episode.
+void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_index,
+                                   const std::string& log_dir) {
+    if (impl_->file_id != H5I_INVALID_HID) impl_->close();
+    dropped_frames_ = 0;
 
     namespace fs = std::filesystem;
     fs::path dir;
@@ -157,7 +259,7 @@ void VideoLogger::startEpisode(const std::string& session_id, int episode_index,
         hid_t space = H5Screate_simple(4, init, max);
         hid_t props = H5Pcreate(H5P_DATASET_CREATE);
         H5Pset_chunk(props, 4, chunk);
-        H5Pset_deflate(props, 4);  // gzip level 4
+        H5Pset_deflate(props, 1);
 
         std::string dset_path = "/observations/images/" + config_.camera_name;
         impl_->dset_img = H5Dcreate2(impl_->file_id, dset_path.c_str(),
@@ -168,7 +270,9 @@ void VideoLogger::startEpisode(const std::string& session_id, int episode_index,
 
         if (impl_->dset_img == H5I_INVALID_HID) {
             impl_->close();
-            throw std::runtime_error("[VideoLogger] failed to create image dataset");
+            std::cerr << "[VideoLogger:" << config_.camera_name << "] failed to create image dataset"
+                      << " — logging disabled for this episode." << std::endl;
+            return;
         }
     }
 
@@ -181,24 +285,29 @@ void VideoLogger::startEpisode(const std::string& session_id, int episode_index,
     writeI32Attr(impl_->file_id, "episode_index",  episode_index);
 
     impl_->frame_count = 0;
-    episode_active_    = true;
 
     std::cout << "[VideoLogger:" << config_.camera_name << "] Episode started -> " << path << std::endl;
 }
 
-void VideoLogger::stopEpisode(const std::string& reason) {
-    std::lock_guard<std::mutex> lk(mutex_);
-    stopEpisodeLocked(reason);
+// Writer thread: writes closing attributes and closes the HDF5 file.
+void VideoLogger::closeEpisodeImpl(const std::string& reason) {
+    if (impl_->file_id == H5I_INVALID_HID) return;
+
+    writeStrAttr(impl_->file_id, "end_reason",   reason);
+    writeI32Attr(impl_->file_id, "frame_count",  static_cast<int32_t>(impl_->frame_count));
+
+    std::cout << "[VideoLogger:" << config_.camera_name << "] Episode stopped."
+              << " frames=" << impl_->frame_count
+              << " dropped=" << dropped_frames_.load()
+              << " reason=" << reason << std::endl;
+
+    impl_->close();
 }
 
-// ---------------------------------------------------------------------------
-// Frame writing
-// ---------------------------------------------------------------------------
-
-void VideoLogger::writeFrame(const uint8_t* rgb, uint32_t src_w, uint32_t src_h,
-                              uint64_t timestamp_ns, uint64_t frame_id) {
-    std::lock_guard<std::mutex> lk(mutex_);
-    if (!episode_active_) return;
+// Writer thread: crops/resizes one frame and appends it to the open datasets.
+void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t src_h,
+                                  uint64_t timestamp_ns, uint64_t frame_id) {
+    if (impl_->file_id == H5I_INVALID_HID) return;
 
     const uint8_t* frame = rgb;
     uint32_t effective_src_w = src_w;

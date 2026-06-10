@@ -2,13 +2,16 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
+#include <gst/app/gstappsink.h>
 
 #include "pipeline/stream_quality_controller.hpp"
 
@@ -29,6 +32,8 @@ struct StreamerConfig {
     // 0 means "same as stream_width/height" (no rescaling).
     int         source_width       = 0;
     int         source_height      = 0;
+    // When true the pipeline tees the encoded H.264 to an appsink for per-episode logging.
+    bool        log_enabled        = false;
 };
 
 class VideoStreamer {
@@ -45,10 +50,15 @@ public:
     // Push one raw RGB frame from CameraChannel. w/h must match config stream_width/height.
     void pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height);
 
+    // Per-episode logging of the already-encoded H.264 stream (no extra CPU encode/resize).
+    void startEncodedLog(const std::string& path);
+    void stopEncodedLog();
+
     uint64_t frameId() const { return frame_count_; }
 
 private:
     void buildPipeline();
+    static GstFlowReturn onNewSample(GstAppSink* sink, gpointer user);
 
 private:
     StreamerConfig config_;
@@ -64,4 +74,8 @@ private:
     GstElement* fec_     = nullptr;
     std::unique_ptr<StreamQualityController> quality_;
     std::atomic<int> target_fps_{0};
+
+    GstElement* logsink_  = nullptr;
+    FILE*       enc_file_ = nullptr;
+    std::mutex  enc_mutex_;
 };

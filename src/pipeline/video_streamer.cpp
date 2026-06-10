@@ -69,6 +69,7 @@ void VideoStreamer::start() {
 void VideoStreamer::stop() {
     bRunning_ = false;
     if (quality_) quality_->stop();
+    stopEncodedLog();
 
     if (pipeline_) {
         gst_element_set_state(pipeline_, GST_STATE_NULL);
@@ -77,6 +78,7 @@ void VideoStreamer::stop() {
         appsrc_   = nullptr;
         encoder_  = nullptr;
         fec_      = nullptr;
+        logsink_  = nullptr;
     }
 
     if (loop_) {
@@ -93,45 +95,88 @@ static bool nvencAvailable() {
     return false;
 }
 
+// True when the CUDA colour-convert elements exist, so RGB→NV12 can run on the GPU.
+static bool cudaConvertAvailable() {
+    GstElementFactory* up = gst_element_factory_find("cudaupload");
+    GstElementFactory* cv = gst_element_factory_find("cudaconvert");
+    bool ok = (up != nullptr) && (cv != nullptr);
+    if (up) gst_object_unref(up);
+    if (cv) gst_object_unref(cv);
+    return ok;
+}
+
 void VideoStreamer::buildPipeline() {
     // Height + 2: the extra two rows carry the embedded wall-clock timestamp and frame ID.
     // The receiver reads and crops them before display.
     int padded_height = config_.stream_height + 2;
 
-    // GPU encoder (nvh264enc) causes the UE5 receiver's udpsrc to fail to bind
-    // its socket — the RTP stream it produces is incompatible with the UE5
-    // bundled GStreamer's rtph264depay/rtpulpfecdec stack.  Use x264enc (CPU)
-    // until the root cause is understood.
-    std::cout << "[INFO] Encoder: x264enc (CPU)" << std::endl;
-    std::string encode_seg =
-        " ! video/x-raw,format=I420"
-        " ! x264enc name=encoder tune=zerolatency speed-preset=ultrafast"
-        " bitrate=" + std::to_string(config_.bitrate_kbps) +
-        " key-int-max=30";
+    // GPU encoder (nvh264enc) when present, else CPU (x264enc); with CUDA convert elements
+    // the RGB→NV12 colour convert also runs on the GPU. config-interval=1 repeats SPS/PPS
+    // in-band; byte-stream caps keep the encoder output compatible with rtph264pay and make
+    // the optional logging branch a decodable Annex-B .h264 elementary stream.
+    auto build = [&](bool gpu, bool cuda_convert) -> std::string {
+        std::string convert_seg = !gpu
+            ? std::string(" ! videoconvert ! video/x-raw,format=I420")
+            : (cuda_convert
+                ? std::string(" ! cudaupload ! cudaconvert ! video/x-raw(memory:CUDAMemory),format=NV12")
+                : std::string(" ! videoconvert ! video/x-raw,format=NV12"));
 
-    std::string pipeline_str =
-        "appsrc name=src stream-type=0 format=3 is-live=true block=false"
-        " caps=video/x-raw,format=RGB"
-        ",width="      + std::to_string(config_.stream_width)  +
-        ",height="     + std::to_string(padded_height)          +
-        ",framerate="  + std::to_string(config_.fps) + "/1"
-        " ! queue max-size-buffers=2 leaky=downstream"
-        " ! videoconvert"
-        + encode_seg +
-        " ! rtph264pay pt=96"
-        " ! rtpulpfecenc name=fec percentage=" + std::to_string(config_.fec_percentage) +
-        " ! udpsink host=" + config_.host +
-        " port="           + std::to_string(config_.port);
+        std::string encoder_seg = gpu
+            ? std::string(
+                " ! nvh264enc name=encoder preset=low-latency-hq rc-mode=cbr gop-size=30"
+                " bitrate=" + std::to_string(config_.bitrate_kbps))
+            : std::string(
+                " ! x264enc name=encoder tune=zerolatency speed-preset=ultrafast"
+                " bitrate=" + std::to_string(config_.bitrate_kbps) +
+                " key-int-max=30");
+        encoder_seg += " ! video/x-h264,stream-format=byte-stream,alignment=au";
 
-    std::cout << "[INFO] Pipeline: " << pipeline_str << std::endl;
+        std::string sink_seg =
+            " ! rtph264pay pt=96 config-interval=1"
+            " ! rtpulpfecenc name=fec percentage=" + std::to_string(config_.fec_percentage) +
+            " ! udpsink host=" + config_.host +
+            " port="           + std::to_string(config_.port);
+
+        std::string tail = config_.log_enabled
+            ? std::string(
+                " ! tee name=enc_tee"
+                " enc_tee. ! queue") + sink_seg +
+                " enc_tee. ! queue ! appsink name=logsink emit-signals=true sync=false max-buffers=4 drop=true"
+            : sink_seg;
+
+        return
+            "appsrc name=src stream-type=0 format=3 is-live=true block=false"
+            " caps=video/x-raw,format=RGB"
+            ",width="      + std::to_string(config_.stream_width)  +
+            ",height="     + std::to_string(padded_height)          +
+            ",framerate="  + std::to_string(config_.fps) + "/1"
+            " ! queue max-size-buffers=2 leaky=downstream"
+            + convert_seg + encoder_seg + tail;
+    };
 
     GError* err = nullptr;
-    pipeline_ = gst_parse_launch(pipeline_str.c_str(), &err);
-    if (err) {
-        std::string msg = err->message;
-        g_error_free(err);
-        throw std::runtime_error("GStreamer pipeline error: " + msg);
+    auto try_build = [&](bool gpu, bool cuda_convert, const char* label) -> bool {
+        std::string s = build(gpu, cuda_convert);
+        std::cout << "[INFO] Encoder: " << label << std::endl;
+        std::cout << "[INFO] Pipeline: " << s << std::endl;
+        pipeline_ = gst_parse_launch(s.c_str(), &err);
+        if (err) {
+            std::cerr << "[WARN] pipeline build failed (" << err->message << ")." << std::endl;
+            g_error_free(err);
+            err = nullptr;
+            if (pipeline_) { gst_object_unref(pipeline_); pipeline_ = nullptr; }
+            return false;
+        }
+        return true;
+    };
+
+    bool built = false;
+    if (nvencAvailable()) {
+        if (cudaConvertAvailable()) built = try_build(true, true,  "nvh264enc (GPU) + cudaconvert");
+        if (!built)                 built = try_build(true, false, "nvh264enc (GPU) + videoconvert");
     }
+    if (!built && !try_build(false, false, "x264enc (CPU)"))
+        throw std::runtime_error("GStreamer pipeline error: CPU fallback failed to build");
 
     appsrc_ = gst_bin_get_by_name(GST_BIN(pipeline_), "src");
     if (!appsrc_)
@@ -145,9 +190,49 @@ void VideoStreamer::buildPipeline() {
     if (!fec_)
         throw std::runtime_error("Failed to get fec element from pipeline");
 
+    if (config_.log_enabled) {
+        logsink_ = gst_bin_get_by_name(GST_BIN(pipeline_), "logsink");
+        if (logsink_)
+            g_signal_connect(logsink_, "new-sample", G_CALLBACK(&VideoStreamer::onNewSample), this);
+    }
+
     gst_app_src_set_stream_type(GST_APP_SRC(appsrc_), GST_APP_STREAM_TYPE_STREAM);
     gst_app_src_set_latency(GST_APP_SRC(appsrc_), 0, -1);
     gst_app_src_set_max_bytes(GST_APP_SRC(appsrc_), 0);
+}
+
+// Appsink callback (streaming thread): appends each encoded access unit to the open episode file.
+GstFlowReturn VideoStreamer::onNewSample(GstAppSink* sink, gpointer user) {
+    VideoStreamer* self = static_cast<VideoStreamer*>(user);
+    GstSample* sample = gst_app_sink_pull_sample(sink);
+    if (!sample) return GST_FLOW_OK;
+
+    GstBuffer* buf = gst_sample_get_buffer(sample);
+    GstMapInfo map;
+    if (buf && gst_buffer_map(buf, &map, GST_MAP_READ)) {
+        std::lock_guard<std::mutex> lk(self->enc_mutex_);
+        if (self->enc_file_) std::fwrite(map.data, 1, map.size, self->enc_file_);
+        gst_buffer_unmap(buf, &map);
+    }
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
+}
+
+// Opens a per-episode file that the appsink callback appends the encoded H.264 stream to.
+void VideoStreamer::startEncodedLog(const std::string& path) {
+    std::lock_guard<std::mutex> lk(enc_mutex_);
+    if (enc_file_) { std::fclose(enc_file_); enc_file_ = nullptr; }
+    enc_file_ = std::fopen(path.c_str(), "wb");
+    if (!enc_file_)
+        std::cerr << "[VideoStreamer] failed to open encoded log: " << path << std::endl;
+    else
+        std::cout << "[VideoStreamer] Encoded log started -> " << path << std::endl;
+}
+
+// Closes the current episode's encoded file.
+void VideoStreamer::stopEncodedLog() {
+    std::lock_guard<std::mutex> lk(enc_mutex_);
+    if (enc_file_) { std::fclose(enc_file_); enc_file_ = nullptr; }
 }
 
 void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height) {

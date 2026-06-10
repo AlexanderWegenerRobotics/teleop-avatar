@@ -53,7 +53,7 @@ cameras:
     realsense_serial: ""
 
     stream:
-      enabled:            true
+      enabled:            false
       host:               "127.0.0.1"
       port:               5004
       feedback_port:      5005
