@@ -36,7 +36,8 @@ devices:
       - [0, 1, 0]
       - [0, 0, 1]
       - [1, 0, 0]
-    q0: [-0.3, -1.1, 0.3, -2.0, 0.5, 2.9, -0.9]
+    q0: [0.3, -1.1, 0.3, -2.0, 0.6, 2.9, 0.9]
+    
     #q0: [0.0, -1.2, 0.17, -1.58, 0, 1.6, 0.0]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
@@ -134,14 +135,14 @@ devices:
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
 
-    control_mode: joint_ik   # or: joint_ik | cartesian_impedance
+    control_mode: cartesian_impedance   # or: joint_ik | cartesian_impedance
     ik:
       kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
       kp_o:       18.0                        # task ori gain (1/s)
       v_lin_max:  2.0                        # m/s  (matches interpolator max_linear_vel)
       v_ang_max:  6.0                        # rad/s
       lambda:     0.01                       # LM damping
-      mu:         0.1                       # posture-term weight; keep << lambda to not attenuate task
+      mu:         0.00000001                       # posture-term weight; keep << lambda to not attenuate task
       kp_posture: [3, 3, 4, 4, 1, 1, 1]     # redundancy pull toward q0 - raise to fight bad configs
       qd_max:     [2.5, 2.5, 2.5, 2.5, 4.0, 4.0, 4.0]  # FR3 limits
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)

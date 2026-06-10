@@ -82,8 +82,7 @@ devices:
       v_lin_max:  0.8                        # m/s  (matches interpolator max_linear_vel)
       v_ang_max:  0.8                        # rad/s
       lambda:     0.01                       # LM damping
-      mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
-      kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
+      kp_posture: [1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4]   # posture weight toward q0 (must be << Wtask=1; higher = stronger elbow but task error grows)
       qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]  # FR3 joint vel limits, ~8% buffer below hard limits
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
       a_max:      10.0                       # rad/s^2 per-joint accel cap
@@ -154,8 +153,7 @@ devices:
       v_lin_max:  0.8                        # m/s  (matches interpolator max_linear_vel)
       v_ang_max:  0.8                        # rad/s
       lambda:     0.01                       # LM damping
-      mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
-      kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
+      kp_posture: [1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4]   # posture weight toward q0 (must be << Wtask=1; higher = stronger elbow but task error grows)
       qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]  # FR3 joint vel limits, ~8% buffer below hard limits
       t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
       a_max:      10.0                       # rad/s^2 per-joint accel cap

@@ -169,7 +169,11 @@ Avatar::Avatar(const YAML::Node& config) {
                     reason = it->second.as<std::string>();
             }
 
-            markEpisodeEnd(reason);
+            // Do NOT call markEpisodeEnd here.  When reset_all is followed by an
+            // episode_restart (annotation flow), the episode_restart handler owns
+            // the final label and will close the episode with the correct reason.
+            // For standalone resets the episode will be closed by the subsequent
+            // state-machine transition (ENGAGED→IDLE or similar).
 
             for (auto& arm : arm_instances) {
                 arm->recovery().requestRecovery(RecoveryTrigger::OPERATOR_RESET, arm->getQ0());
@@ -322,6 +326,12 @@ void Avatar::start(){
         arm->start();
     }
     std::cout << "[AVATAR-INFO]: All devices started" << std::endl;
+
+    startNewEpisodeFolder();
+    markEpisodeStart();
+    for (auto& arm : arm_instances)
+        arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode,
+                                current_episode_cfg_.color_bin_mapping);
 
     constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 100));
 	auto next_control_time = std::chrono::high_resolution_clock::now();
@@ -777,13 +787,17 @@ void Avatar::markEpisodeStart() {
 }
 
 void Avatar::markEpisodeEnd(const std::string& reason) {
+    // Guard: no-op if the episode was already closed.  Without this, redundant
+    // calls (e.g. state-machine ENGAGED→IDLE firing while episode_restart is
+    // still in requestEpisodeConfig()) write spurious "operator_idle" entries to
+    // the arm CSV after the real label has already been written.
+    if (current_episode_idx_ < 0) return;
+
     for (auto& arm  : arm_instances) arm->markEpisodeEnd(reason);
     for (auto& head : head_instances) head->markEpisodeEnd(reason);
 
-    if (current_episode_idx_ >= 0) {
-        sendEpisodeEvent("episode_end", reason);
-        current_episode_idx_ = -1;
-    }
+    sendEpisodeEvent("episode_end", reason);
+    current_episode_idx_ = -1;
 }
 
 void Avatar::sendEpisodeEvent(const std::string& type, const std::string& reason) {

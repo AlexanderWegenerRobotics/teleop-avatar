@@ -120,7 +120,7 @@ cameras:
       height:             480
 
     log:
-      enabled:    false
+      enabled:    true
       output_dir: "logs"
       width:      320
       height:     240

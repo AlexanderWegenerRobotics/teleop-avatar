@@ -142,7 +142,6 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
             if (ik["v_lin_max"])  ik_cfg.v_lin_max = ik["v_lin_max"].as<double>();
             if (ik["v_ang_max"])  ik_cfg.v_ang_max = ik["v_ang_max"].as<double>();
             if (ik["lambda"])     ik_cfg.lambda    = ik["lambda"].as<double>();
-            if (ik["mu"])         ik_cfg.mu        = ik["mu"].as<double>();
             if (ik["kp_posture"]) ik_cfg.Kp_posture = yamlToVector<7>(ik["kp_posture"]);
             if (ik["qd_max"])     ik_cfg.qd_max    = yamlToVector<7>(ik["qd_max"]);
             if (ik["t_brake"])    ik_cfg.T_brake   = ik["t_brake"].as<double>();
@@ -546,6 +545,7 @@ void ArmControl::runControlHandler(){
                 }
                 else if(state_ == SysState::ENGAGED && control_mode_ == ControlMode::JOINT_IK){
                     q_target = motion_gen_.getJointReference();
+                    T_target = motion_gen_.getCartesianGoal().matrix();
                 }
                 else if(state_ == SysState::ENGAGED || state_ == SysState::AWAITING){
                     Eigen::Isometry3d T_ee_target = motion_gen_.getCurrentCartesian();

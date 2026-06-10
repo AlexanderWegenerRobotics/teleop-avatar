@@ -189,6 +189,11 @@ void MotionGenerator::setCartesianGoal(const Eigen::Isometry3d& X_d) {
     X_goal_ = X_d;
 }
 
+Eigen::Isometry3d MotionGenerator::getCartesianGoal() const {
+    std::lock_guard<std::mutex> lock(ik_mtx_);
+    return X_goal_;
+}
+
 Eigen::Matrix<double,7,1> MotionGenerator::getJointReference() const {
     std::lock_guard<std::mutex> lock(ik_mtx_);
     return q_ref_;
@@ -197,90 +202,6 @@ Eigen::Matrix<double,7,1> MotionGenerator::getJointReference() const {
 Eigen::Matrix<double,7,1> MotionGenerator::getVelocityReference() const {
     std::lock_guard<std::mutex> lock(ik_mtx_);
     return u_prev_;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Box-constrained LS solver (active-set, ≤7 iterations, RT-safe)
-//
-//  Solves:  min_{u} || A u - b ||^2   s.t.  L_i ≤ u_i ≤ U_i
-//  where A is already the 7×7 SPD normal-equation matrix and b is the
-//  corresponding right-hand side (built by the caller).
-//
-//  Algorithm:
-//    Start with all joints free.  Each iteration:
-//      1. Build the reduced (free×free) system with clamped joints moved to RHS.
-//      2. Solve via LDLT.
-//      3. Find the worst bound violation among free joints.
-//      4. If any: fix that joint at its violated bound and repeat.
-//      5. Else: done.
-//    At most 7 joints can be clamped → at most 7 iterations.  The 7×7 LDLT
-//    solve is a few dozen FLOPs; the whole routine runs in single-digit µs.
-// ─────────────────────────────────────────────────────────────────────────────
-Eigen::Matrix<double,7,1> MotionGenerator::solveBoxConstrainedLS(
-    const Eigen::Matrix<double,7,7>& A,
-    const Eigen::Matrix<double,7,1>& b,
-    const Eigen::Matrix<double,7,1>& L,
-    const Eigen::Matrix<double,7,1>& U) const
-{
-    constexpr int N = 7;
-    Eigen::Matrix<double,7,1> u = Eigen::Matrix<double,7,1>::Zero();
-
-    bool   clamped[N] = {};
-    double bound[N]   = {};
-
-    for (int iter = 0; iter <= N; ++iter) {
-        // Collect free indices
-        int free_idx[N];
-        int nf = 0;
-        for (int i = 0; i < N; ++i)
-            if (!clamped[i]) free_idx[nf++] = i;
-
-        if (nf == 0) break;
-
-        // Build RHS for free joints: subtract contribution of clamped joints
-        Eigen::Matrix<double, N, 1> b_red = Eigen::Matrix<double, N, 1>::Zero();
-        for (int fi = 0; fi < nf; ++fi) {
-            int i = free_idx[fi];
-            b_red(fi) = b(i);
-            for (int j = 0; j < N; ++j)
-                if (clamped[j]) b_red(fi) -= A(i, j) * bound[j];
-        }
-
-        // Build reduced A (free × free)
-        Eigen::MatrixXd A_red(nf, nf);
-        for (int fi = 0; fi < nf; ++fi)
-            for (int fj = 0; fj < nf; ++fj)
-                A_red(fi, fj) = A(free_idx[fi], free_idx[fj]);
-
-        // Solve reduced system
-        Eigen::VectorXd u_free = A_red.ldlt().solve(b_red.head(nf));
-
-        // Write back
-        for (int fi = 0; fi < nf; ++fi)
-            u(free_idx[fi]) = u_free(fi);
-        for (int j = 0; j < N; ++j)
-            if (clamped[j]) u(j) = bound[j];
-
-        // Find worst bound violator among free joints
-        int    worst      = -1;
-        double worst_viol = 0.0;
-        for (int fi = 0; fi < nf; ++fi) {
-            int    i    = free_idx[fi];
-            double viol = 0.0;
-            if      (u(i) < L(i)) viol = L(i) - u(i);
-            else if (u(i) > U(i)) viol = u(i) - U(i);
-            if (viol > worst_viol) { worst_viol = viol; worst = i; }
-        }
-
-        if (worst < 0) break; // all free joints within bounds → done
-
-        // Clamp worst violator
-        clamped[worst] = true;
-        bound[worst]   = (u(worst) < L(worst)) ? L(worst) : U(worst);
-    }
-
-    // Hard clamp as safety net (catches edge cases where L > U after numerical issues)
-    return u.cwiseMax(L).cwiseMin(U);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,20 +251,27 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
     Eigen::Quaterniond q_err = q_d * q_cur.inverse();
     Eigen::Vector3d    e_o(q_err.x(), q_err.y(), q_err.z());
 
-    // Desired task velocity
+    // Proportional task velocity, capped — gives a smooth, moderate command the
+    // acceleration limit can track (a full Newton step / dt is bang-bang and stalls).
     Eigen::Matrix<double,6,1> v_des;
     v_des.head<3>() = c.Kp_p.cwiseProduct(e_p);
     v_des.tail<3>() = c.Kp_o * e_o;
-
-    // Cartesian speed caps
     {
         double vlin = v_des.head<3>().norm();
-        if (vlin > c.v_lin_max && vlin > 1e-9)
-            v_des.head<3>() *= c.v_lin_max / vlin;
+        if (vlin > c.v_lin_max && vlin > 1e-9) v_des.head<3>() *= c.v_lin_max / vlin;
         double vang = v_des.tail<3>().norm();
-        if (vang > c.v_ang_max && vang > 1e-9)
-            v_des.tail<3>() *= c.v_ang_max / vang;
+        if (vang > c.v_ang_max && vang > 1e-9) v_des.tail<3>() *= c.v_ang_max / vang;
     }
+
+    // Damped weighted resolved-rate with a soft posture pull toward q0 (no null-space):
+    //   min || J u - v_des ||^2_Wtask + Kp_posture || u - (q0 - q_ref) ||^2 + lambda||u||^2
+    Eigen::Matrix<double,7,1> e_post = c.q0 - q_ref_;
+    Eigen::Matrix<double,7,7> A = J.transpose() * c.Wtask.asDiagonal() * J;
+    A.diagonal()         += c.Kp_posture;
+    A.diagonal().array() += c.lambda;
+    Eigen::Matrix<double,7,1> b = J.transpose() * c.Wtask.asDiagonal() * v_des
+                                  + c.Kp_posture.cwiseProduct(e_post);
+    Eigen::Matrix<double,7,1> u = A.ldlt().solve(b);
 
     // ── Per-joint box bounds ─────────────────────────────────────────────────
     // Each bound folds three safety constraints:
@@ -372,18 +300,7 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
         }
     }
 
-    // ── Normal equations ─────────────────────────────────────────────────────
-    // Objective: min || J u - v_des ||²_W  +  λ||u||²  +  μ||u - u_post||²
-    // Normal eq: (J^T W J + (λ+μ)I) u = J^T W v_des + μ u_post
-    //Eigen::Matrix<double,7,1> u_post = c.Kp_posture.cwiseProduct(c.q0 - q);
-    Eigen::Matrix<double,7,1> u_post = c.Kp_posture.cwiseProduct(c.q0 - q_ref_);
-
-    Eigen::Matrix<double,7,6> JtW = J.transpose() * c.Wtask.asDiagonal();
-    Eigen::Matrix<double,7,7> A   = JtW * J + (c.lambda + c.mu) * Eigen::Matrix<double,7,7>::Identity();
-    Eigen::Matrix<double,7,1> b   = JtW * v_des + c.mu * u_post;
-
-    // ── Solve box-constrained LS ─────────────────────────────────────────────
-    Eigen::Matrix<double,7,1> u = solveBoxConstrainedLS(A, b, L, U);
+    u = u.cwiseMax(L).cwiseMin(U);
 
     // ── Integrate joint reference ─────────────────────────────────────────────
     q_ref_ += u * dt;

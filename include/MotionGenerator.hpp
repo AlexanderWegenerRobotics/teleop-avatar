@@ -32,8 +32,7 @@ struct IkConfig {
     double                       v_lin_max{0.5};         // Cartesian linear speed cap (m/s)
     double                       v_ang_max{0.8};         // Cartesian angular speed cap (rad/s)
     double                       lambda{0.01};           // Levenberg–Marquardt damping
-    double                       mu{0.01};                // posture-term weight
-    Eigen::Matrix<double,7,1>    Kp_posture = Eigen::Matrix<double,7,1>::Constant(2.0);
+    Eigen::Matrix<double,7,1>    Kp_posture = Eigen::Matrix<double,7,1>::Constant(0.0001);  // posture weight (soft, << Wtask)
     Eigen::Matrix<double,7,1>    q0         = Eigen::Matrix<double,7,1>::Zero();
     Eigen::Matrix<double,7,1>    qd_max     = (Eigen::Matrix<double,7,1>()
                                                 << 2.175, 2.175, 2.175, 2.175,
@@ -79,6 +78,7 @@ public:
 
     // Update the Cartesian goal (base frame). Thread-safe; called from state thread.
     void setCartesianGoal(const Eigen::Isometry3d& X_d);
+    Eigen::Isometry3d getCartesianGoal() const;
 
     // One resolved-rate step. Caller supplies fresh q, J (6×7, base frame), x (base frame).
     // Returns updated q_ref (also retrievable via getJointReference).
@@ -102,13 +102,6 @@ private:
     double linearProfile        (double t) const;
     double minJerkProfile       (double t) const;
 
-    // Box-constrained LS solver (active-set, ≤7 iterations, RT-safe).
-    // Solves: min ||Au - b||^2  s.t.  L ≤ u ≤ U  (A is 7×7 SPD).
-    Eigen::Matrix<double,7,1> solveBoxConstrainedLS(
-        const Eigen::Matrix<double,7,7>& A,
-        const Eigen::Matrix<double,7,1>& b,
-        const Eigen::Matrix<double,7,1>& L,
-        const Eigen::Matrix<double,7,1>& U) const;
 
 private:
     InterpolatorConfig config_;
