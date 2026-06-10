@@ -296,6 +296,8 @@ Avatar::Avatar(const YAML::Node& config) {
         IntentionBufferConfig buf_cfg;
         buf_cfg.intrinsics = intrinsics;
         buf_cfg.extrinsics = extrinsics;
+        if (cam["belief_temperature"])
+            buf_cfg.belief_temperature = cam["belief_temperature"].as<float>(1.0f);
 
         intention_buffer_ = std::make_unique<IntentionBuffer>(buf_cfg);
 
@@ -448,10 +450,14 @@ void Avatar::start(){
             }
 
             if (scene_logger_) {
+                auto now_scene = std::chrono::system_clock::now();
                 double t = std::chrono::duration<double>(
                     std::chrono::high_resolution_clock::now() - loop_start_time).count();
                 SceneLogEntry entry{};
-                entry.time = t;
+                entry.time          = t;
+                entry.wall_clock_ns = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        now_scene.time_since_epoch()).count());
                 entry.mode = current_episode_cfg_.mode;
                 entry.seed = current_episode_cfg_.seed;
 

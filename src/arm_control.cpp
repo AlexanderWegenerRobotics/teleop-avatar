@@ -553,7 +553,10 @@ void ArmControl::runControlHandler(){
                 }
 
                 ArmLogEntry entry{};
-                entry.time  = t;
+                entry.time          = t;
+                entry.wall_clock_ns = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
                 entry.state = state_;
                 entry.gripper_width = gripper_width_.load();
                 std::copy(robot_state.q.begin(),                    robot_state.q.end(),                    entry.q.begin());

@@ -225,7 +225,10 @@ void HeadControl::runControlHandler() {
                 double t = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - startTime_).count();
 
                 HeadLogEntry entry{};
-                entry.time  = t;
+                entry.time          = t;
+                entry.wall_clock_ns = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
                 entry.state = state_;
 
                 Eigen::Map<Eigen::Vector2d>(entry.q.data()) = q;

@@ -248,12 +248,27 @@ std::vector<float> IntentionBuffer::computeBelief(
     const Eigen::Vector3d& t_WH) const
 {
     int N = static_cast<int>(kernels.size());
+    // belief has N+1 entries: indices 0..(N-1) are real slots (EE_LEFT, EE_RIGHT,
+    // then PICK_OBJ slots, then PLACE_POSE/bin slots); index N is the null/no-target
+    // slot (operator not looking at any tracked object).  The intent model's argmax
+    // should land on the PICK_OBJ range (slots 2..N_objects+1 in the default 4-parcel
+    // + 2-bin scene: indices 2–5 for parcels, 6–7 for bins, 8 = null).
     std::vector<float> belief(N + 1, 0.0f);
 
     for (int i = 0; i < N; ++i)
         belief[i] = slotLikelihood(gaze_u, gaze_v, kernels[i], R_CH, t_WH);
 
+    // Null/no-target prior — kept in raw likelihood space before temperature scaling.
     belief[N] = 0.1f;
+
+    // Temperature scaling: raise each raw likelihood to 1/T before normalising.
+    // T=1  → original behaviour (saturates to argmax≈1.0 when gaze is on-target).
+    // T>1  → softer posterior; graded uncertainty during early reach, sharpens on commit.
+    const float inv_T = 1.0f / config_.belief_temperature;
+    if (config_.belief_temperature != 1.0f) {
+        for (auto& b : belief)
+            b = std::pow(b, inv_T);
+    }
 
     float total = std::accumulate(belief.begin(), belief.end(), 0.0f);
     if (total > 1e-6f)

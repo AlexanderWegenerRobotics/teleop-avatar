@@ -13,7 +13,8 @@
 #include "common.hpp"
 
 struct ArmLogEntry {
-    double                 time;
+    double                 time;          // seconds since logger start (relative)
+    uint64_t               wall_clock_ns; // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
     std::array<double, 7>  q;
     std::array<double, 7>  q_cmd;
     std::array<double, 7>  dq;
@@ -27,7 +28,8 @@ struct ArmLogEntry {
 };
 
 struct HeadLogEntry {
-    double                time;
+    double                time;          // seconds since logger start (relative)
+    uint64_t              wall_clock_ns; // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
     std::array<double, 2> q;
     std::array<double, 2> q_cmd;
     std::array<double, 2> dq;
@@ -219,7 +221,7 @@ private:
 
 
 inline std::string armLogHeader() {
-    std::string h = "time;";
+    std::string h = "time;wall_clock_ns;";
     for (int i = 0; i < 7;  ++i) h += "q_"          + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "q_cmd_"      + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "dq_"         + std::to_string(i) + ";";
@@ -234,7 +236,7 @@ inline std::string armLogHeader() {
 }
 
 inline std::string armLogRow(const ArmLogEntry& e) {
-    std::string r = std::to_string(e.time) + ";";
+    std::string r = std::to_string(e.time) + ";" + std::to_string(e.wall_clock_ns) + ";";
     for (auto v : e.q)          r += std::to_string(v) + ";";
     for (auto v : e.q_cmd)      r += std::to_string(v) + ";";
     for (auto v : e.dq)         r += std::to_string(v) + ";";
@@ -249,7 +251,7 @@ inline std::string armLogRow(const ArmLogEntry& e) {
 }
 
 inline std::string headLogHeader() {
-    std::string h = "time;";
+    std::string h = "time;wall_clock_ns;";
     for (int i = 0; i < 2; ++i) h += "q_"     + std::to_string(i) + ";";
     for (int i = 0; i < 2; ++i) h += "q_cmd_" + std::to_string(i) + ";";
     for (int i = 0; i < 2; ++i) h += "dq_"    + std::to_string(i) + ";";
@@ -259,7 +261,7 @@ inline std::string headLogHeader() {
 }
 
 inline std::string headLogRow(const HeadLogEntry& e) {
-    std::string r = std::to_string(e.time) + ";";
+    std::string r = std::to_string(e.time) + ";" + std::to_string(e.wall_clock_ns) + ";";
     for (auto v : e.q)     r += std::to_string(v) + ";";
     for (auto v : e.q_cmd) r += std::to_string(v) + ";";
     for (auto v : e.dq)    r += std::to_string(v) + ";";
@@ -272,9 +274,10 @@ struct SceneLogEntry {
     static constexpr int MAX_OBJECTS = 4;
     static constexpr int MAX_BINS    = 4;
 
-    double time = 0.0;
-    int    mode = 0;
-    int    seed = 0;
+    double   time          = 0.0;  // seconds since logger start (relative)
+    uint64_t wall_clock_ns = 0;    // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
+    int      mode          = 0;
+    int      seed          = 0;
 
     int n_objects = 0;
     std::array<std::string,           MAX_OBJECTS> object_names;
@@ -288,7 +291,7 @@ struct SceneLogEntry {
 };
 
 inline std::string sceneLogHeader() {
-    std::string h = "time;mode;seed;";
+    std::string h = "time;wall_clock_ns;mode;seed;";
     for (int i = 0; i < SceneLogEntry::MAX_OBJECTS; ++i) {
         std::string p = "obj" + std::to_string(i) + "_";
         h += p + "name;" + p + "x;" + p + "y;" + p + "z;"
@@ -304,7 +307,8 @@ inline std::string sceneLogHeader() {
 }
 
 inline std::string sceneLogRow(const SceneLogEntry& e) {
-    std::string r = std::to_string(e.time) + ";" + std::to_string(e.mode) + ";" + std::to_string(e.seed) + ";";
+    std::string r = std::to_string(e.time) + ";" + std::to_string(e.wall_clock_ns) + ";"
+                  + std::to_string(e.mode) + ";" + std::to_string(e.seed) + ";";
     for (int i = 0; i < SceneLogEntry::MAX_OBJECTS; ++i) {
         const auto& p = e.object_pos[i];
         const auto& q = e.object_quat[i];
