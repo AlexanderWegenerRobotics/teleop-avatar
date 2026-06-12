@@ -3,7 +3,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 enabled:        true
 stereo:         true          # set true to switch to left+right eye streams
-stream_fps:     30
+stream_fps:     20
 stream_width:   1280
 stream_height:  960
 
@@ -47,7 +47,7 @@ cameras:
     eye:          "mono"
     source_type:  "mujoco"
     shm_name:     "avatar_cam"
-    fps:           30
+    fps:           20
     source_width:  960
     source_height: 720
     realsense_serial: ""
@@ -135,7 +135,7 @@ cameras:
     shm_name:          "avatar_cam_left"       # left eye (primary)
     stereo_combined:   true
     stereo_partner_shm: "avatar_cam_right"     # right eye (composited alongside)
-    fps:               30
+    fps:               20
     source_width:      960                    # single-eye width (source)
     source_height:     720
     realsense_serial:  ""
@@ -147,7 +147,7 @@ cameras:
       feedback_port:      5005
       status_port:        5007
       status_interval_ms: 500
-      bitrate_kbps:       6000    # higher budget for 2560-wide combined frame
+      bitrate_kbps:       6000 
       fec_percentage:     10
       width:              2560    # 2 × single-eye width
       height:             960
