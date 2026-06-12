@@ -436,6 +436,15 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
           f"dur={(t1 - t0) / 1e9:.2f}s")
 
 
+def _convert_one(args_tuple):
+    folder, out_path, rate, scale, cameras, camera_params_path = args_tuple
+    try:
+        convert(folder, out_path, rate, scale, cameras,
+                camera_params_path=camera_params_path)
+    except Exception as e:
+        print(f"  [error] {folder}: {e}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -449,6 +458,10 @@ def main():
     ap.add_argument("--camera-params", default=None,
                     help="path to camera_params.json with intrinsics/extrinsics; "
                          "also searched automatically at <episode>/camera_params.json")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="parallel worker processes (default 1); set to -1 to use all CPU cores")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="re-convert even if episode.hdf5 already exists")
     args = ap.parse_args()
 
     if args.all:
@@ -457,14 +470,33 @@ def main():
     else:
         folders = [args.path]
 
+    work = []
     for folder in folders:
         out_path = os.path.join(folder, args.out)
-        print(f"Converting {folder} ...")
-        try:
-            convert(folder, out_path, args.rate, args.scale, args.cameras,
-                    camera_params_path=args.camera_params)
-        except Exception as e:
-            print(f"  [error] {folder}: {e}")
+        if not args.overwrite and os.path.exists(out_path):
+            print(f"  [skip] {folder}: {args.out} already exists")
+            continue
+        work.append((folder, out_path, args.rate, args.scale, args.cameras,
+                     args.camera_params))
+
+    if not work:
+        print("Nothing to convert.")
+        return
+
+    import multiprocessing
+    n_jobs = args.jobs if args.jobs > 0 else multiprocessing.cpu_count()
+    n_jobs = min(n_jobs, len(work))
+
+    if n_jobs == 1:
+        for item in work:
+            folder = item[0]
+            print(f"Converting {folder} ...")
+            _convert_one(item)
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        print(f"Converting {len(work)} episodes with {n_jobs} workers ...")
+        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            pool.map(_convert_one, work)
 
 
 if __name__ == "__main__":
