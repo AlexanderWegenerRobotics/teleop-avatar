@@ -6,16 +6,12 @@
     <texture name="side_label_tex" type="cube" file="side_label_red.png"/>
     <texture name="top_label_tex"  type="2d" file="label_red.png"/>
 
-    <material name="carton_mat" texture="carton_tex" texrepeat="1 1"
-              specular="0.05" shininess="0.02" reflectance="0.0"/>
-    <material name="side_label_mat" texture="side_label_tex" texrepeat="1 1"
-              texuniform="false" specular="0.1" shininess="0.05" reflectance="0.0"/>
-    <material name="top_label_mat" texture="top_label_tex" texrepeat="1 1"
-              texuniform="false" specular="0.1" shininess="0.05" reflectance="0.0"/>
-    <material name="seam_mat" rgba="0.15 0.08 0.04 1"
-              specular="0.0" shininess="0.0" reflectance="0.0"/>
-    <material name="tape_mat" rgba="0.92 0.85 0.50 0.35"
-              specular="0.95" shininess="0.7" reflectance="0.4"/>
+    <material name="carton_mat" texture="carton_tex" texrepeat="1 1" specular="0.05" shininess="0.02" reflectance="0.0"/>
+    <material name="side_label_mat" texture="side_label_tex" texrepeat="1 1" texuniform="false" specular="0.1" shininess="0.05" reflectance="0.0"/>
+    <material name="top_label_mat" texture="top_label_tex" texrepeat="1 1" texuniform="false" specular="0.1" shininess="0.05" reflectance="0.0"/>
+    <material name="seam_mat" rgba="0.15 0.08 0.04 1" specular="0.0" shininess="0.0" reflectance="0.0"/>
+    <material name="tape_mat" rgba="0.92 0.85 0.50 0.35" specular="0.95" shininess="0.7" reflectance="0.4"/>
+    <material name="color_tape_mat" rgba="0.85 0.12 0.08 1.0" specular="0.95" shininess="0.7" reflectance="0.4"/>
   </asset>
 
   <worldbody>
@@ -33,13 +29,13 @@
 
       <!-- Side labels -->
       <geom name="side_label_pos_y" type="box"
-            size="0.018 0.00005 0.01575"
+            size="0.0144 0.00005 0.0126"
             pos="0 0.03005 0"
             euler="0 0 3.1416"
             material="side_label_mat"
             contype="0" conaffinity="0"/>
       <geom name="side_label_neg_y" type="box"
-            size="0.018 0.00005 0.01575"
+            size="0.0144 0.00005 0.0126"
             pos="0 -0.03005 0"
             material="side_label_mat"
             contype="0" conaffinity="0"/>
@@ -77,11 +73,43 @@
             contype="0" conaffinity="0"/>
 
       <!-- Top label — on top of tape -->
-      <geom name="top_label" type="box"
-            size="0.022 0.016 0.00005"
-            pos="0 0 0.02258"
-            material="top_label_mat"
-            contype="0" conaffinity="0"/>
+      <geom name="top_label" type="box" size="0.0176 0.0128 0.00005" pos="0 0 0.02258" material="top_label_mat" contype="0" conaffinity="0"/>
+
+      <!-- size="0.030 0.030 0.0225" -->
+      <geom name="color_tape_top_right" type="box" size="0.030 0.005 0.00004" pos="0.023 0 0.02256" euler="0 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_top_left" type="box" size="0.030 0.005 0.00004" pos="-0.023 0 0.02256" euler="0 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_top_lower" type="box" size="0.030 0.005 0.00004" pos="0 -0.023 0.02257" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_top_top" type="box" size="0.030 0.005 0.00004" pos="0 0.023 0.02257" material="color_tape_mat" contype="0" conaffinity="0"/>
+
+      <!-- size="0.030 0.030 0.0225" -->
+      <geom name="color_tape_bottom_right" type="box" size="0.030 0.005 0.00004" pos="0.023 0 -0.02256" euler="0 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_bottom_left" type="box" size="0.030 0.005 0.00004" pos="-0.023 0 -0.02256" euler="0 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_bottom_lower" type="box" size="0.030 0.005 0.00004" pos="0 -0.023 -0.02257" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_bottom_top" type="box" size="0.030 0.005 0.00004" pos="0 0.023 -0.02257" material="color_tape_mat" contype="0" conaffinity="0"/>
+
+      <!-- +Y side face stripes -->
+      <geom name="color_tape_pos_y_top" type="box" size="0.030 0.00004 0.005" pos="0 0.03002 0.0175" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_pos_y_bottom" type="box" size="0.030 0.00004 0.005" pos="0 0.03001 -0.0175" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_pos_y_right" type="box" size="0.0225 0.00004 0.005" pos="0.023 0.03001 0" euler="0 1.5708 0" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_pos_y_left" type="box" size="0.0225 0.00004 0.005" pos="-0.023 0.03001 0" euler="0 1.5708 0" material="color_tape_mat" contype="0" conaffinity="0"/>
+      
+      <!-- -Y side face stripes -->
+      <geom name="color_tape_neg_y_top" type="box" size="0.030 0.00004 0.005" pos="0 -0.03002 0.0175" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_neg_y_bottom" type="box" size="0.030 0.00004 0.005" pos="0 -0.03001 -0.0175" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_neg_y_right" type="box" size="0.0225 0.00004 0.005" pos="0.023 -0.03001 0" euler="0 1.5708 0" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_neg_y_left" type="box" size="0.0225 0.00004 0.005" pos="-0.023 -0.03001 0" euler="0 1.5708 0" material="color_tape_mat" contype="0" conaffinity="0"/>
+
+      <!-- +X side face stripes -->
+      <geom name="color_tape_pos_x_top" type="box" size="0.030 0.00004 0.005" pos="0.03001 0 0.0175" euler="0 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_pos_x_bottom" type="box" size="0.030 0.00004 0.005" pos="0.03001 0 -0.0175" euler="0 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_pos_x_right" type="box" size="0.0225 0.00004 0.005" pos="0.03001 0.023 0" euler="1.5708 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_pos_x_left" type="box" size="0.0225 0.00004 0.005" pos="0.03001 -0.023 0" euler="1.5708 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+
+      <!-- -X side face stripes -->
+      <geom name="color_tape_neg_x_top" type="box" size="0.030 0.00004 0.005" pos="-0.03001 0 0.0175" euler="0 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_neg_x_bottom" type="box" size="0.030 0.00004 0.005" pos="-0.03001 0 -0.0175" euler="0 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_neg_x_right" type="box" size="0.0225 0.00004 0.005" pos="-0.03001 0.023 0" euler="1.5708 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
+      <geom name="color_tape_neg_x_left" type="box" size="0.0225 0.00004 0.005" pos="-0.03001 -0.023 0" euler="1.5708 0 1.5708" material="color_tape_mat" contype="0" conaffinity="0"/>
 
     </body>
   </worldbody>
