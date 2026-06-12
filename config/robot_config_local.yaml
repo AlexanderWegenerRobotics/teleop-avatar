@@ -37,7 +37,6 @@ devices:
       - [0, 0, 1]
       - [1, 0, 0]
     q0: [0.3, -1.1, 0.3, -2.0, 0.6, 2.9, 0.9]
-    
     #q0: [0.0, -1.2, 0.17, -1.58, 0, 1.6, 0.0]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
@@ -60,8 +59,8 @@ devices:
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 3.0
-      max_command_angular_velocity: 8.0
+      max_command_velocity: 1.0
+      max_command_angular_velocity: 4.0
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
@@ -107,20 +106,12 @@ devices:
     q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
 
     control:
-      # --- sim gains (restore when moving back to simulation) ---
       kp_joint: [600, 600, 600, 600, 250, 150, 50]
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
       kp_cart:  [1000, 1000, 1000, 250, 250, 250]
       kd_cart:  [50, 50, 50, 15, 15, 15]
       kp_null:  [20, 20, 20, 20, 8, 8, 8]
       kd_null:  [2, 2, 2, 2, 1, 1, 1]
-      # --- conservative real-hardware gains ---
-      #kp_joint: [300, 300, 300, 300, 120, 75, 25]
-      #kd_joint: [25,  25,  25,  25,  15,  12,  8]
-      #kp_cart: [200, 200, 200, 15, 15, 15]
-      #kd_cart: [35, 35, 35, 3, 3, 3]
-      #kp_null: [10, 10, 10, 10, 4, 4, 4]
-      #kd_null: [1, 1, 1, 1, 0.5, 0.5, 0.5]
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
     safety:
@@ -129,8 +120,8 @@ devices:
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 3.0       # sim: 3.0
-      max_command_angular_velocity: 8.0 # sim: 8.0
+      max_command_velocity: 1.0       # sim: 3.0
+      max_command_angular_velocity: 4.0 # sim: 8.0
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
@@ -172,9 +163,6 @@ devices:
       name: head_head_cam
       position: [0.05, 0.0, 0.035]
       euler_xyz: [1.5708, -1.5708, 0.0]
-      # Belief temperature for gaze-to-slot posterior.
-      # T=1 saturates to argmax≈1.0; T>1 gives graded uncertainty.
-      # Tune after first collection run: raise if belief still saturates, lower if too flat.
       belief_temperature: 3.0
 
   - name: hand_left

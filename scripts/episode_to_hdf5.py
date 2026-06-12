@@ -369,6 +369,17 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
             ig = obs.create_group("intent")
             for col, arr in intent.items():
                 ig.create_dataset(col, data=arr)
+            # gaze_px_* and slot_px_* are in native camera pixel coords.
+            # Record the reference resolution so consumers can map to stored
+            # (scaled) images via: image_x = gaze_px_x * (stored_w / ref_w).
+            gaze_cam = "head_cam_stereo"
+            if gaze_cam in cam_native_dims:
+                ig.attrs["gaze_px_ref_width"]  = cam_native_dims[gaze_cam][0]
+                ig.attrs["gaze_px_ref_height"] = cam_native_dims[gaze_cam][1]
+            elif cam_native_dims:
+                first = next(iter(cam_native_dims.values()))
+                ig.attrs["gaze_px_ref_width"]  = first[0]
+                ig.attrs["gaze_px_ref_height"] = first[1]
 
         if scene is not None:
             hdr, data, ts = scene
