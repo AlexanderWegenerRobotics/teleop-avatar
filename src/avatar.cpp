@@ -215,6 +215,7 @@ Avatar::Avatar(const YAML::Node& config) {
             applyEpisodeConfig(current_episode_cfg_);
             startNewEpisodeFolder();
             markEpisodeStart();
+            sendEpisodeEvent("episode_start", "");
             for (auto& arm : arm_instances)
                 arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode,
                                         current_episode_cfg_.color_bin_mapping);
