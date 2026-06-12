@@ -55,9 +55,9 @@ devices:
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
 
     safety:
-      workspace_min: [0.4, -0.4, 0.688]
+      workspace_min: [0.4, -0.4, 0.81]
       workspace_max: [1.1,  0.4, 1.6]
-      table_height_world: 0.688
+      table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
       max_command_velocity: 3.0
@@ -124,9 +124,9 @@ devices:
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
     safety:
-      workspace_min: [0.4, -0.4, 0.688]
+      workspace_min: [0.4, -0.4, 0.81]
       workspace_max: [1.1,  0.4, 1.6]
-      table_height_world: 0.588
+      table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
       max_command_velocity: 3.0       # sim: 3.0
@@ -206,11 +206,11 @@ devices:
     enabled: True
     base_pose:
       position: [0, 0, 0]
-      orientation: [1, 0, 0, 0]
+      orientation: [-0.5918, 0.8061, 0, 0]
 
   - name: camera_left
     type: sensor
     enabled: True
     base_pose:
       position: [0, 0, 0]
-      orientation: [1, 0, 0, 0]
+      orientation: [0, 1, 0, 0]
