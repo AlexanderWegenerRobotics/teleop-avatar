@@ -20,6 +20,9 @@ public:
     void push(const IntentionSample& sample);
     void stop();
     void restartLogger(const std::string& path);
+    void markEpisodeStart();
+    void markEpisodeEnd(const std::string& reason);
+    void writeEpisodeConfig(int seed, int mode, const std::string& color_bin_mapping);
 
 private:
     IntentionRecognizerConfig                      config_;

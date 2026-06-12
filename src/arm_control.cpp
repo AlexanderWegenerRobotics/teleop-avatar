@@ -4,6 +4,7 @@
 #include "self_collision_protection.hpp"
 #include "sim_env/gripper.hpp"
 #include "sim_env/model.hpp"
+#include "rt_thread.hpp"
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -122,15 +123,12 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         }
     }
 
-    // ── Build IkConfig (always, so JOINT_IK can be enabled at any time) ──────
     {
         IkConfig ik_cfg;
         ik_cfg.q0    = q0_;
         ik_cfg.q_min = q_min_;
         ik_cfg.q_max = q_max_;
-        // kMaxDq values match cartesianImpedanceControl's velocity damping limit
-        ik_cfg.qd_max = (Eigen::Matrix<double,7,1>()
-                         << 2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610).finished();
+        ik_cfg.qd_max = (Eigen::Matrix<double,7,1>() << 2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610).finished();
 
         if (device_config["ik"]) {
             const auto& ik = device_config["ik"];
@@ -173,8 +171,10 @@ void ArmControl::start(){
     Eigen::Map<const Vector7> q_init(current_state.q.data());
     motion_gen_.planJoint(q_init, q_init, ProfileType::TRAPEZOIDAL);
     control_thread = std::thread(&ArmControl::runControlHandler, this);
+    set_realtime(control_thread, name_ == "arm_right" ? 2 : 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     state_thread = std::thread(&ArmControl::runStateHandler, this);
+    set_realtime(state_thread, name_ == "arm_right" ? 3 : 1);
     if (transmission_) transmission_->start();
     logger_->start();
     logger_->enable(true);
@@ -191,7 +191,7 @@ void ArmControl::stop(){
 }
 
 void ArmControl::runStateHandler(){
-    constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 500));
+    constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 200));
     constexpr double dt_state = 1.0 / 500.0;
     auto next_control_time = std::chrono::high_resolution_clock::now();
     SysState prev_state = state_;
@@ -241,11 +241,9 @@ void ArmControl::runStateHandler(){
         // ── ENGAGED tick ──────────────────────────────────────────────────────
         else if (state_ == SysState::ENGAGED) {
             if (has_cmd) {
-                // Build command transform (same pre-processing as before)
                 Eigen::Isometry3d T_cmd = Eigen::Isometry3d::Identity();
                 Eigen::Vector3d pos(cmd.position[0], cmd.position[1], cmd.position[2]);
-                Eigen::Quaterniond q(cmd.quaternion[0], cmd.quaternion[1],
-                                     cmd.quaternion[2], cmd.quaternion[3]);
+                Eigen::Quaterniond q(cmd.quaternion[0], cmd.quaternion[1], cmd.quaternion[2], cmd.quaternion[3]);
                 q.normalize();
                 if (q.dot(prev_cmd_quat_) < 0.0) q.coeffs() *= -1.0;
                 prev_cmd_quat_ = q;
@@ -269,7 +267,6 @@ void ArmControl::runStateHandler(){
                 has_cmd = false;
 
             } else if (control_mode_ == ControlMode::CARTESIAN_IMPEDANCE) {
-                // Existing SCP re-plan logic (unchanged, only runs in Cartesian mode)
                 Eigen::Isometry3d T_current_target = motion_gen_.getCurrentCartesian();
                 Eigen::Isometry3d T_filtered = T_current_target;
                 applySelfCollisionFilter(T_filtered);
@@ -281,26 +278,13 @@ void ArmControl::runStateHandler(){
                 }
             }
 
-            // JOINT_IK: run one IK step every state-thread tick.
-            // When no new command arrives the goal is frozen → v_des → 0 → u → 0
-            // → q_ref holds → arm decelerates and holds naturally.
             if (control_mode_ == ControlMode::JOINT_IK) {
                 franka::RobotState rs;
                 {
                     std::lock_guard<std::mutex> lock(state_mtx);
                     rs = current_state;
                 }
-                // Resolved-rate IK must be a FEEDFORWARD reference generator: evaluate the
-                // task error and Jacobian at the REFERENCE configuration q_ref, NOT at the
-                // measured state. Closing the loop on the measured pose puts an integrator
-                // around the compliant joint-impedance inner loop and produces an undamped
-                // Cartesian oscillation. Evaluating at q_ref decouples the reference from
-                // the robot: q_ref converges to the goal on its own, the impedance tracks it.
                 Vector7 q_ref = motion_gen_.getJointReference();
-
-                // Reference-configuration state copy (q := q_ref) so the existing
-                // RobotState-based model calls evaluate FK/Jacobian at q_ref. Works for
-                // both the sim model and real libfranka.
                 franka::RobotState rs_ref = rs;
                 Eigen::Map<Vector7>(rs_ref.q.data()) = q_ref;
 
@@ -355,6 +339,7 @@ void ArmControl::runStateHandler(){
         }
 
         const bool grasp_allowed = (state_ == SysState::ENGAGED || state_ == SysState::PAUSED);
+        grasp_allowed_.store(grasp_allowed);
         applyGripper(grasp_allowed && desired_gripper_closed_.load());
 
         gripper_width_.store(gripper->readOnce().width);
@@ -524,10 +509,6 @@ void ArmControl::runControlHandler(){
                     break;
             }
 
-            // Stay below Franka's hard torque-rate limit. tau_rate_max_ is the per-tick
-            // limit at 1 kHz (max_torque_rate/1000), i.e. exactly the hard limit; clamping
-            // to it makes us ride the boundary, which trips torque_discontinuity on timing
-            // jitter (reported rate == limit). The margin gives headroom.
             constexpr double kRateMargin = 0.9;
             const Vector7 tau_rate_step = tau_rate_max_ * kRateMargin;
             ctrl_torque = tau_prev_ + (ctrl_torque - tau_prev_).cwiseMax(-tau_rate_step).cwiseMin(tau_rate_step);
@@ -559,6 +540,7 @@ void ArmControl::runControlHandler(){
                         std::chrono::system_clock::now().time_since_epoch()).count());
                 entry.state = state_;
                 entry.gripper_width = gripper_width_.load();
+                entry.gripper_cmd   = (grasp_allowed_.load() && desired_gripper_closed_.load()) ? 0.0 : 0.08;
                 std::copy(robot_state.q.begin(),                    robot_state.q.end(),                    entry.q.begin());
                 Eigen::Map<Vector7>(entry.q_cmd.data()) = q_target;
                 std::copy(robot_state.dq.begin(),                   robot_state.dq.end(),                   entry.dq.begin());
@@ -585,18 +567,12 @@ Vector7 ArmControl::jointImpedanceControl(const franka::RobotState& rs) {
     Eigen::Map<const Vector7> q(rs.q.data());
     Eigen::Map<const Vector7> dq(rs.dq.data());
 
-    // In JOINT_IK + ENGAGED: track the IK-computed joint reference.
-    // In HOMING / RECOVERING: track the interpolated joint plan as before.
+
     Vector7 q_target;
     Vector7 dq_ff = Vector7::Zero();   // velocity feedforward
     if (control_mode_ == ControlMode::JOINT_IK &&
         (state_ == SysState::ENGAGED || state_ == SysState::AWAITING)) {
         q_target = motion_gen_.getJointReference();
-        // Feed the IK joint-velocity command forward into the D-term.
-        // Without this, the impedance can only react after the arm has already
-        // fallen behind q_ref.  With it, the arm tracks the velocity trajectory
-        // in real time and the effective lag drops from ~1/wn (100ms) to ~noise.
-        // This raises the stable Kp_p ceiling without requiring stiffer gains.
         dq_ff = motion_gen_.getVelocityReference();
     } else {
         q_target = motion_gen_.getCurrentJoint();

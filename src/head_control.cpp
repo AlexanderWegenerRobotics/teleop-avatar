@@ -1,5 +1,6 @@
 #include "head_control.hpp"
 #include "data_logger.hpp"
+#include "rt_thread.hpp"
 #include <iostream>
 
 using namespace franka_joint_driver;
@@ -46,8 +47,10 @@ void HeadControl::start(){
     Vector2 q_init = Vector2::Zero();
     interpolator_.planJoint(q_init, q_init, ProfileType::TRAPEZOIDAL);
     control_thread = std::thread(&HeadControl::runControlHandler, this);
+    set_realtime(control_thread, 4);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     state_thread = std::thread(&HeadControl::runStateHandler, this);
+    set_realtime(state_thread, 5);
     if (transmission_) transmission_->start();
     logger_->start();
     logger_->enable(true);

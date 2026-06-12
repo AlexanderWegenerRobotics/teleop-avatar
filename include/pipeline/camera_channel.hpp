@@ -62,4 +62,5 @@ private:
     std::unique_ptr<VideoLogger>  logger_;
 
     std::atomic<uint64_t> frame_count_{0};
+    int logging_idx_ = -1;   // episode currently being logged; -1 = none (dedup repeated starts)
 };

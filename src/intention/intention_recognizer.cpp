@@ -69,3 +69,15 @@ void IntentionRecognizer::restartLogger(const std::string& path) {
     start_time_ = std::chrono::high_resolution_clock::now();
     logger_->restart(path);
 }
+
+void IntentionRecognizer::markEpisodeStart() {
+    if (logger_) logger_->markEpisodeStart();
+}
+
+void IntentionRecognizer::markEpisodeEnd(const std::string& reason) {
+    if (logger_) logger_->markEpisodeEnd(reason);
+}
+
+void IntentionRecognizer::writeEpisodeConfig(int seed, int mode, const std::string& color_bin_mapping) {
+    if (logger_) logger_->writeEpisodeConfig(seed, mode, color_bin_mapping);
+}

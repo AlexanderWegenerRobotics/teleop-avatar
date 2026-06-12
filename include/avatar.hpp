@@ -79,6 +79,8 @@ private:
         std::string color;
         std::string model_path;
         double x = 0, y = 0, z = 0;
+        double yaw   = 0.0;   // Z-axis rotation (radians)
+        double scale = 1.0;   // uniform size scale factor
     };
 
     struct EpisodeConfig {
@@ -86,6 +88,9 @@ private:
         int                       mode = 0;
         std::string               color_bin_mapping;
         std::vector<SpawnedObject> objects;
+#ifndef WITH_FRANKA
+        LightingConfig            lighting;
+#endif
     };
 
     std::vector<ObjectDef> object_defs_;
@@ -96,6 +101,9 @@ private:
     EpisodeConfig requestEpisodeConfig();
     void          startNewEpisodeFolder();
     void          applyEpisodeConfig(const EpisodeConfig& cfg);
+#ifndef WITH_FRANKA
+    void          writeCameraParams();
+#endif
 
     std::unique_ptr<IntentionBuffer>     intention_buffer_;
     std::unique_ptr<IntentionRecognizer> intention_recognizer_;

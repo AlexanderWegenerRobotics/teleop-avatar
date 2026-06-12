@@ -141,7 +141,10 @@ void VideoStreamer::buildPipeline() {
             ? std::string(
                 " ! tee name=enc_tee"
                 " enc_tee. ! queue") + sink_seg +
-                " enc_tee. ! queue ! appsink name=logsink emit-signals=true sync=false max-buffers=4 drop=true"
+                " enc_tee. ! queue max-size-buffers=0 max-size-bytes=0 max-size-time=3000000000"
+                " ! h264parse config-interval=-1"
+                " ! video/x-h264,stream-format=byte-stream,alignment=au"
+                " ! appsink name=logsink emit-signals=true sync=false max-buffers=0 drop=false"
             : sink_seg;
 
         return
@@ -211,28 +214,63 @@ GstFlowReturn VideoStreamer::onNewSample(GstAppSink* sink, gpointer user) {
     GstMapInfo map;
     if (buf && gst_buffer_map(buf, &map, GST_MAP_READ)) {
         std::lock_guard<std::mutex> lk(self->enc_mutex_);
-        if (self->enc_file_) std::fwrite(map.data, 1, map.size, self->enc_file_);
+        if (self->enc_file_) {
+            bool keyframe = !GST_BUFFER_FLAG_IS_SET(buf, GST_BUFFER_FLAG_DELTA_UNIT);
+            uint64_t ts = 0; bool have_ts = false;
+            if (!self->ts_queue_.empty()) { ts = self->ts_queue_.front(); self->ts_queue_.pop_front(); have_ts = true; }
+            if (have_ts && !(self->await_keyframe_ && !keyframe)) {   // skip leading P-frames; file starts on an IDR
+                self->await_keyframe_ = false;
+                std::fwrite(map.data, 1, map.size, self->enc_file_);
+                if (self->ts_file_)
+                    std::fprintf(self->ts_file_, "%llu,%llu\n",
+                                 (unsigned long long)self->log_frame_idx_++,
+                                 (unsigned long long)ts);
+            }
+        }
         gst_buffer_unmap(buf, &map);
     }
     gst_sample_unref(sample);
     return GST_FLOW_OK;
 }
 
-// Opens a per-episode file that the appsink callback appends the encoded H.264 stream to.
+// Opens a per-episode file and asks the encoder for an IDR so the file starts on a keyframe.
 void VideoStreamer::startEncodedLog(const std::string& path) {
-    std::lock_guard<std::mutex> lk(enc_mutex_);
-    if (enc_file_) { std::fclose(enc_file_); enc_file_ = nullptr; }
-    enc_file_ = std::fopen(path.c_str(), "wb");
-    if (!enc_file_)
-        std::cerr << "[VideoStreamer] failed to open encoded log: " << path << std::endl;
-    else
+    {
+        std::lock_guard<std::mutex> lk(enc_mutex_);
+        if (enc_file_) { std::fclose(enc_file_); enc_file_ = nullptr; }
+        if (ts_file_)  { std::fclose(ts_file_);  ts_file_  = nullptr; }
+        enc_file_ = std::fopen(path.c_str(), "wb");
+        if (!enc_file_) {
+            std::cerr << "[VideoStreamer] failed to open encoded log: " << path << std::endl;
+            return;
+        }
+        std::string ts_path = path.substr(0, path.find_last_of('.')) + ".timestamps.csv";
+        ts_file_ = std::fopen(ts_path.c_str(), "wb");
+        if (ts_file_) std::fprintf(ts_file_, "frame_idx,wall_clock_ns\n");
+        ts_queue_.clear();
+        log_frame_idx_  = 0;
+        await_keyframe_ = true;
         std::cout << "[VideoStreamer] Encoded log started -> " << path << std::endl;
+    }
+    requestKeyframe();
+}
+
+// Sends an upstream force-key-unit (with SPS/PPS) so the next encoded buffer is a self-contained IDR.
+void VideoStreamer::requestKeyframe() {
+    if (!logsink_) return;
+    GstPad* pad = gst_element_get_static_pad(logsink_, "sink");
+    if (!pad) return;
+    GstStructure* s = gst_structure_new("GstForceKeyUnit", "all-headers", G_TYPE_BOOLEAN, TRUE, nullptr);
+    gst_pad_send_event(pad, gst_event_new_custom(GST_EVENT_CUSTOM_UPSTREAM, s));
+    gst_object_unref(pad);
 }
 
 // Closes the current episode's encoded file.
 void VideoStreamer::stopEncodedLog() {
     std::lock_guard<std::mutex> lk(enc_mutex_);
     if (enc_file_) { std::fclose(enc_file_); enc_file_ = nullptr; }
+    if (ts_file_)  { std::fclose(ts_file_);  ts_file_  = nullptr; }
+    ts_queue_.clear();
 }
 
 void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height) {
@@ -288,6 +326,11 @@ void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t heigh
     }
 
     gst_buffer_unmap(buffer, &map);
+
+    {
+        std::lock_guard<std::mutex> lk(enc_mutex_);
+        if (enc_file_) ts_queue_.push_back(now_ns);   // align capture time to the encoded AU in onNewSample
+    }
 
     gst_app_src_push_buffer(GST_APP_SRC(appsrc_), buffer);
     frame_count_++;

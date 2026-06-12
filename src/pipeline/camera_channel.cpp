@@ -104,6 +104,8 @@ void CameraChannel::stop() {
 void CameraChannel::onEpisodeStart(const std::string& session_id, int episode_index,
                                     const std::string& log_dir) {
     if (!config_.log_enabled) return;
+    if (episode_index == logging_idx_) return;   // duplicate start (boot re-announce); ignore
+    logging_idx_ = episode_index;
 
     if (streamer_) {
         namespace fs = std::filesystem;
@@ -133,6 +135,7 @@ void CameraChannel::onEpisodeStart(const std::string& session_id, int episode_in
 void CameraChannel::onEpisodeEnd(const std::string& /*session_id*/,
                                   int /*episode_index*/,
                                   const std::string& reason) {
+    logging_idx_ = -1;
     if (streamer_ && config_.log_enabled) { streamer_->stopEncodedLog(); return; }
     if (logger_) logger_->stopEpisode(reason);
 }

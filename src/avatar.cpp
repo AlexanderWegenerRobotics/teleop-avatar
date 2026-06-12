@@ -5,8 +5,11 @@
 #include "intention/annotation_msg.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <filesystem>
+#include <thread>
+#include <chrono>
 #include "network/platform_socket.hpp"
 
 Avatar::Avatar(const YAML::Node& config) {
@@ -215,6 +218,10 @@ Avatar::Avatar(const YAML::Node& config) {
             for (auto& arm : arm_instances)
                 arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode,
                                         current_episode_cfg_.color_bin_mapping);
+            if (intention_recognizer_)
+                intention_recognizer_->writeEpisodeConfig(current_episode_cfg_.seed,
+                                                          current_episode_cfg_.mode,
+                                                          current_episode_cfg_.color_bin_mapping);
             std::cout << "[AVATAR-INFO]: Episode restart (" << label << ")" << std::endl;
         });
 
@@ -311,6 +318,8 @@ Avatar::Avatar(const YAML::Node& config) {
         });
         break;
     }
+
+    writeCameraParams();
 #endif
 }
 
@@ -334,6 +343,19 @@ void Avatar::start(){
     for (auto& arm : arm_instances)
         arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode,
                                 current_episode_cfg_.color_bin_mapping);
+    if (intention_recognizer_)
+        intention_recognizer_->writeEpisodeConfig(current_episode_cfg_.seed,
+                                                  current_episode_cfg_.mode,
+                                                  current_episode_cfg_.color_bin_mapping);
+
+    // Re-announce the boot episode: the streamer process launches after us and may not
+    // have bound its episode socket for the first send (UDP, no retry). Streamer dedups.
+    std::thread([this]{
+        for (int i = 0; i < 8; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            sendEpisodeEvent("episode_start", "");
+        }
+    }).detach();
 
     constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 100));
 	auto next_control_time = std::chrono::high_resolution_clock::now();
@@ -468,6 +490,17 @@ void Avatar::start(){
                         entry.object_quat[i] = {q.w(), q.x(), q.y(), q.z()};
                     }
                     entry.object_names[i] = object_defs_[i].name;
+
+                    // Spawn-time randomization params — look up by name in episode config
+                    auto cfg_it = std::find_if(
+                        current_episode_cfg_.objects.begin(),
+                        current_episode_cfg_.objects.end(),
+                        [&](const SpawnedObject& so){ return so.name == object_defs_[i].name; });
+                    if (cfg_it != current_episode_cfg_.objects.end()) {
+                        entry.object_colors[i]    = cfg_it->color;
+                        entry.object_spawn_yaw[i] = cfg_it->yaw;
+                        entry.object_scale[i]     = cfg_it->scale;
+                    }
                 }
                 entry.n_objects = static_cast<int>(std::min(object_defs_.size(),
                     static_cast<size_t>(SceneLogEntry::MAX_OBJECTS)));
@@ -484,6 +517,17 @@ void Avatar::start(){
                 }
                 entry.n_bins = static_cast<int>(std::min(bin_defs_.size(),
                     static_cast<size_t>(SceneLogEntry::MAX_BINS)));
+
+#ifndef WITH_FRANKA
+                for (int i = 0; i < 3; ++i) {
+                    entry.light_main_pos[i]           = current_episode_cfg_.lighting.main_pos[i];
+                    entry.light_main_diffuse[i]       = current_episode_cfg_.lighting.main_diffuse[i];
+                    entry.light_main_specular[i]      = current_episode_cfg_.lighting.main_specular[i];
+                    entry.light_fill_diffuse[i]       = current_episode_cfg_.lighting.fill_diffuse[i];
+                    entry.light_headlight_diffuse[i]  = current_episode_cfg_.lighting.headlight_diffuse[i];
+                    entry.light_headlight_ambient[i]  = current_episode_cfg_.lighting.headlight_ambient[i];
+                }
+#endif
 
                 scene_logger_->write(entry);
             }
@@ -574,8 +618,30 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
             so.x          = o.at("x").as<double>();
             so.y          = o.at("y").as<double>();
             so.z          = o.at("z").as<double>();
+            so.yaw        = o.count("yaw")   ? o.at("yaw").as<double>()   : 0.0;
+            so.scale      = o.count("scale") ? o.at("scale").as<double>() : 1.0;
             cfg.objects.push_back(so);
         }
+
+#ifndef WITH_FRANKA
+        // Randomize lighting from seed by default; explicit server values override below.
+        cfg.lighting.randomize(cfg.seed);
+
+        if (fields.count("lighting")) {
+            std::map<std::string, msgpack::object> lmap;
+            fields.at("lighting").convert(lmap);
+            auto parseArr = [&](const char* key, float* out) {
+                auto vals = lmap.at(key).as<std::vector<float>>();
+                for (int i = 0; i < 3 && i < (int)vals.size(); ++i) out[i] = vals[i];
+            };
+            parseArr("main_pos",           cfg.lighting.main_pos);
+            parseArr("main_diffuse",       cfg.lighting.main_diffuse);
+            parseArr("main_specular",      cfg.lighting.main_specular);
+            parseArr("fill_diffuse",       cfg.lighting.fill_diffuse);
+            if (lmap.count("headlight_diffuse")) parseArr("headlight_diffuse", cfg.lighting.headlight_diffuse);
+            if (lmap.count("headlight_ambient")) parseArr("headlight_ambient", cfg.lighting.headlight_ambient);
+        }
+#endif
     } catch (const std::exception& e) {
         std::cerr << "[AVATAR-WARN]: Failed to parse episode config: " << e.what() << std::endl;
     }
@@ -608,6 +674,7 @@ void Avatar::startNewEpisodeFolder() {
     scene_logger_ = std::make_unique<DataLogger<SceneLogEntry>>(
         folder + "/scene.csv", sceneLogHeader, sceneLogRow, session_id_);
     scene_logger_->start();
+    scene_logger_->enable(true);
 
     if (intention_recognizer_)
         intention_recognizer_->restartLogger(folder + "/intention_log.csv");
@@ -621,15 +688,19 @@ void Avatar::applyEpisodeConfig(const EpisodeConfig& cfg) {
               << " n_objects=" << cfg.objects.size() << std::endl;
 
 #ifndef WITH_FRANKA
+    sim_->setLighting(cfg.lighting);
+
     for (const auto& so : cfg.objects) {
         auto it = std::find_if(object_defs_.begin(), object_defs_.end(),
             [&](const ObjectDef& d){ return d.name == so.name; });
         if (it == object_defs_.end()) continue;
+        Eigen::Quaterniond q_yaw(Eigen::AngleAxisd(so.yaw, Eigen::Vector3d::UnitZ()));
         sim_->setFreeBodyPose(it->mujoco_body,
-            Eigen::Vector3d(so.x, so.y, so.z),
-            Eigen::Quaterniond::Identity());
+            Eigen::Vector3d(so.x, so.y, so.z), q_yaw);
+        sim_->setBodyScale(it->mujoco_body, so.scale);
         std::cout << "[AVATAR-INFO]:   " << so.name << " (" << so.color
-                  << ") -> (" << so.x << "," << so.y << "," << so.z << ")" << std::endl;
+                  << ") -> (" << so.x << "," << so.y << "," << so.z
+                  << ") yaw=" << so.yaw << " scale=" << so.scale << std::endl;
     }
 #endif
 }
@@ -779,54 +850,57 @@ void Avatar::requestAllDevices(SysState state) {
     }
 }
 
-ArmControl* Avatar::getArm(const std::string& name) {
-    for (auto& arm : arm_instances)
-        if (arm->getDeviceName() == name) return arm;
-    return nullptr;
+#ifndef WITH_FRANKA
+void Avatar::writeCameraParams() {
+    std::string out_path = log_base_dir_ + "/camera_params.json";
+    std::ofstream f(out_path);
+    if (!f) {
+        std::cerr << "[AVATAR] writeCameraParams: cannot open " << out_path << "\n";
+        return;
+    }
+
+    auto q = [](const std::string& s) { return "\"" + s + "\""; };
+    auto fmtd = [](double v) {
+        char buf[32]; std::snprintf(buf, sizeof(buf), "%.8g", v); return std::string(buf);
+    };
+
+    f << "{\n";
+    bool first_cam = true;
+    for (const auto& sc : sim_->stream_cameras_) {
+        const std::string& name = sc.camera_name;
+        try {
+            CameraIntrinsics intr = sim_->getCameraIntrinsics(name);
+            CameraExtrinsics extr = sim_->getCameraExtrinsics(name);
+            Eigen::Isometry3d T   = extr.asIsometry();
+
+            if (!first_cam) f << ",\n";
+            first_cam = false;
+
+            f << "  " << q(name) << ": {\n";
+            f << "    \"fx\": "     << fmtd(intr.fx)     << ",\n";
+            f << "    \"fy\": "     << fmtd(intr.fy)     << ",\n";
+            f << "    \"cx\": "     << fmtd(intr.cx)     << ",\n";
+            f << "    \"cy\": "     << fmtd(intr.cy)     << ",\n";
+            f << "    \"width\": "  << intr.width        << ",\n";
+            f << "    \"height\": " << intr.height       << ",\n";
+            f << "    \"T_world_cam\": [\n";
+            for (int r = 0; r < 4; ++r) {
+                f << "      [";
+                for (int c = 0; c < 4; ++c) {
+                    f << fmtd(T.matrix()(r, c));
+                    if (c < 3) f << ", ";
+                }
+                f << "]";
+                if (r < 3) f << ",";
+                f << "\n";
+            }
+            f << "    ]\n";
+            f << "  }";
+        } catch (const std::exception& e) {
+            std::cerr << "[AVATAR] writeCameraParams: " << name << ": " << e.what() << "\n";
+        }
+    }
+    f << "\n}\n";
+    std::cout << "[AVATAR] wrote " << out_path << "\n";
 }
-
-void Avatar::markEpisodeStart() {
-    for (auto& arm  : arm_instances) arm->markEpisodeStart();
-    for (auto& head : head_instances) head->markEpisodeStart();
-    current_episode_idx_ = episode_index_ - 1;
-    sendEpisodeEvent("episode_start", "");
-}
-
-void Avatar::markEpisodeEnd(const std::string& reason) {
-    // Guard: no-op if the episode was already closed.  Without this, redundant
-    // calls (e.g. state-machine ENGAGED→IDLE firing while episode_restart is
-    // still in requestEpisodeConfig()) write spurious "operator_idle" entries to
-    // the arm CSV after the real label has already been written.
-    if (current_episode_idx_ < 0) return;
-
-    for (auto& arm  : arm_instances) arm->markEpisodeEnd(reason);
-    for (auto& head : head_instances) head->markEpisodeEnd(reason);
-
-    sendEpisodeEvent("episode_end", reason);
-    current_episode_idx_ = -1;
-}
-
-void Avatar::sendEpisodeEvent(const std::string& type, const std::string& reason) {
-    if (logger_sock_ == kInvalidSocket || logger_port_ == 0) return;
-
-    EpisodeEventMsg msg;
-    msg.type           = type;
-    msg.session_id     = session_id_;
-    msg.episode_index  = current_episode_idx_;
-    msg.reason         = reason;
-    msg.log_dir        = current_episode_folder_;  // absolute path; empty for episode_end (fine)
-
-    msgpack::sbuffer buf;
-    msgpack::pack(buf, msg);
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port   = htons(static_cast<uint16_t>(logger_port_));
-    inet_pton(AF_INET, logger_host_.c_str(), &addr.sin_addr);
-
-    sendto(logger_sock_,
-           buf.data(), static_cast<int>(buf.size()),
-           0,
-           reinterpret_cast<sockaddr*>(&addr),
-           static_cast<int>(sizeof(addr)));
-}
+#endif

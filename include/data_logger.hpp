@@ -24,6 +24,7 @@ struct ArmLogEntry {
     std::array<double, 16> O_T_EE_cmd;
     std::array<double, 6>  F_ext;
     double                 gripper_width;
+    double                 gripper_cmd;
     SysState               state;
 };
 
@@ -120,6 +121,7 @@ public:
                    << episode_id_ << ";"
                    << "annotation" << ";"
                    << t << ";"
+                   << ";" << ";" << ";"
                    << label << ";"
                    << static_cast<int>(atype) << ";"
                    << confidence << ";"
@@ -139,7 +141,8 @@ public:
                    << t << ";"
                    << seed << ";"
                    << mode << ";"
-                   << color_bin_mapping << "\n";
+                   << color_bin_mapping << ";"
+                   << ";;;;\n";
         meta_file_.flush();
     }
 
@@ -157,7 +160,7 @@ private:
         if (!meta_file_)
             throw std::runtime_error("DataLogger: failed to open meta file: " + meta_path);
 
-        meta_file_ << "session_id;episode_id;event;time_s;seed;mode;color_bin_mapping\n";
+        meta_file_ << "session_id;episode_id;event;time_s;seed;mode;color_bin_mapping;ann_label;ann_atype;ann_confidence;ann_score;ann_frame_id\n";
         meta_file_.flush();
     }
 
@@ -170,7 +173,8 @@ private:
                    << event       << ";"
                    << t           << ";"
                    << ";" << ";"
-                   << reason      << "\n";
+                   << reason      << ";"
+                   << ";;;;\n";
         meta_file_.flush();
     }
 
@@ -231,6 +235,7 @@ inline std::string armLogHeader() {
     for (int i = 0; i < 16; ++i) h += "O_T_EE_cmd_" + std::to_string(i) + ";";
     for (int i = 0; i < 6;  ++i) h += "F_ext_"      + std::to_string(i) + ";";
     h += "gripper_width;";
+    h += "gripper_cmd;";
     h += "state\n";
     return h;
 }
@@ -246,6 +251,7 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     for (auto v : e.O_T_EE_cmd) r += std::to_string(v) + ";";
     for (auto v : e.F_ext)      r += std::to_string(v) + ";";
     r += std::to_string(e.gripper_width) + ";";
+    r += std::to_string(e.gripper_cmd) + ";";
     r += std::to_string(static_cast<uint8_t>(e.state)) + "\n";
     return r;
 }
@@ -288,21 +294,41 @@ struct SceneLogEntry {
     std::array<std::string,           MAX_BINS> bin_names;
     std::array<std::array<double, 3>, MAX_BINS> bin_pos{};
     std::array<std::array<double, 4>, MAX_BINS> bin_quat{};
+
+    // Per-object spawn config — constant per episode, repeated each row
+    std::array<std::string, MAX_OBJECTS> object_colors;
+    std::array<double, MAX_OBJECTS> object_spawn_yaw{};    // Z-rotation at spawn (radians)
+    std::array<double, MAX_OBJECTS> object_scale{1.0, 1.0, 1.0, 1.0};  // uniform scale factor
+
+    // Lighting — constant per episode, repeated each row for easy frame-level lookup
+    std::array<float, 3> light_main_pos        = {0.5f,  0.0f,  1.8f};
+    std::array<float, 3> light_main_diffuse    = {0.8f,  0.8f,  0.8f};
+    std::array<float, 3> light_main_specular   = {0.2f,  0.2f,  0.2f};
+    std::array<float, 3> light_fill_diffuse    = {0.25f, 0.25f, 0.25f};
+    std::array<float, 3> light_headlight_diffuse = {0.4f, 0.4f, 0.4f};
+    std::array<float, 3> light_headlight_ambient = {0.25f, 0.25f, 0.25f};
 };
 
 inline std::string sceneLogHeader() {
     std::string h = "time;wall_clock_ns;mode;seed;";
     for (int i = 0; i < SceneLogEntry::MAX_OBJECTS; ++i) {
         std::string p = "obj" + std::to_string(i) + "_";
-        h += p + "name;" + p + "x;" + p + "y;" + p + "z;"
-           + p + "qw;" + p + "qx;" + p + "qy;" + p + "qz;";
+        h += p + "name;" + p + "color;" + p + "x;" + p + "y;" + p + "z;"
+           + p + "qw;" + p + "qx;" + p + "qy;" + p + "qz;"
+           + p + "spawn_yaw;" + p + "scale;";
     }
     for (int i = 0; i < SceneLogEntry::MAX_BINS; ++i) {
         std::string p = "bin" + std::to_string(i) + "_";
         h += p + "name;" + p + "x;" + p + "y;" + p + "z;"
            + p + "qw;" + p + "qx;" + p + "qy;" + p + "qz;";
     }
-    h += "n_objects;n_bins\n";
+    h += "n_objects;n_bins;"
+         "light_main_pos_x;light_main_pos_y;light_main_pos_z;"
+         "light_main_diffuse_r;light_main_diffuse_g;light_main_diffuse_b;"
+         "light_main_specular_r;light_main_specular_g;light_main_specular_b;"
+         "light_fill_diffuse_r;light_fill_diffuse_g;light_fill_diffuse_b;"
+         "light_headlight_diffuse_r;light_headlight_diffuse_g;light_headlight_diffuse_b;"
+         "light_headlight_ambient_r;light_headlight_ambient_g;light_headlight_ambient_b\n";
     return h;
 }
 
@@ -312,17 +338,28 @@ inline std::string sceneLogRow(const SceneLogEntry& e) {
     for (int i = 0; i < SceneLogEntry::MAX_OBJECTS; ++i) {
         const auto& p = e.object_pos[i];
         const auto& q = e.object_quat[i];
-        r += e.object_names[i] + ";";
-        r += std::to_string(p[0]) + ";" + std::to_string(p[1]) + ";" + std::to_string(p[2]) + ";";
-        r += std::to_string(q[0]) + ";" + std::to_string(q[1]) + ";" + std::to_string(q[2]) + ";" + std::to_string(q[3]) + ";";
+        r += (i < e.n_objects ? e.object_names[i] : "") + ";"
+           + (i < e.n_objects ? e.object_colors[i] : "") + ";"
+           + std::to_string(p[0]) + ";" + std::to_string(p[1]) + ";" + std::to_string(p[2]) + ";"
+           + std::to_string(q[0]) + ";" + std::to_string(q[1]) + ";" + std::to_string(q[2]) + ";" + std::to_string(q[3]) + ";"
+           + std::to_string(e.object_spawn_yaw[i]) + ";"
+           + std::to_string(e.object_scale[i]) + ";";
     }
     for (int i = 0; i < SceneLogEntry::MAX_BINS; ++i) {
         const auto& p = e.bin_pos[i];
         const auto& q = e.bin_quat[i];
-        r += e.bin_names[i] + ";";
-        r += std::to_string(p[0]) + ";" + std::to_string(p[1]) + ";" + std::to_string(p[2]) + ";";
-        r += std::to_string(q[0]) + ";" + std::to_string(q[1]) + ";" + std::to_string(q[2]) + ";" + std::to_string(q[3]) + ";";
+        r += (i < e.n_bins ? e.bin_names[i] : "") + ";"
+           + std::to_string(p[0]) + ";" + std::to_string(p[1]) + ";" + std::to_string(p[2]) + ";"
+           + std::to_string(q[0]) + ";" + std::to_string(q[1]) + ";" + std::to_string(q[2]) + ";" + std::to_string(q[3]) + ";";
     }
-    r += std::to_string(e.n_objects) + ";" + std::to_string(e.n_bins) + "\n";
+    r += std::to_string(e.n_objects) + ";" + std::to_string(e.n_bins) + ";";
+    for (float v : e.light_main_pos)           r += std::to_string(v) + ";";
+    for (float v : e.light_main_diffuse)       r += std::to_string(v) + ";";
+    for (float v : e.light_main_specular)      r += std::to_string(v) + ";";
+    for (float v : e.light_fill_diffuse)       r += std::to_string(v) + ";";
+    for (float v : e.light_headlight_diffuse)  r += std::to_string(v) + ";";
+    r += std::to_string(e.light_headlight_ambient[0]) + ";"
+       + std::to_string(e.light_headlight_ambient[1]) + ";"
+       + std::to_string(e.light_headlight_ambient[2]) + "\n";
     return r;
 }

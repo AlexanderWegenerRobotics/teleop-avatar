@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -58,6 +59,7 @@ public:
 
 private:
     void buildPipeline();
+    void requestKeyframe();
     static GstFlowReturn onNewSample(GstAppSink* sink, gpointer user);
 
 private:
@@ -77,5 +79,9 @@ private:
 
     GstElement* logsink_  = nullptr;
     FILE*       enc_file_ = nullptr;
+    FILE*       ts_file_  = nullptr;             // sidecar: per logged frame "frame_idx,wall_clock_ns"
     std::mutex  enc_mutex_;
+    std::atomic<bool>     await_keyframe_{false};  // skip encoded buffers until the first IDR of an episode
+    std::deque<uint64_t>  ts_queue_;             // capture wall-clocks of pushed frames awaiting their encoded AU
+    uint64_t              log_frame_idx_ = 0;    // index of the next frame written to the current episode
 };

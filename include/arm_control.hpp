@@ -113,6 +113,7 @@ private:
     std::chrono::steady_clock::time_point recovery_start_time_;
     std::atomic<double> gripper_width_{0.0};
     std::atomic<bool>   desired_gripper_closed_{false};
+    std::atomic<bool>   grasp_allowed_{false};
     std::atomic<bool>   gripper_busy_{false};
     bool                gripper_close_applied_{true};
 

@@ -34,6 +34,11 @@ Simulation::Simulation(const YAML::Node& config) {
     if (sim_config["simulation"] && sim_config["simulation"]["timestep"])
         model->opt.timestep = sim_config["simulation"]["timestep"].as<double>();
 
+    // Reduce the near-clip plane so wrist cameras don't see through objects at
+    // close range. Default znear=0.01 is relative to scene extent (~2m → 2cm clip);
+    // 0.001 gives ~2mm, which is fine for close-up manipulation.
+    model->vis.map.znear = 0.001;
+
     data = mj_makeData(model);
     if (!data)
         throw std::runtime_error("mj_makeData failed");
@@ -617,6 +622,81 @@ bool Simulation::getFreeBodyPose(const std::string& bodyName, Eigen::Vector3d& p
     return true;
 }
 
+void Simulation::setLighting(const LightingConfig& lc) {
+    int main_id = mj_name2id(model, mjOBJ_LIGHT, "light_main");
+    int fill_id = mj_name2id(model, mjOBJ_LIGHT, "light_fill");
+
+    if (main_id >= 0) {
+        for (int i = 0; i < 3; ++i) {
+            model->light_pos     [main_id * 3 + i] = lc.main_pos[i];
+            model->light_diffuse [main_id * 3 + i] = lc.main_diffuse[i];
+            model->light_specular[main_id * 3 + i] = lc.main_specular[i];
+        }
+    }
+    if (fill_id >= 0) {
+        for (int i = 0; i < 3; ++i) {
+            model->light_diffuse[fill_id * 3 + i] = lc.fill_diffuse[i];
+        }
+    }
+
+    // Headlight lives in model->vis.headlight, not mjvScene
+    model->vis.headlight.active = 1;
+    for (int i = 0; i < 3; ++i) {
+        model->vis.headlight.diffuse[i]  = lc.headlight_diffuse[i];
+        model->vis.headlight.ambient[i]  = lc.headlight_ambient[i];
+        model->vis.headlight.specular[i] = 0.0f;
+    }
+}
+
+void Simulation::setBodyScale(const std::string& bodyName, double scale) {
+    int body_id = mj_name2id(model, mjOBJ_BODY, bodyName.c_str());
+    if (body_id < 0) {
+        std::cerr << "[Simulation] setBodyScale: body '" << bodyName << "' not found\n";
+        return;
+    }
+
+    // Populate cache on first call for this body.
+    if (body_scale_cache_.find(bodyName) == body_scale_cache_.end()) {
+        BodyScaleCache cache;
+        cache.original_mass = model->body_mass[body_id];
+        for (int i = 0; i < 3; ++i)
+            cache.original_inertia[i] = model->body_inertia[body_id * 3 + i];
+        for (int g = 0; g < model->ngeom; ++g) {
+            if (model->geom_bodyid[g] != body_id) continue;
+            cache.geom_ids.push_back(g);
+            cache.original_geom_size.push_back({
+                model->geom_size[g * 3 + 0],
+                model->geom_size[g * 3 + 1],
+                model->geom_size[g * 3 + 2]
+            });
+            cache.original_geom_pos.push_back({
+                model->geom_pos[g * 3 + 0],
+                model->geom_pos[g * 3 + 1],
+                model->geom_pos[g * 3 + 2]
+            });
+        }
+        body_scale_cache_[bodyName] = std::move(cache);
+    }
+
+    const BodyScaleCache& cache = body_scale_cache_.at(bodyName);
+
+    // Scale geometry — always from original values so episodes don't compound.
+    for (size_t i = 0; i < cache.geom_ids.size(); ++i) {
+        int g = cache.geom_ids[i];
+        for (int j = 0; j < 3; ++j) {
+            model->geom_size[g * 3 + j] = cache.original_geom_size[i][j] * scale;
+            model->geom_pos [g * 3 + j] = cache.original_geom_pos [i][j] * scale;
+        }
+    }
+
+    // Scale inertial properties: mass ~ scale^3, diagonal inertia ~ scale^5.
+    double s3 = scale * scale * scale;
+    double s5 = s3 * scale * scale;
+    model->body_mass[body_id] = cache.original_mass * s3;
+    for (int i = 0; i < 3; ++i)
+        model->body_inertia[body_id * 3 + i] = cache.original_inertia[i] * s5;
+}
+
 CameraIntrinsics Simulation::getCameraIntrinsics(const std::string& cam_name) const {
     int cam_id = mj_name2id(model, mjOBJ_CAMERA, cam_name.c_str());
     if (cam_id < 0)
@@ -635,4 +715,20 @@ CameraIntrinsics Simulation::getCameraIntrinsics(const std::string& cam_name) co
         .width  = stream_width_,
         .height = stream_height_
     };
+}
+
+CameraExtrinsics Simulation::getCameraExtrinsics(const std::string& cam_name) const {
+    int cam_id = mj_name2id(model, mjOBJ_CAMERA, cam_name.c_str());
+    if (cam_id < 0)
+        throw std::runtime_error("[Simulation] getCameraExtrinsics: camera '" + cam_name + "' not found");
+
+    // cam_pos: default position in world frame (3 doubles per camera)
+    // cam_quat: default orientation as wxyz quaternion (4 doubles per camera)
+    const mjtNum* p = model->cam_pos  + cam_id * 3;
+    const mjtNum* q = model->cam_quat + cam_id * 4;  // w, x, y, z
+
+    CameraExtrinsics ext;
+    ext.position    = Eigen::Vector3d(p[0], p[1], p[2]);
+    ext.orientation = Eigen::Quaterniond(q[0], q[1], q[2], q[3]);  // w, x, y, z
+    return ext;
 }
