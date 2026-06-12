@@ -554,6 +554,45 @@ void Avatar::stop(){
     if (cmd_channel_) cmd_channel_->stop();
 }
 
+ArmControl* Avatar::getArm(const std::string& name) {
+    for (auto& arm : arm_instances)
+        if (arm->getDeviceName() == name) return arm;
+    return nullptr;
+}
+
+void Avatar::markEpisodeStart() {
+    for (auto& arm : arm_instances)  arm->markEpisodeStart();
+    for (auto& head : head_instances) head->markEpisodeStart();
+    if (scene_logger_) scene_logger_->markEpisodeStart();
+    if (intention_recognizer_) intention_recognizer_->markEpisodeStart();
+}
+
+void Avatar::markEpisodeEnd(const std::string& reason) {
+    for (auto& arm : arm_instances)  arm->markEpisodeEnd(reason);
+    for (auto& head : head_instances) head->markEpisodeEnd(reason);
+    if (scene_logger_) scene_logger_->markEpisodeEnd(reason);
+    if (intention_recognizer_) intention_recognizer_->markEpisodeEnd(reason);
+    sendEpisodeEvent("episode_end", reason);
+}
+
+void Avatar::sendEpisodeEvent(const std::string& type, const std::string& reason) {
+    if (logger_sock_ == kInvalidSocket || logger_port_ == 0) return;
+    EpisodeEventMsg msg;
+    msg.type          = type;
+    msg.session_id    = session_id_;
+    msg.episode_index = current_episode_idx_;
+    msg.reason        = reason;
+    msg.log_dir       = current_episode_folder_;
+    msgpack::sbuffer buf;
+    msgpack::pack(buf, msg);
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port   = htons(static_cast<uint16_t>(logger_port_));
+    inet_pton(AF_INET, logger_host_.c_str(), &dst.sin_addr);
+    sendto(logger_sock_, buf.data(), static_cast<int>(buf.size()), 0,
+           reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+}
+
 void Avatar::processRecoveryNotifications() {
     if (!cmd_channel_) return;
     for (auto& arm : arm_instances) {
@@ -651,7 +690,8 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
 
 void Avatar::startNewEpisodeFolder() {
     char idx_buf[8];
-    std::snprintf(idx_buf, sizeof(idx_buf), "%03d", episode_index_++);
+    current_episode_idx_ = episode_index_++;
+    std::snprintf(idx_buf, sizeof(idx_buf), "%03d", current_episode_idx_);
     std::string folder = log_base_dir_ + "/" + std::string(idx_buf);
     std::filesystem::create_directories(folder);
     // Store the canonical absolute path so the pipeline process can use it directly,
