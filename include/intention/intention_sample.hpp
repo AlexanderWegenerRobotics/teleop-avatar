@@ -92,10 +92,11 @@ struct IntentionLogEntry {
     uint8_t  gaze_valid;
     float    gaze_px_x;
     float    gaze_px_y;
-    std::array<float,   11> slot_belief;
-    std::array<uint8_t, 10> slot_types;
-    std::array<float,   10> slot_px_u;      // projected center pixel u per slot
-    std::array<float,   10> slot_px_v;      // projected center pixel v per slot
+    std::array<float,       11> slot_belief;
+    std::array<uint8_t,     10> slot_types;
+    std::array<std::string, 10> slot_names;  // object/ee name per slot (episode-config order)
+    std::array<float,       10> slot_px_u;   // projected center pixel u per slot
+    std::array<float,       10> slot_px_v;   // projected center pixel v per slot
     std::array<double, 3> ee_left_pos;
     std::array<double, 3> ee_right_pos;
     float gripper_left;
@@ -108,6 +109,7 @@ inline std::string intentionLogHeader() {
     std::string h = "time;frame_id;timestamp_ns;timestamp_arrival_ns;gaze_valid;gaze_px_x;gaze_px_y;";
     for (int i = 0; i < 11; ++i) h += "slot_belief_" + std::to_string(i) + ";";
     for (int i = 0; i < 10; ++i) h += "slot_type_"   + std::to_string(i) + ";";
+    for (int i = 0; i < 10; ++i) h += "slot_name_"   + std::to_string(i) + ";";
     for (int i = 0; i < 10; ++i) h += "slot_px_u_"   + std::to_string(i) + ";";
     for (int i = 0; i < 10; ++i) h += "slot_px_v_"   + std::to_string(i) + ";";
     h += "ee_left_x;ee_left_y;ee_left_z;";
@@ -128,6 +130,7 @@ inline std::string intentionLogRow(const IntentionLogEntry& e) {
     r += std::to_string(e.gaze_px_y)              + ";";
     for (auto v : e.slot_belief)    r += std::to_string(v) + ";";
     for (auto v : e.slot_types)     r += std::to_string(v) + ";";
+    for (auto& s : e.slot_names)    r += s + ";";
     for (auto v : e.slot_px_u)      r += std::to_string(v) + ";";
     for (auto v : e.slot_px_v)      r += std::to_string(v) + ";";
     for (auto v : e.ee_left_pos)    r += std::to_string(v) + ";";

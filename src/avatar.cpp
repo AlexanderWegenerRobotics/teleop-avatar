@@ -304,6 +304,11 @@ Avatar::Avatar(const YAML::Node& config) {
         IntentionBufferConfig buf_cfg;
         buf_cfg.intrinsics = intrinsics;
         buf_cfg.extrinsics = extrinsics;
+        if (dev["base_pose"] && dev["base_pose"]["position"]) {
+            auto hp = dev["base_pose"]["position"].as<std::vector<double>>();
+            // base_pose is the head_frame root; add link_1(0.08) + link_2(0.06) z-offsets to reach tilt joint
+            buf_cfg.head_position = Eigen::Vector3d(hp[0], hp[1], hp[2] + 0.08 + 0.06);
+        }
         if (cam["belief_temperature"])
             buf_cfg.belief_temperature = cam["belief_temperature"].as<float>(1.0f);
 

@@ -42,6 +42,10 @@ void IntentionRecognizer::push(const IntentionSample& sample) {
     for (size_t i = 0; i < std::min(sample.slot_types.size(), size_t(10)); ++i)
         entry.slot_types[i] = sample.slot_types[i];
 
+    entry.slot_names.fill(std::string{});
+    for (size_t i = 0; i < std::min(sample.slot_names.size(), size_t(10)); ++i)
+        entry.slot_names[i] = sample.slot_names[i];
+
     entry.slot_px_u.fill(-1.0f);
     entry.slot_px_v.fill(-1.0f);
     for (size_t i = 0; i < std::min(sample.slot_px_u.size(), size_t(10)); ++i) {

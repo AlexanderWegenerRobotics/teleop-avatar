@@ -12,15 +12,10 @@
 struct IntentionBufferConfig {
     int    max_frames    = 300;
     float  gaze_sigma_px = 60.0f;
-    // Temperature for belief normalisation.  Raw per-slot Gaussian likelihoods
-    // are raised to the power (1/temperature) before the softmax-style normalise.
-    // temperature=1 reproduces the original behaviour (hard argmax / saturation).
-    // temperature>1 spreads the posterior (graded uncertainty during early reach).
-    // Recommended starting value: 3–5.  Expose in robot_config under camera.
     float  belief_temperature = 1.0f;
     CameraIntrinsics  intrinsics;
     CameraExtrinsics  extrinsics;
-    Eigen::Vector3d head_position = Eigen::Vector3d(0.0, 0.0, 1.2);
+    Eigen::Vector3d head_position = Eigen::Vector3d(0.0, 0.0, 1.844);  // tilt joint: base_pose(1.704)+link1(0.08)+link2(0.06)
 };
 
 class IntentionBuffer {

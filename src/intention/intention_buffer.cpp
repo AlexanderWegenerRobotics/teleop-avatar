@@ -61,9 +61,9 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
         sample.gripper_left  = snap.gripper_left;
         sample.gripper_right = snap.gripper_right;
 
-        // Head rotation — tilt * pan matches ProjectWorldToScreen (R_CH = R_tilt * R_pan)
-        Eigen::Matrix3d R_pan  = Eigen::AngleAxisd(snap.head_pan,  Eigen::Vector3d::UnitZ()).toRotationMatrix();
-        Eigen::Matrix3d R_tilt = Eigen::AngleAxisd(snap.head_tilt, Eigen::Vector3d::UnitY()).toRotationMatrix();
+        // Head rotation: tilt around +Y (R_Y(q_tilt)), pan world→head requires -q_pan (passive rotation)
+        Eigen::Matrix3d R_pan  = Eigen::AngleAxisd(-snap.head_pan, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+        Eigen::Matrix3d R_tilt = Eigen::AngleAxisd(snap.head_tilt,  Eigen::Vector3d::UnitY()).toRotationMatrix();
         Eigen::Matrix3d R_CH   = R_tilt * R_pan;
 
         std::vector<SlotKernel> kernels;
@@ -80,11 +80,17 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
             sample.slot_names.push_back(slot.name);
         }
 
+        // gaze_px_x comes in as GazeUV.X * 2560 (full stereo width).
+        // projectToImage works in single-camera coordinates (cx=640, width=1280).
+        // Halve u to align coordinate spaces; v height is the same in both frames.
+        const float gaze_u_cam = gaze.gaze_px_x * 0.5f;
+        const float gaze_v_cam = gaze.gaze_px_y;
+
         sample.gaze_px_x = gaze.gaze_px_x;
         sample.gaze_px_y = gaze.gaze_px_y;
 
         sample.slot_belief = computeBelief(
-            gaze.gaze_px_x, gaze.gaze_px_y,
+            gaze_u_cam, gaze_v_cam,
             kernels,
             R_CH,
             config_.head_position);

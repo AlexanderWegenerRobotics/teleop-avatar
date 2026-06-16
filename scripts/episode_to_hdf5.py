@@ -12,10 +12,17 @@ If a video has no sidecar (older logs), the wall-clock is recovered from the two
 marker rows the streamer embeds at the bottom of every frame; failing that, a
 uniform rate from the container is assumed.
 
+head_cam_stereo is a side-by-side stereo stream (left eye: x in [0, W/2),
+right eye: x in [W/2, W)).  It is split at conversion time into head_cam_left
+and head_cam_right.  Gaze pixel coordinates logged in full-frame space must have
+eye_width subtracted from x to map into the right-eye image.
+
 Usage:
     python episode_to_hdf5.py logs/007                  # one episode -> logs/007/episode.hdf5
     python episode_to_hdf5.py logs --all                # every NNN/ folder under logs/
     python episode_to_hdf5.py logs/007 --rate 30 --scale 0.25
+    python episode_to_hdf5.py --overwrite
+    python scripts/episode_to_hdf5.py logs --all --overwrite --jobs -1
 """
 
 import argparse
@@ -43,7 +50,7 @@ except ImportError:
     def _resize(img, w, h):
         return np.asarray(Image.fromarray(img).resize((w, h), Image.BILINEAR))
 
-MARKER_ROWS = 2   # streamer appends a timestamp row + a frame-id row below each frame
+MARKER_ROWS = 2
 
 
 # ── Video ──────────────────────────────────────────────────────────────────
@@ -51,9 +58,7 @@ MARKER_ROWS = 2   # streamer appends a timestamp row + a frame-id row below each
 def probe_dims(path):
     """Returns (width, full_height, fps) of an H.264 elementary stream."""
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height,r_frame_rate",
-         "-of", "csv=p=0", path],
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate", "-of", "csv=p=0", path],
         capture_output=True, text=True, check=True).stdout.strip()
     w, h, rate = out.split(",")
     num, den = (rate.split("/") + ["1"])[:2]
@@ -64,8 +69,7 @@ def probe_dims(path):
 def decode_frames(path, full_w, full_h):
     """Yields each decoded RGB frame (full height, including marker rows)."""
     proc = subprocess.Popen(
-        ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo",
-         "-pix_fmt", "rgb24", "-"],
+        ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
         stdout=subprocess.PIPE)
     frame_bytes = full_w * full_h * 3
     while True:
@@ -107,8 +111,8 @@ def load_video(path, scale):
         if side_ts is not None and i < len(side_ts):
             wall, fid = int(side_ts[i]), i
         else:
-            wall = decode_marker_u64(frame[img_h])         # ts row
-            fid  = decode_marker_u64(frame[img_h + 1])      # frame-id row
+            wall = decode_marker_u64(frame[img_h])
+            fid  = decode_marker_u64(frame[img_h + 1])
         img = frame[:img_h]
         if scale != 1.0:
             img = _resize(img, out_w, out_h)
@@ -189,7 +193,7 @@ def read_meta(folder):
             out["mode"] = d.get("mode", "")
             out["color_bin_mapping"] = d.get("color_bin_mapping", "")
         if d.get("event") == "episode_end":
-            out["success"] = d.get("color_bin_mapping", "")  # reason lands in this col
+            out["success"] = d.get("color_bin_mapping", "")
     return out
 
 
@@ -243,9 +247,28 @@ def load_camera_params(folder, params_path):
     return {}
 
 
+def _write_eye_dataset(imgs_group, eye_name, eye_frames, stereo_attrs, cam_params, stereo_cam_name):
+    """Creates one eye dataset from pre-split frames, copying and adjusting stereo attrs."""
+    H, eye_w = eye_frames.shape[1], eye_frames.shape[2]
+    ds = imgs_group.create_dataset(
+        eye_name, data=eye_frames,
+        compression="gzip", compression_opts=4,
+        chunks=(1, H, eye_w, eye_frames.shape[3]),
+    )
+    for k, v in stereo_attrs.items():
+        ds.attrs[k] = v // 2 if k == "native_width" else v
+    if stereo_cam_name in cam_params:
+        cp = cam_params[stereo_cam_name]
+        for key in ("fx", "fy", "cx", "cy", "width", "height"):
+            if key in cp:
+                ds.attrs[key] = cp[key]
+        if "T_world_cam" in cp:
+            ds.attrs["T_world_cam"] = np.asarray(cp["T_world_cam"], dtype=np.float64)
+
+
 def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
     cams = {}
-    cam_native_dims = {}  # name -> (full_w, img_h) before scaling
+    cam_native_dims = {}
     for name in cameras:
         vpath = os.path.join(folder, f"video_{name}.h264")
         if os.path.exists(vpath):
@@ -276,7 +299,6 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
         scene = load_csv(sp)
         _, scene_rows = load_csv_rows(sp)
 
-    # Master grid over the window all present streams cover.
     starts, ends = [], []
     for _, ts, _ in cams.values():
         starts.append(ts[0]); ends.append(ts[-1])
@@ -312,22 +334,31 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
         first_cam = True
         for name, (frames, ts, fids) in cams.items():
             sel = nearest_idx(ts, grid)
-            ds = imgs.create_dataset(name, data=frames[sel],
-                                     compression="gzip", compression_opts=4,
-                                     chunks=(1,) + frames.shape[1:])
-            # Reference resolution: pixel coords (gaze_px_*, slot_px_*) are in
-            # full-res space; scaled images are stored at image_scale * native.
-            if name in cam_native_dims:
-                ds.attrs["native_width"]  = cam_native_dims[name][0]
-                ds.attrs["native_height"] = cam_native_dims[name][1]
-            # Intrinsics + extrinsics from sidecar JSON if available
-            if name in cam_params:
-                cp = cam_params[name]
-                for key in ("fx", "fy", "cx", "cy", "width", "height"):
-                    if key in cp:
-                        ds.attrs[key] = cp[key]
-                if "T_world_cam" in cp:
-                    ds.attrs["T_world_cam"] = np.asarray(cp["T_world_cam"], dtype=np.float64)
+            selected = frames[sel]
+
+            if name == "head_cam_stereo":
+                eye_w = selected.shape[2] // 2
+                stereo_attrs = {}
+                if name in cam_native_dims:
+                    stereo_attrs["native_width"]  = cam_native_dims[name][0]
+                    stereo_attrs["native_height"] = cam_native_dims[name][1]
+                _write_eye_dataset(imgs, "head_cam_left",  selected[:, :, :eye_w, :], stereo_attrs, cam_params, name)
+                _write_eye_dataset(imgs, "head_cam_right", selected[:, :, eye_w:, :], stereo_attrs, cam_params, name)
+            else:
+                ds = imgs.create_dataset(name, data=selected,
+                                         compression="gzip", compression_opts=4,
+                                         chunks=(1,) + selected.shape[1:])
+                if name in cam_native_dims:
+                    ds.attrs["native_width"]  = cam_native_dims[name][0]
+                    ds.attrs["native_height"] = cam_native_dims[name][1]
+                if name in cam_params:
+                    cp = cam_params[name]
+                    for key in ("fx", "fy", "cx", "cy", "width", "height"):
+                        if key in cp:
+                            ds.attrs[key] = cp[key]
+                    if "T_world_cam" in cp:
+                        ds.attrs["T_world_cam"] = np.asarray(cp["T_world_cam"], dtype=np.float64)
+
             if first_cam:
                 obs.create_dataset("frame_id", data=fids[sel])
                 first_cam = False
@@ -336,14 +367,16 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
         for arm, (hdr, data, ts) in arms.items():
             sel = nearest_idx(ts, grid)
             g = obs.create_group(arm)
-            for field, n in (("q_", 7), ("dq_", 7), ("tau_J_", 7),
-                             ("tau_ext_", 7), ("O_T_EE_", 16), ("F_ext_", 6)):
+            for field, n in (("q_", 7), ("dq_", 7), ("tau_J_", 7), ("tau_ext_", 7), ("O_T_EE_", 16), ("F_ext_", 6)):
                 grp = col_group(hdr, data, field, n)
                 if grp is not None:
                     g.create_dataset(field.rstrip("_"), data=grp[sel])
             gw = col_one(hdr, data, "gripper_width")
             if gw is not None:
                 g.create_dataset("gripper_width", data=gw[sel])
+            st = col_one(hdr, data, "state")
+            if st is not None:
+                g.create_dataset("state", data=st[sel].astype(np.int64))
 
             ag = act.create_group(arm)
             for field, n in (("q_cmd_", 7), ("O_T_EE_cmd_", 16)):
@@ -358,23 +391,22 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
             hdr, data, ts = head
             sel = nearest_idx(ts, grid)
             hg = obs.create_group("head")
-            for field, n in (("q_", 2), ("dq_", 2)):
+            for field, n in (("q_", 2), ("dq_", 2), ("tau_J_", 2), ("q_cmd_", 2)):
                 grp = col_group(hdr, data, field, n)
                 if grp is not None:
                     hg.create_dataset(field.rstrip("_"), data=grp[sel])
+            st = col_one(hdr, data, "state")
+            if st is not None:
+                hg.create_dataset("state", data=st[sel].astype(np.int64))
 
-        # ── Intent stream ────────────────────────────────────────────────
         intent = load_intent(folder, grid)
         if intent:
             ig = obs.create_group("intent")
             for col, arr in intent.items():
                 ig.create_dataset(col, data=arr)
-            # gaze_px_* and slot_px_* are in native camera pixel coords.
-            # Record the reference resolution so consumers can map to stored
-            # (scaled) images via: image_x = gaze_px_x * (stored_w / ref_w).
             gaze_cam = "head_cam_stereo"
             if gaze_cam in cam_native_dims:
-                ig.attrs["gaze_px_ref_width"]  = cam_native_dims[gaze_cam][0]
+                ig.attrs["gaze_px_ref_width"]  = cam_native_dims[gaze_cam][0] // 2
                 ig.attrs["gaze_px_ref_height"] = cam_native_dims[gaze_cam][1]
             elif cam_native_dims:
                 first = next(iter(cam_native_dims.values()))
@@ -386,7 +418,6 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
             sel = nearest_idx(ts, grid)
             sg = f.create_group("scene")
 
-            # Live poses (sampled at grid rate)
             for kind, count in (("obj", 4), ("bin", 4)):
                 for i in range(count):
                     pose_cols = [f"{kind}{i}_{c}" for c in ("x", "y", "z", "qw", "qx", "qy", "qz")]
@@ -396,7 +427,6 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
                         if np.any(np.abs(vals) > 1e-9):
                             sg.create_dataset(f"{kind}{i}_pose", data=vals)
 
-            # Per-object spawn config — constant per episode
             for i in range(4):
                 for field in ("spawn_yaw", "scale"):
                     col = f"obj{i}_{field}"
@@ -404,7 +434,6 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
                         sg.create_dataset(f"obj{i}_{field}",
                                           data=data[:, hdr.index(col)][sel])
 
-            # Per-object color — constant string; read from first scene row
             if scene_rows:
                 first = scene_rows[0]
                 for i in range(4):
@@ -417,7 +446,6 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
                         sg.create_dataset(f"obj{i}_name",
                                           data=np.bytes_(first[col_name]))
 
-            # Lighting — constant per episode
             light_groups = {
                 "main_pos":      ["light_main_pos_x",      "light_main_pos_y",      "light_main_pos_z"],
                 "main_diffuse":  ["light_main_diffuse_r",  "light_main_diffuse_g",  "light_main_diffuse_b"],
@@ -452,8 +480,7 @@ def main():
     ap.add_argument("--all", action="store_true", help="process every NNN/ folder under path")
     ap.add_argument("--rate", type=float, default=30.0, help="output control rate (Hz)")
     ap.add_argument("--scale", type=float, default=0.25, help="image downscale factor (1.0 = native)")
-    ap.add_argument("--cameras", nargs="+",
-                    default=["head_cam_stereo", "wrist_cam_left", "wrist_cam_right"])
+    ap.add_argument("--cameras", nargs="+", default=["head_cam_stereo", "wrist_cam_left", "wrist_cam_right"])
     ap.add_argument("--out", default="episode.hdf5", help="output filename within each folder")
     ap.add_argument("--camera-params", default=None,
                     help="path to camera_params.json with intrinsics/extrinsics; "
@@ -465,19 +492,19 @@ def main():
     args = ap.parse_args()
 
     if args.all:
-        folders = sorted(d for d in glob.glob(os.path.join(args.path, "[0-9]" * 3))
-                         if os.path.isdir(d))
+        folders = sorted(d for d in glob.glob(os.path.join(args.path, "[0-9]" * 3)) if os.path.isdir(d))
     else:
         folders = [args.path]
 
     work = []
     for folder in folders:
         out_path = os.path.join(folder, args.out)
-        if not args.overwrite and os.path.exists(out_path):
-            print(f"  [skip] {folder}: {args.out} already exists")
-            continue
-        work.append((folder, out_path, args.rate, args.scale, args.cameras,
-                     args.camera_params))
+        if os.path.exists(out_path):
+            if not args.overwrite:
+                print(f"  [skip] {folder}: {args.out} already exists")
+                continue
+            print(f"  [overwrite] {folder}: re-converting")
+        work.append((folder, out_path, args.rate, args.scale, args.cameras, args.camera_params))
 
     if not work:
         print("Nothing to convert.")
