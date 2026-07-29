@@ -1,0 +1,18 @@
+<mujoco model="base_plate">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true"
+            meshdir="../assets/gearbox" texturedir="../assets/gearbox"/>
+
+  <asset>
+    <mesh name="base_plate" file="base_plate.stl" scale="1 1 1"/>
+    <material name="metal_mat" rgba="0.55 0.55 0.60 1" specular="0.8" shininess="0.5" reflectance="0.3"/>
+  </asset>
+
+  <worldbody>
+    <body name="base_plate">
+      <freejoint name="base_plate_joint"/>
+      <geom name="base_plate" mesh="base_plate" type="mesh" material="metal_mat"
+            condim="6" friction="0.6 0.005 0.0001"
+            solimp="0.99 0.99 0.001" solref="0.01 1"/>
+    </body>
+  </worldbody>
+</mujoco>

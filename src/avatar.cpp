@@ -3,6 +3,7 @@
 #include "network/udp_reliable.hpp"
 #include "data_logger.hpp"
 #include "intention/annotation_msg.hpp"
+#include "sim_env/scene_builder.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -217,12 +218,9 @@ Avatar::Avatar(const YAML::Node& config) {
             markEpisodeStart();
             sendEpisodeEvent("episode_start", "");
             for (auto& arm : arm_instances)
-                arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode,
-                                        current_episode_cfg_.color_bin_mapping);
+                arm->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode, current_episode_cfg_.color_bin_mapping);
             if (intention_recognizer_)
-                intention_recognizer_->writeEpisodeConfig(current_episode_cfg_.seed,
-                                                          current_episode_cfg_.mode,
-                                                          current_episode_cfg_.color_bin_mapping);
+                intention_recognizer_->writeEpisodeConfig(current_episode_cfg_.seed, current_episode_cfg_.mode, current_episode_cfg_.color_bin_mapping);
             std::cout << "[AVATAR-INFO]: Episode restart (" << label << ")" << std::endl;
         });
 
@@ -230,9 +228,7 @@ Avatar::Avatar(const YAML::Node& config) {
             if (!intention_buffer_) return;
             GazeSampleMsg gaze;
             payload.convert(gaze);
-            gaze.timestamp_arrival_ns = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count());
+            gaze.timestamp_arrival_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
             intention_buffer_->fuseGaze(gaze);
         });
     }
@@ -240,7 +236,7 @@ Avatar::Avatar(const YAML::Node& config) {
 #ifndef WITH_FRANKA
     sim_ = std::make_shared<Simulation>(config);
 
-    YAML::Node sim_config = YAML::LoadFile(config["sim_config"].as<std::string>());
+    YAML::Node sim_config = SceneBuilder::loadMergedSimConfig(config["sim_config"].as<std::string>());
 
     for (const auto& obj : sim_config["objects"]) {
         if (!obj["role"]) continue;
@@ -309,8 +305,14 @@ Avatar::Avatar(const YAML::Node& config) {
             // base_pose is the head_frame root; add link_1(0.08) + link_2(0.06) z-offsets to reach tilt joint
             buf_cfg.head_position = Eigen::Vector3d(hp[0], hp[1], hp[2] + 0.08 + 0.06);
         }
+        if (cam["gaze_sigma_px"])
+            buf_cfg.gaze_sigma_px      = cam["gaze_sigma_px"].as<float>(30.0f);
         if (cam["belief_temperature"])
             buf_cfg.belief_temperature = cam["belief_temperature"].as<float>(1.0f);
+        if (cam["rho_ee"])
+            buf_cfg.rho_ee             = cam["rho_ee"].as<float>(0.85f);
+        if (cam["rho_tgt"])
+            buf_cfg.rho_tgt            = cam["rho_tgt"].as<float>(0.95f);
 
         intention_buffer_ = std::make_unique<IntentionBuffer>(buf_cfg);
 

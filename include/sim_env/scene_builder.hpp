@@ -61,6 +61,11 @@ struct BuiltScene {
 
 class SceneBuilder {
 public:
+    // Load sim_config from path and, if simulation.task_config is set, merge
+    // the task file's objects into it. Call this everywhere sim_config is needed
+    // so task objects are always visible regardless of entry point.
+    static YAML::Node loadMergedSimConfig(const std::string& sim_config_path);
+
     static BuiltScene build(const YAML::Node& sim_config, const YAML::Node& robot_config);
 
 private:

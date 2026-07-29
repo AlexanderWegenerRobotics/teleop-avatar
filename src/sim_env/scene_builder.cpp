@@ -45,7 +45,16 @@ static std::string docToString(XMLDocument& doc) {
 static void mergeCompilerAttributes(XMLElement* dst, const XMLElement* src) {
     for (const XMLAttribute* a = src->FirstAttribute(); a; a = a->Next()) {
         const std::string name = a->Name();
-        if (name == "meshdir" || name == "texturedir") continue;
+        // meshdir/texturedir are resolved to absolute paths per-model before merging.
+        // inertiafromgeom must NOT be propagated: "true" forces MuJoCo to derive mass/inertia
+        // from geoms and ignore any explicit <inertial> element, even on unrelated bodies from
+        // other injected models. Some prop files (e.g. peg_v1_*.xml) set inertiafromgeom="true"
+        // for their own body (which has no <inertial>), but merging it into the shared global
+        // <compiler> clobbers bodies elsewhere that DO define an explicit <inertial> (e.g.
+        // board_v1, whose geoms are density="0" and rely on its explicit mass). The default
+        // "auto" behavior already does the right thing per-body (explicit inertial wins if
+        // present, geom-derived otherwise), so this attribute never needs to be global.
+        if (name == "meshdir" || name == "texturedir" || name == "inertiafromgeom") continue;
         dst->SetAttribute(a->Name(), a->Value());
     }
 }
@@ -228,6 +237,34 @@ static void injectModel(const std::string& modelPath,
 // ===========================================================================
 // SceneBuilder — public interface
 // ===========================================================================
+
+YAML::Node SceneBuilder::loadMergedSimConfig(const std::string& sim_config_path) {
+    YAML::Node cfg = YAML::LoadFile(sim_config_path);
+
+    if (!cfg["simulation"] || !cfg["simulation"]["task_config"])
+        return cfg;
+
+    std::string task_path_str = cfg["simulation"]["task_config"].as<std::string>();
+    // Resolve relative to the sim_config's directory
+    std::string resolved = std::filesystem::absolute(
+        std::filesystem::path(sim_config_path).parent_path() / task_path_str).string();
+
+    YAML::Node task_cfg = YAML::LoadFile(resolved);
+    std::cout << "[SceneBuilder] Merging task config: " << resolved << "\n";
+
+    if (!task_cfg["objects"]) return cfg;
+
+    // Append task objects to sim_config objects list
+    if (!cfg["objects"]) cfg["objects"] = YAML::Node(YAML::NodeType::Sequence);
+    for (const auto& obj : task_cfg["objects"])
+        cfg["objects"].push_back(obj);
+
+    // Expose the spawn block at top level for the episode server
+    if (task_cfg["spawn"])
+        cfg["spawn"] = task_cfg["spawn"];
+
+    return cfg;
+}
 
 BuiltScene SceneBuilder::build(const YAML::Node& sim_config, const YAML::Node& robot_config) {
     BuiltScene result;
@@ -466,6 +503,7 @@ std::string SceneBuilder::buildSceneXML(const std::vector<DeviceConfig>& devices
     XMLElement* optionEl = scene.NewElement("option");
     optionEl->SetAttribute("gravity", "0 0 -9.81");
     optionEl->SetAttribute("integrator", "implicitfast");
+    optionEl->SetAttribute("cone", "elliptic");
     root->InsertEndChild(optionEl);
 
     XMLElement* assetEl   = scene.NewElement("asset");

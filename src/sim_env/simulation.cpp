@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 
 Simulation::Simulation(const YAML::Node& config) {
-    YAML::Node sim_config    = YAML::LoadFile(config["sim_config"].as<std::string>());
+    YAML::Node sim_config    = SceneBuilder::loadMergedSimConfig(config["sim_config"].as<std::string>());
     YAML::Node robot_config  = YAML::LoadFile(config["robot_config"].as<std::string>());
     YAML::Node stream_config = YAML::LoadFile(config["streamer_config"].as<std::string>());
 

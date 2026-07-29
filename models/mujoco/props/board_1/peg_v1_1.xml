@@ -1,0 +1,20 @@
+<mujoco model="peg_v1_hook">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true"/>
+
+  <asset>
+    <material name="peg_v1_1_mat" rgba="0.1 0.1 0.5 1"/>
+  </asset>
+
+   <default>
+    <geom condim="6" friction="0.6 0.005 0.0001" solimp="0.99 0.99 0.001" solref="0.01 1"/>
+  </default>
+
+  <worldbody>
+    <body name="peg_v1_hook">
+      <freejoint name="peg_v1_hook_joint"/>
+      <geom name="peg_v1_hook_leg_left" type="box" pos="-0.035 0 0.050" size="0.015 0.015 0.050" material="peg_v1_1_mat"/>
+      <geom name="peg_v1_hook_leg_right" type="box" pos="0.035 0 0.050" size="0.015 0.015 0.050" material="peg_v1_1_mat"/>
+      <geom name="peg_v1_hook_bridge" type="box" pos="0 0 0.085" size="0.020 0.015 0.015" material="peg_v1_1_mat"/>
+    </body>
+  </worldbody>
+</mujoco>

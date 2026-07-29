@@ -182,10 +182,17 @@ devices:
       name: head_head_cam
       position: [0.05, 0.0, 0.035]
       euler_xyz: [1.5708, -1.5708, 0.0]
+      # Gaze Gaussian sigma in pixels (single-camera coords, width=1280).
+      # Post-processing uses 30; must match here to get identical live beliefs.
+      gaze_sigma_px: 30.0
       # Belief temperature for gaze-to-slot posterior.
       # T=1 saturates to argmax≈1.0; T>1 gives graded uncertainty.
-      # Tune after first collection run: raise if belief still saturates, lower if too flat.
       belief_temperature: 3.0
+      # Sticky Bayesian filter: P(stay) per update.
+      # rho_ee   — EE attention slots (looser, EE shifts often)
+      # rho_tgt  — object/bin/null slots (tighter, target intent is sticky)
+      rho_ee:  0.85
+      rho_tgt: 0.95
 
   - name: hand_left
     type: gripper

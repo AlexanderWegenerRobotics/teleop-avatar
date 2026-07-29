@@ -6,8 +6,7 @@ IntentionRecognizer::IntentionRecognizer(const IntentionRecognizerConfig& config
     : config_(config)
     , start_time_(std::chrono::high_resolution_clock::now())
 {
-    logger_ = std::make_unique<DataLogger<IntentionLogEntry>>(
-        config_.log_path, intentionLogHeader, intentionLogRow, config_.session_id);
+    logger_ = std::make_unique<DataLogger<IntentionLogEntry>>(config_.log_path, intentionLogHeader, intentionLogRow, config_.session_id);
     logger_->start();
     logger_->enable(true);
 }
@@ -19,8 +18,7 @@ void IntentionRecognizer::push(const IntentionSample& sample) {
     if (static_cast<int>(window_.size()) > config_.window_frames)
         window_.pop_front();
 
-    double t = std::chrono::duration<double>(
-        std::chrono::high_resolution_clock::now() - start_time_).count();
+    double t = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start_time_).count();
 
     IntentionLogEntry entry{};
     entry.time                 = t;

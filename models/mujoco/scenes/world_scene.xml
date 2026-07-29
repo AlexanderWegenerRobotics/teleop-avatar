@@ -4,7 +4,7 @@
 
   <statistic center="0.3 0 0.4" extent="1"/>
 
-  <option timestep="0.005" iterations="5" ls_iterations="8" integrator="implicitfast">
+  <option timestep="0.005" iterations="5" ls_iterations="8" integrator="implicitfast" cone="elliptic">
     <flag eulerdamp="disable"/>
   </option>
 

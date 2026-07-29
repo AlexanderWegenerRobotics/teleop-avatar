@@ -1,0 +1,18 @@
+<mujoco model="gear_big">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true"
+            meshdir="../assets/gearbox" texturedir="../assets/gearbox"/>
+
+  <asset>
+    <mesh name="gear_big" file="gear_big.stl" scale="1 1 1"/>
+    <material name="metal_mat" rgba="0.55 0.55 0.60 1" specular="0.8" shininess="0.5" reflectance="0.3"/>
+  </asset>
+
+  <worldbody>
+    <body name="gear_big">
+      <freejoint name="gear_big_joint"/>
+      <geom name="gear_big_visual" mesh="gear_big" type="mesh" material="metal_mat"
+            contype="0" conaffinity="0"
+            euler="3.14159 0 0" pos="0 0 0.0565"/>
+    </body>
+  </worldbody>
+</mujoco>

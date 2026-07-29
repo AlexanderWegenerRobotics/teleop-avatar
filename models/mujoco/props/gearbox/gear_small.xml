@@ -1,0 +1,20 @@
+<mujoco model="gear_small">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true"
+            meshdir="../assets/gearbox" texturedir="../assets/gearbox"/>
+
+  <asset>
+    <mesh name="gear_small" file="gear_small.stl" scale="1 1 1"/>
+    <material name="metal_mat" rgba="0.55 0.55 0.60 1"
+              specular="0.8" shininess="0.5" reflectance="0.3"/>
+  </asset>
+
+  <worldbody>
+    <body name="gear_small">
+      <freejoint name="gear_small_joint"/>
+      <geom name="gear_small" mesh="gear_small" type="mesh" material="metal_mat"
+            condim="6" friction="0.6 0.005 0.0001"
+            solimp="0.99 0.99 0.001" solref="0.01 1"
+            euler="3.14159 0 0" pos="0 0 0.03681"/>
+    </body>
+  </worldbody>
+</mujoco>

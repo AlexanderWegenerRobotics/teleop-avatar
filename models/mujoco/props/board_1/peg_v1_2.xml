@@ -1,0 +1,18 @@
+<mujoco model="peg_v1_bar">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true"/>
+
+  <asset>
+    <material name="peg_v1_2_mat" rgba="0.5 0.1 0.1 1"/>
+  </asset>
+
+  <default>
+    <geom condim="6" friction="0.6 0.005 0.0001" solimp="0.99 0.99 0.001" solref="0.01 1"/>
+  </default>
+
+  <worldbody>
+    <body name="peg_v1_bar">
+      <freejoint name="peg_v1_bar_joint"/>
+      <geom name="peg_v1_bar_main" type="box" pos="0 0 0" size="0.10 0.015 0.015" material="peg_v1_2_mat"/>
+    </body>
+  </worldbody>
+</mujoco>

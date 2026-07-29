@@ -57,7 +57,7 @@ struct StateSnapshot {
 
 struct GazeSampleMsg {
     uint64_t frame_id             = 0;
-    float    gaze_px_x            = 0.0f;
+    float    gaze_px_x            = 0.0f;  // native pixels as sent by the gaze client (see IntentionBuffer::fuseGaze)
     float    gaze_px_y            = 0.0f;
     uint64_t timestamp_ns         = 0;  // operator-side capture time (sent over network)
     uint64_t timestamp_arrival_ns = 0;  // avatar-side receive time (stamped locally, not serialised)
@@ -70,13 +70,13 @@ struct IntentionSample {
     uint64_t timestamp_ns         = 0;  // operator-side gaze capture time
     uint64_t timestamp_arrival_ns = 0;  // avatar-side gaze receive time
     bool     gaze_valid           = false;
-    float    gaze_px_x    = 0.0f;
-    float    gaze_px_y    = 0.0f;
+    float    gaze_px_x    = 0.0f;  // normalized ray coord (u-cx)/fx -- NOT a pixel; resolution/lens-agnostic
+    float    gaze_px_y    = 0.0f;  // normalized ray coord (v-cy)/fy
     std::vector<float>       slot_belief;
     std::vector<uint8_t>     slot_types;
     std::vector<std::string> slot_names;
-    std::vector<float>       slot_px_u;      // projected center pixel u per slot (-1 if behind camera)
-    std::vector<float>       slot_px_v;      // projected center pixel v per slot (-1 if behind camera)
+    std::vector<float>       slot_px_u;      // normalized ray coord (u-cx)/fx per slot (-1000 if behind camera)
+    std::vector<float>       slot_px_v;      // normalized ray coord (v-cy)/fy per slot (-1000 if behind camera)
     Eigen::Isometry3d T_ee_left;
     Eigen::Isometry3d T_ee_right;
     float gripper_left  = 0.0f;
@@ -90,13 +90,13 @@ struct IntentionLogEntry {
     uint64_t timestamp_ns;          // operator-side gaze capture time
     uint64_t timestamp_arrival_ns;  // avatar-side gaze receive time
     uint8_t  gaze_valid;
-    float    gaze_px_x;
-    float    gaze_px_y;
+    float    gaze_px_x;  // normalized ray coord (u-cx)/fx -- NOT a pixel; resolution/lens-agnostic
+    float    gaze_px_y;  // normalized ray coord (v-cy)/fy
     std::array<float,       11> slot_belief;
     std::array<uint8_t,     10> slot_types;
     std::array<std::string, 10> slot_names;  // object/ee name per slot (episode-config order)
-    std::array<float,       10> slot_px_u;   // projected center pixel u per slot
-    std::array<float,       10> slot_px_v;   // projected center pixel v per slot
+    std::array<float,       10> slot_px_u;   // normalized ray coord (u-cx)/fx per slot (-1000 if behind camera)
+    std::array<float,       10> slot_px_v;   // normalized ray coord (v-cy)/fy per slot (-1000 if behind camera)
     std::array<double, 3> ee_left_pos;
     std::array<double, 3> ee_right_pos;
     float gripper_left;

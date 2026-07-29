@@ -1,0 +1,70 @@
+
+spawn:
+  x_range: [0.45, 0.72]
+  y_range: [-0.25, 0.25]
+  z: 0.725
+  min_object_dist: 0.10
+  min_bin_dist: 0.15
+  yaw_range: [0.0, 6.2832]
+  scale_range: [1.0, 1.0]
+
+objects:
+  - name: base_plate
+    type: dynamic
+    role: bin
+    color: blue
+    body_name: base_plate
+    model_path: "../models/mujoco/props/gearbox/base_plate.xml"
+    pose:
+      position: [0.75, 0.0, 0.720]
+      orientation: [1, 0, 0, 0]
+
+  - name: gear_big_1
+    type: dynamic
+    role: object
+    color: grey
+    body_name: gear_big
+    model_path: "../models/mujoco/props/gearbox/gear_big.xml"
+    pose:
+      position: [0.55, -0.15, 0.725]
+      orientation: [1, 0, 0, 0]
+
+  - name: gear_small_1
+    type: dynamic
+    role: object
+    color: grey
+    body_name: gear_small
+    model_path: "../models/mujoco/props/gearbox/gear_small.xml"
+    pose:
+      position: [0.55, 0.05, 0.725]
+      orientation: [1, 0, 0, 0]
+
+  - name: gear_small_2
+    type: dynamic
+    role: object
+    color: grey
+    body_name: gear_small
+    model_path: "../models/mujoco/props/gearbox/gear_small.xml"
+    pose:
+      position: [0.55, 0.20, 0.725]
+      orientation: [1, 0, 0, 0]
+
+  - name: gear_compound_1
+    type: dynamic
+    role: object
+    color: grey
+    body_name: gear_compound
+    model_path: "../models/mujoco/props/gearbox/gear_compound.xml"
+    pose:
+      position: [0.60, -0.05, 0.725]
+      orientation: [1, 0, 0, 0]
+
+  - name: shaft_1
+    type: dynamic
+    role: object
+    color: grey
+    body_name: shaft1
+    model_path: "../models/mujoco/props/gearbox/shaft1.xml"
+    pose:
+      position: [0.62, 0.15, 0.725]
+      orientation: [1, 0, 0, 0]

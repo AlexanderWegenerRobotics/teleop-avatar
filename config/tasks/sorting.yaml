@@ -1,0 +1,76 @@
+# Task: Parcel Sorting
+# Objects placed on the table each episode; bins are fixed reference targets.
+#
+# spawn: controls per-episode randomization (read by episode_config_server).
+# All objects with role=object are randomized; role=bin positions are fixed and
+# only used to define exclusion zones during spawn sampling.
+
+spawn:
+  x_range: [0.45, 0.78]
+  y_range: [-0.30, 0.30]
+  z: 0.725
+  min_object_dist: 0.12
+  min_bin_dist: 0.20
+  yaw_range: [0.0, 6.2832]   # full rotation (boxes have 4-fold symmetry)
+  scale_range: [0.90, 1.10]
+
+objects:
+  - name: object_1
+    type: dynamic
+    role: object
+    color: red
+    body_name: parcel_red
+    model_path: "../models/mujoco/props/parcel_red.xml"
+    pose:
+      position: [0.65, -0.20, 0.725]
+      orientation: [1, 0, 0, 0]
+
+  - name: object_2
+    type: dynamic
+    role: object
+    color: red
+    body_name: parcel_red
+    model_path: "../models/mujoco/props/parcel_red.xml"
+    pose:
+      position: [0.65, 0.10, 0.725]
+      orientation: [1, 0, 0, 0]
+
+  - name: object_3
+    type: dynamic
+    role: object
+    color: blue
+    body_name: parcel_blue
+    model_path: "../models/mujoco/props/parcel_blue.xml"
+    pose:
+      position: [0.65, 0.0, 0.725]
+      orientation: [1, 0, 0, 0]
+
+  - name: object_4
+    type: dynamic
+    role: object
+    color: blue
+    body_name: parcel_blue
+    model_path: "../models/mujoco/props/parcel_blue.xml"
+    pose:
+      position: [0.65, 0.30, 0.725]
+      orientation: [1, 0, 0, 0]
+
+  - name: bin_1
+    type: dynamic
+    role: bin
+    color: blue
+    body_name: plastic_box_blue
+    model_path: "../models/mujoco/props/plastic_box_blue.xml"
+    pose:
+      position: [0.86, 0.10, 0.702]
+      orientation: [1, 0, 0, 0]
+
+  - name: bin_2
+    type: dynamic
+    role: bin
+    color: red
+    body_name: plastic_box_red
+    model_path: "../models/mujoco/props/plastic_box_red.xml"
+    pose:
+      position: [0.86, -0.10, 0.702]
+      orientation: [1, 0, 0, 0]

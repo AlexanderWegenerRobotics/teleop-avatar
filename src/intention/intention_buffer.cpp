@@ -83,23 +83,56 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
         // gaze_px_x comes in as GazeUV.X * 2560 (full stereo width).
         // projectToImage works in single-camera coordinates (cx=640, width=1280).
         // Halve u to align coordinate spaces; v height is the same in both frames.
+        // gaze_u_cam/gaze_v_cam stay in native single-cam pixels here and feed the
+        // belief filter below unchanged (slotLikelihood/computeBelief are already
+        // internally consistent in that space — this fix only changes what gets
+        // stored in `sample`/logged, not the live belief computation itself).
         const float gaze_u_cam = gaze.gaze_px_x * 0.5f;
         const float gaze_v_cam = gaze.gaze_px_y;
 
-        sample.gaze_px_x = gaze.gaze_px_x;
-        sample.gaze_px_y = gaze.gaze_px_y;
+        // Logged/exported gaze is a normalized pinhole ray coordinate — (u-cx)/fx,
+        // (v-cy)/fy — not a pixel count, so it stays meaningful across resolution
+        // AND lens/FOV changes. Anything reading gaze_px_x/y downstream (training
+        // features, playback, labeling) must expect this, not raw pixels.
+        sample.gaze_px_x = (gaze_u_cam - config_.intrinsics.cx) / config_.intrinsics.fx;
+        sample.gaze_px_y = (gaze_v_cam - config_.intrinsics.cy) / config_.intrinsics.fy;
+
+        // Retrieve previous belief (empty on first packet → uniform prior inside computeBelief)
+        std::vector<float> prev;
+        {
+            std::lock_guard<std::mutex> bl(belief_mtx_);
+            prev = prev_belief_;
+        }
 
         sample.slot_belief = computeBelief(
             gaze_u_cam, gaze_v_cam,
             kernels,
             R_CH,
-            config_.head_position);
+            config_.head_position,
+            prev);
 
+        // Persist for next packet
+        {
+            std::lock_guard<std::mutex> bl(belief_mtx_);
+            prev_belief_ = sample.slot_belief;
+        }
+
+        // Same normalized-ray convention as gaze above: (u-cx)/fx, (v-cy)/fy.
+        // Sentinel for "behind camera / not projected" can no longer be -1.0f:
+        // in pixel space -1 could never be a real coordinate, but as a ray
+        // coordinate -1.0 (~45 deg off-axis) is achievable on a wide-FOV lens.
+        // Use a magnitude no plausible lens can produce; downstream "< 0"
+        // invalidity checks (common.py, contracts.features) still hold.
+        constexpr float kNotProjected = -1000.0f;
         for (const auto& k : kernels) {
-            float u = -1.0f, v = -1.0f;
-            projectToImage(k.center, R_CH, config_.head_position, u, v);
-            sample.slot_px_u.push_back(u);
-            sample.slot_px_v.push_back(v);
+            float u = kNotProjected, v = kNotProjected;
+            if (projectToImage(k.center, R_CH, config_.head_position, u, v)) {
+                sample.slot_px_u.push_back((u - config_.intrinsics.cx) / config_.intrinsics.fx);
+                sample.slot_px_v.push_back((v - config_.intrinsics.cy) / config_.intrinsics.fy);
+            } else {
+                sample.slot_px_u.push_back(kNotProjected);
+                sample.slot_px_v.push_back(kNotProjected);
+            }
         }
 
         // Distances: 2 EEFs x N pick/place slots, interleaved [left_slot0, right_slot0, ...]
@@ -251,34 +284,50 @@ std::vector<float> IntentionBuffer::computeBelief(
     float gaze_u, float gaze_v,
     const std::vector<SlotKernel>& kernels,
     const Eigen::Matrix3d& R_CH,
-    const Eigen::Vector3d& t_WH) const
+    const Eigen::Vector3d& t_WH,
+    const std::vector<float>& prev_belief) const
 {
-    int N = static_cast<int>(kernels.size());
-    // belief has N+1 entries: indices 0..(N-1) are real slots (EE_LEFT, EE_RIGHT,
-    // then PICK_OBJ slots, then PLACE_POSE/bin slots); index N is the null/no-target
-    // slot (operator not looking at any tracked object).  The intent model's argmax
-    // should land on the PICK_OBJ range (slots 2..N_objects+1 in the default 4-parcel
-    // + 2-bin scene: indices 2–5 for parcels, 6–7 for bins, 8 = null).
-    std::vector<float> belief(N + 1, 0.0f);
+    // Slot layout: [ee_left, ee_right, obj_0..obj_K, bin_0..bin_M, null]
+    // Indices 0-1 are EE slots (use rho_ee); rest are target/null slots (use rho_tgt).
+    int N  = static_cast<int>(kernels.size());
+    int NB = N + 1;  // +1 for null slot
 
+    // ── Step 1: raw likelihoods ──────────────────────────────────────────────
+    std::vector<float> likelihood(NB, 0.0f);
     for (int i = 0; i < N; ++i)
-        belief[i] = slotLikelihood(gaze_u, gaze_v, kernels[i], R_CH, t_WH);
+        likelihood[i] = slotLikelihood(gaze_u, gaze_v, kernels[i], R_CH, t_WH);
+    likelihood[N] = 0.1f;  // null slot fixed likelihood
 
-    // Null/no-target prior — kept in raw likelihood space before temperature scaling.
-    belief[N] = 0.1f;
-
-    // Temperature scaling: raise each raw likelihood to 1/T before normalising.
-    // T=1  → original behaviour (saturates to argmax≈1.0 when gaze is on-target).
-    // T>1  → softer posterior; graded uncertainty during early reach, sharpens on commit.
+    // Temperature scaling on likelihood before Bayes update
     const float inv_T = 1.0f / config_.belief_temperature;
     if (config_.belief_temperature != 1.0f) {
-        for (auto& b : belief)
-            b = std::pow(b, inv_T);
+        for (auto& l : likelihood)
+            l = std::pow(l, inv_T);
     }
+
+    // ── Step 2: sticky Bayesian prior ────────────────────────────────────────
+    // prior[i] = rho[i] * prev[i] + (1 - rho[i]) * (1/NB)
+    // If no previous belief, use uniform.
+    const float uniform = 1.0f / static_cast<float>(NB);
+    std::vector<float> prior(NB);
+
+    bool has_prev = (static_cast<int>(prev_belief.size()) == NB);
+    for (int i = 0; i < NB; ++i) {
+        float rho  = (i < 2) ? config_.rho_ee : config_.rho_tgt;
+        float prev = has_prev ? prev_belief[i] : uniform;
+        prior[i]   = rho * prev + (1.0f - rho) * uniform;
+    }
+
+    // ── Step 3: posterior = prior * likelihood, normalise ────────────────────
+    std::vector<float> belief(NB);
+    for (int i = 0; i < NB; ++i)
+        belief[i] = prior[i] * likelihood[i];
 
     float total = std::accumulate(belief.begin(), belief.end(), 0.0f);
     if (total > 1e-6f)
         for (auto& b : belief) b /= total;
+    else
+        belief = prior;  // degenerate: fall back to prior
 
     return belief;
 }

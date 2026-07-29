@@ -1,0 +1,22 @@
+<mujoco model="environment_fixture">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true"/>
+
+  <asset>
+    <material name="env_fix_mat" rgba="0.1 0.1 0.1 1"/>
+  </asset>
+
+  <default>
+    <default class="env_fixture">
+      <geom condim="6" friction="0.6 0.005 0.0001" solimp="0.99 0.99 0.001" solref="0.01 1"
+            material="env_fix_mat"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="environment_fixture" childclass="env_fixture">
+      <geom name="environment_fixture_base" type="box" pos="0.050 0 0.0035" size="0.050 0.060 0.0035"/>
+      <geom name="environment_fixture_wall" type="box" pos="0 0 0.05" size="0.0035 0.060 0.050"/>
+      <geom name="environment_fixture_flap" type="box" pos="0.1212 0 0.0282" size="0.030 0.060 0.0035" quat="0.9239 0 -0.3827 0"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,62 @@
+<mujoco model="board_v1">
+  <compiler angle="radian" meshdir="../assets/board_1" autolimits="true"/>
+
+  <default>
+    <default class="board_v1">
+      <default class="vis">
+        <geom contype="0" conaffinity="0" group="2" material="board_v1_mat"/>
+      </default>
+      <default class="col">
+        <geom contype="1" conaffinity="1" group="3" priority="0"
+              friction="1.0 0.02 0.001" solref="0.01 1" solimp="0.9 0.95 0.001"
+              condim="6" rgba="0.8 0.3 0.3 0.5"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <material name="board_v1_mat" rgba="0.6 0.55 0.5 1.0"/>
+    <mesh name="board_v1_vis" file="board_v1.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <body name="board_v1" pos="0 0 0" childclass="board_v1">
+      <inertial pos="0 0 0" mass="1.0" diaginertia="1 1 1"/>
+      <geom type="mesh" mesh="board_v1_vis" class="vis" pos="-0.115 -0.115 0"/>
+      <geom name="board_v1_col0" type="box" pos="0.00000 0.00000 0.00250" size="0.11500 0.11500 0.00250" class="col"/>
+      <geom name="board_v1_col1" type="box" pos="0.00000 -0.09875 0.02250" size="0.11500 0.01625 0.01750" class="col"/>
+      <geom name="board_v1_col2" type="box" pos="-0.06600 -0.06725 0.02250" size="0.04900 0.01525 0.01750" class="col"/>
+      <geom name="board_v1_col3" type="box" pos="0.06600 -0.06725 0.02250" size="0.04900 0.01525 0.01750" class="col"/>
+      <geom name="board_v1_col4" type="box" pos="-0.10000 -0.03525 0.02250" size="0.01500 0.01675 0.01750" class="col"/>
+      <geom name="board_v1_col5" type="box" pos="-0.03400 -0.03525 0.02250" size="0.01700 0.01675 0.01750" class="col"/>
+      <geom name="board_v1_col6" type="box" pos="0.03400 -0.03525 0.02250" size="0.01700 0.01675 0.01750" class="col"/>
+      <geom name="board_v1_col7" type="box" pos="0.10000 -0.03525 0.02250" size="0.01500 0.01675 0.01750" class="col"/>
+      <geom name="board_v1_col8" type="box" pos="-0.10000 0.00000 0.02250" size="0.01500 0.01850 0.01750" class="col"/>
+      <geom name="board_v1_col9" type="box" pos="0.00000 0.00000 0.02250" size="0.05100 0.01850 0.01750" class="col"/>
+      <geom name="board_v1_col10" type="box" pos="0.10000 0.00000 0.02250" size="0.01500 0.01850 0.01750" class="col"/>
+      <geom name="board_v1_col11" type="box" pos="-0.10000 0.03525 0.02250" size="0.01500 0.01675 0.01750" class="col"/>
+      <geom name="board_v1_col12" type="box" pos="-0.03400 0.03525 0.02250" size="0.01700 0.01675 0.01750" class="col"/>
+      <geom name="board_v1_col13" type="box" pos="0.03400 0.03525 0.02250" size="0.01700 0.01675 0.01750" class="col"/>
+      <geom name="board_v1_col14" type="box" pos="0.10000 0.03525 0.02250" size="0.01500 0.01675 0.01750" class="col"/>
+      <geom name="board_v1_col15" type="box" pos="-0.06600 0.06725 0.02250" size="0.04900 0.01525 0.01750" class="col"/>
+      <geom name="board_v1_col16" type="box" pos="0.06600 0.06725 0.02250" size="0.04900 0.01525 0.01750" class="col"/>
+      <geom name="board_v1_col17" type="box" pos="0.00000 0.09875 0.02250" size="0.11500 0.01625 0.01750" class="col"/>
+      <geom name="board_v1_col18" type="box" pos="0.00000 -0.09875 0.04500" size="0.11500 0.01625 0.00500" class="col"/>
+      <geom name="board_v1_col19" type="box" pos="-0.10850 0.00000 0.04500" size="0.00650 0.08250 0.00500" class="col"/>
+      <geom name="board_v1_col20" type="box" pos="0.10850 0.00000 0.04500" size="0.00650 0.08250 0.00500" class="col"/>
+      <geom name="board_v1_col21" type="box" pos="0.00000 0.09875 0.04500" size="0.11500 0.01625 0.00500" class="col"/>
+      <geom name="board_v1_col22" type="box" pos="0.03400 0.05150 0.02500" size="0.01700 0.03100 0.02500" class="col"/>
+      <geom name="board_v1_col23" type="box" pos="0.09350 0.05150 0.02500" size="0.00850 0.03100 0.02500" class="col"/>
+      <geom name="board_v1_col24" type="box" pos="0.06800 0.06725 0.02500" size="0.01700 0.01525 0.02500" class="col"/>
+      <geom name="board_v1_col25" type="box" pos="-0.03400 -0.05150 0.02500" size="0.01700 0.03100 0.02500" class="col"/>
+      <geom name="board_v1_col26" type="box" pos="-0.09350 -0.05150 0.02500" size="0.00850 0.03100 0.02500" class="col"/>
+      <geom name="board_v1_col27" type="box" pos="-0.06800 -0.06725 0.02500" size="0.01700 0.01525 0.02500" class="col"/>
+      <geom name="board_v1_col28" type="box" pos="0.03400 -0.05150 0.02500" size="0.01700 0.03100 0.02500" class="col"/>
+      <geom name="board_v1_col29" type="box" pos="0.09350 -0.05150 0.02500" size="0.00850 0.03100 0.02500" class="col"/>
+      <geom name="board_v1_col30" type="box" pos="0.06800 -0.06725 0.02500" size="0.01700 0.01525 0.02500" class="col"/>
+      <geom name="board_v1_col31" type="box" pos="-0.03400 0.05150 0.02500" size="0.01700 0.03100 0.02500" class="col"/>
+      <geom name="board_v1_col32" type="box" pos="-0.09350 0.05150 0.02500" size="0.00850 0.03100 0.02500" class="col"/>
+      <geom name="board_v1_col33" type="box" pos="-0.06800 0.06725 0.02500" size="0.01700 0.01525 0.02500" class="col"/>
+    </body>
+  </worldbody>
+</mujoco>

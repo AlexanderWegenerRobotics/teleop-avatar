@@ -1,0 +1,91 @@
+# Task: Board 1 assembly
+
+spawn:
+  x_range: [0.45, 0.78]
+  y_range: [-0.30, 0.30]
+  z: 0.725
+  min_object_dist: 0.12
+  min_bin_dist: 0.20
+  yaw_range: [0.0, 6.2832]   # full rotation (boxes have 4-fold symmetry)
+  scale_range: [0.90, 1.10]
+
+objects:
+  - name: board
+    type: dynamic
+    role: board
+    color: grey
+    body_name: board_v1
+    model_path: "../models/mujoco/props/board_1/board_v1.xml"
+    pose:
+      position: [0.8, 0, 0.7]
+      orientation: [1, 0, 0, 0]
+
+  - name: fixture
+    type: dynamic
+    role: fixture
+    color: grey
+    body_name: enviroment_fixture
+    model_path: "../models/mujoco/props/enviroment_fixture.xml"
+    pose:
+      position: [0.68, 0, 0.7]
+      orientation: [0, 0, 0, 1]
+
+  - name: peg_1_1
+    type: dynamic
+    role: object
+    color: blue
+    body_name: peg_v1_hook
+    model_path: "../models/mujoco/props/board_1/peg_v1_1.xml"
+    pose:
+      position: [0.6, 0.15, 0.805]
+      orientation: [0.7071, 0, 0.7071]
+
+  - name: peg_1_2
+    type: dynamic
+    role: object
+    color: blue
+    body_name: peg_v1_hook
+    model_path: "../models/mujoco/props/board_1/peg_v1_1.xml"
+    pose:
+      position: [0.6, 0.0, 0.805]
+      orientation: [0.7071, 0, 0, 0.7071]
+
+  - name: peg_2_1
+    type: dynamic
+    role: object
+    color: red
+    body_name: peg_v1_bar
+    model_path: "../models/mujoco/props/board_1/peg_v1_2.xml"
+    pose:
+      position: [0.65, 0.30, 0.715]
+      orientation: [1, 0, 0, 0]
+
+  - name: peg_2_2
+    type: dynamic
+    role: object
+    color: red
+    body_name: peg_v1_bar
+    model_path: "../models/mujoco/props/board_1/peg_v1_2.xml"
+    pose:
+      position: [0.86, 0.20, 0.715]
+      orientation: [1, 0, 0, 0]
+
+  - name: peg_3_1
+    type: dynamic
+    role: object
+    color: blue
+    body_name: peg_v1_bow
+    model_path: "../models/mujoco/props/board_1/peg_v1_3.xml"
+    pose:
+      position: [0.86, -0.20, 0.715]
+      orientation: [1, 0, 0, 0]
+
+  - name: peg_3_2
+    type: dynamic
+    role: object
+    color: blue
+    body_name: peg_v1_bow
+    model_path: "../models/mujoco/props/board_1/peg_v1_3.xml"
+    pose:
+      position: [0.86, 0.17, 0.715]
+      orientation: [1, 0, 0, 0]

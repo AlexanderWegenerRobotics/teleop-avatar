@@ -1,0 +1,19 @@
+<mujoco model="peg_holder">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true"
+            meshdir="../assets/gearbox" texturedir="../assets/gearbox"/>
+
+  <asset>
+    <mesh name="peg_holder" file="peg_holder_real.stl" scale="1 1 1"/>
+    <material name="metal_mat" rgba="0.55 0.55 0.60 1"
+              specular="0.8" shininess="0.5" reflectance="0.3"/>
+  </asset>
+
+  <worldbody>
+    <body name="peg_holder">
+      <freejoint name="peg_holder_joint"/>
+      <geom name="peg_holder" mesh="peg_holder" type="mesh" material="metal_mat"
+            condim="6" friction="0.6 0.005 0.0001"
+            solimp="0.99 0.99 0.001" solref="0.01 1"/>
+    </body>
+  </worldbody>
+</mujoco>
