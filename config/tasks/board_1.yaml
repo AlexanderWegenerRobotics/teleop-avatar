@@ -38,7 +38,7 @@ objects:
     model_path: "../models/mujoco/props/board_1/peg_v1_1.xml"
     pose:
       position: [0.6, 0.15, 0.805]
-      orientation: [0.7071, 0, 0.7071]
+      orientation: [0, 0.7071, -0.7071, 0]
 
   - name: peg_1_2
     type: dynamic
@@ -47,8 +47,8 @@ objects:
     body_name: peg_v1_hook
     model_path: "../models/mujoco/props/board_1/peg_v1_1.xml"
     pose:
-      position: [0.6, 0.0, 0.805]
-      orientation: [0.7071, 0, 0, 0.7071]
+      position: [0.6, -0.15, 0.805]
+      orientation: [0, 0.7071, -0.7071, 0]
 
   - name: peg_2_1
     type: dynamic
