@@ -1,19 +1,35 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Simulation-side keys (read by simulation.cpp to configure offscreen rendering)
-# Not used on the real robot (no MuJoCo), kept for schema consistency.
+# Simulation-side keys
 # ─────────────────────────────────────────────────────────────────────────────
 enabled:        true
-stereo:         false          # set true to switch to left+right eye streams
-stream_fps:     30
+stereo:         true          # set true to switch to left+right eye streams
+stream_fps:     20
 stream_width:   1280
 stream_height:  960
 
-# stream_cameras is ignored on the real robot (source_type: v4l2 bypasses SHM),
-# but kept here so this file can be swapped with the local config without errors.
+# Which MuJoCo cameras to render and write to shared memory.
+# In mono mode (stereo: false) only entries with eye: "mono" are active.
+# In stereo mode (stereo: true) only entries with eye: "left" or "right" are active.
 stream_cameras:
   - camera:   "head_head_cam"
     shm_name: "avatar_cam"
     eye:      "mono"
+  - camera:   "head_head_cam_left"
+    shm_name: "avatar_cam_left"
+    eye:      "left"
+  - camera:   "head_head_cam_right"
+    shm_name: "avatar_cam_right"
+    eye:      "right"
+  - camera:   "camera_right_rgb"
+    shm_name: "avatar_wrist_cam_right"
+    eye:      "aux"
+    width:    640
+    height:   480
+  - camera:   "camera_left_rgb"
+    shm_name: "avatar_wrist_cam_left"
+    eye:      "aux"
+    width:    640
+    height:   480
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline process (avatar_pipeline binary)
@@ -22,15 +38,107 @@ stream_cameras:
 # UDP port on which this process listens for episode_start / episode_end
 episode_listener_port: 7100
 
+# Camera channel entries.  The "eye" tag controls which entries are loaded:
+#   stereo: false  ->  only eye: "mono" channels are started
+#   stereo: true   ->  only eye: "left" and eye: "right" channels are started
 cameras:
+  # ── Mono channel (active when stereo: false) ────────────────────────────
   - name:         "head_cam"
     eye:          "mono"
-    source_type:  "mujoco"          # "mujoco" | "realsense" | "v4l2"
-    shm_name:     "avatar_cam"   # "/avatar_cam" | "/dev/video4"
-    fps:          30
-    source_width:  1280
+    source_type:  "mujoco"
+    shm_name:     "avatar_cam"
+    fps:           20
+    source_width:  960
     source_height: 720
     realsense_serial: ""
+
+    stream:
+      enabled:            false
+      host:               "10.112.24.173"
+      port:               5004
+      feedback_port:      5005
+      status_port:        5007
+      status_interval_ms: 500
+      bitrate_kbps:       4000
+      fec_percentage:     10
+      width:              1280
+      height:             960
+
+    log:
+      enabled:    false
+      output_dir: "logs"
+      width:      640
+      height:     480
+
+  # ── PiP camera ─────────────────
+  - name:         "wrist_cam_right"
+    eye:          "aux"
+    source_type:  "mujoco"
+    shm_name:     "avatar_wrist_cam_right"
+    fps:          15
+    source_width:  640
+    source_height: 480
+    realsense_serial: ""
+
+    stream:
+      enabled:            true
+      host:               "10.112.24.173"
+      port:               5010
+      feedback_port:      5011
+      status_port:        5012
+      status_interval_ms: 500
+      bitrate_kbps:       1500
+      fec_percentage:     10
+      width:              640
+      height:             480
+
+    log:
+      enabled:    true
+      output_dir: "logs"
+      width:      320
+      height:     240
+
+  - name:         "wrist_cam_left"
+    eye:          "aux"
+    source_type:  "mujoco"
+    shm_name:     "avatar_wrist_cam_left"
+    fps:          15
+    source_width:  640
+    source_height: 480
+    realsense_serial: ""
+
+    stream:
+      enabled:            true
+      host:               "10.112.24.173"
+      port:               5013
+      feedback_port:      5014
+      status_port:        5015
+      status_interval_ms: 500
+      bitrate_kbps:       1500
+      fec_percentage:     10
+      width:              640
+      height:             480
+
+    log:
+      enabled:    true
+      output_dir: "logs"
+      width:      320
+      height:     240
+
+  # ── Stereo combined channel (active when stereo: true) ──────────────────
+  # Reads both eye shm buffers in the same poll iteration and composites them
+  # side-by-side (left|right) into a single 2560×960 stream on one port.
+  # This guarantees temporal sync and correlated compression artifacts.
+  - name:              "head_cam_stereo"
+    eye:               "stereo"
+    source_type:       "mujoco"
+    shm_name:          "avatar_cam_left"       # left eye (primary)
+    stereo_combined:   true
+    stereo_partner_shm: "avatar_cam_right"     # right eye (composited alongside)
+    fps:               20
+    source_width:      960                    # single-eye width (source)
+    source_height:     720
+    realsense_serial:  ""
 
     stream:
       enabled:            true
@@ -39,32 +147,13 @@ cameras:
       feedback_port:      5005
       status_port:        5007
       status_interval_ms: 500
-      bitrate_kbps:       2000
+      bitrate_kbps:       6000 
       fec_percentage:     10
-      width:              1280
+      width:              2560    # 2 × single-eye width
       height:             960
 
     log:
-      enabled:      false
-      output_dir:   "../logs"
-      width:        640
-      height:       480
-      center_crop:  false     # crop largest 1:1 square from centre before resizing
-      # override with explicit window if the workspace is off-centre:
-      # crop_x: 160   # pixels from left edge of source
-      # crop_y:   0
-      # crop_w: 960   # must match log aspect ratio (width:height = crop_w:crop_h)
-      # crop_h: 960
-
-  # ── Future camera entry template (uncomment and fill in when ready) ────────
-  # - name:         "wrist_cam"
-  #   source_type:  "mujoco"
-  #   shm_name:     "/avatar_wrist_cam"
-  #   fps:          30
-  #   stream:
-  #     enabled: false
-  #   log:
-  #     enabled:    true
-  #     output_dir: "logs"
-  #     width:      224
-  #     height:     224
+      enabled:    true
+      output_dir: "logs"
+      width:      640
+      height:     480
