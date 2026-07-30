@@ -17,6 +17,12 @@ enum class SysState : uint8_t {
     UNDEFINED   = 255
 };
 
+enum class GraspState : uint8_t {
+    OPEN = 0,
+    HELD = 1,
+    LOST = 2
+};
+
 enum class DeviceId : uint8_t {
     LEFT_ARM  = 1,
     RIGHT_ARM = 2,
@@ -79,6 +85,8 @@ struct ArmStateMsg {
     float joint_positions[7];
     float tau_ext[7];
     uint8_t recovering;
+    float gripper_width;
+    GraspState grasp_state;
 };
  
 struct HeadCommandMsg {

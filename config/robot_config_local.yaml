@@ -28,7 +28,11 @@ devices:
       send_port: 8001
       receive_port: 7001
       frequency: 200
-    
+
+    gripper:
+      grasp_confirm_tolerance_m: 0.008
+      grasp_confirm_time_s: 0.020
+
     base_pose:
       position: [0, 0.4, 1.277]
       orientation: [0.5, -0.5,  0.5, -0.5]
@@ -89,6 +93,10 @@ devices:
       send_port: 8002
       receive_port: 7002
       frequency: 200
+
+    gripper:
+      grasp_confirm_tolerance_m: 0.008
+      grasp_confirm_time_s: 0.020
 
     base_pose:
       position: [0, -0.4, 1.277]

@@ -150,6 +150,14 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         motion_gen_.setIkConfig(ik_cfg);
     }
 
+    if (device_config["gripper"]) {
+        const auto& gripper_cfg = device_config["gripper"];
+        if (gripper_cfg["grasp_confirm_tolerance_m"])
+            grasp_confirm_tolerance_m_ = gripper_cfg["grasp_confirm_tolerance_m"].as<double>();
+        if (gripper_cfg["grasp_confirm_time_s"])
+            grasp_confirm_time_s_ = gripper_cfg["grasp_confirm_time_s"].as<double>();
+    }
+
     logger_ = std::make_unique<DataLogger<ArmLogEntry>>("../log/" + name_ + "_log.csv", armLogHeader, armLogRow, session_id);
 }
 
@@ -335,6 +343,8 @@ void ArmControl::runStateHandler(){
             state_msg.quaternion[2] = static_cast<float>(q_ee_world.y());
             state_msg.quaternion[3] = static_cast<float>(q_ee_world.z());
             state_msg.recovering    = (state_ == SysState::RECOVERING) ? 1 : 0;
+            state_msg.gripper_width = static_cast<float>(gripper_width_.load());
+            state_msg.grasp_state   = grasp_state_.load();
             transmission_->setSendData(state_msg);
         }
 
@@ -342,7 +352,9 @@ void ArmControl::runStateHandler(){
         grasp_allowed_.store(grasp_allowed);
         applyGripper(grasp_allowed && desired_gripper_closed_.load());
 
-        gripper_width_.store(gripper->readOnce().width);
+        const double width = gripper->readOnce().width;
+        gripper_width_.store(width);
+        updateGraspConfirmation(width);
 
         prev_state = state_;
         next_control_time += control_period;
@@ -541,6 +553,7 @@ void ArmControl::runControlHandler(){
                 entry.state = state_;
                 entry.gripper_width = gripper_width_.load();
                 entry.gripper_cmd   = (grasp_allowed_.load() && desired_gripper_closed_.load()) ? 0.0 : 0.08;
+                entry.grasp_state = static_cast<uint8_t>(grasp_state_.load());
                 std::copy(robot_state.q.begin(),                    robot_state.q.end(),                    entry.q.begin());
                 Eigen::Map<Vector7>(entry.q_cmd.data()) = q_target;
                 std::copy(robot_state.dq.begin(),                   robot_state.dq.end(),                   entry.dq.begin());
@@ -822,6 +835,48 @@ void ArmControl::applyGripper(bool close) {
     gripper->setWidth(close ? 0.0 : kGripperMaxWidth);
     gripper_close_applied_ = close;
 #endif
+}
+
+void ArmControl::updateGraspConfirmation(double width) {
+    const bool commanding_close = grasp_allowed_.load() && desired_gripper_closed_.load();
+    const auto now = std::chrono::steady_clock::now();
+
+    if (!commanding_close) {
+        grasp_track_active_ = false;
+        grasp_state_.store(GraspState::OPEN);
+        return;
+    }
+
+    if (grasp_state_.load() == GraspState::LOST) {
+        if (now < grasp_lost_latch_until_) return;
+        grasp_state_.store(GraspState::OPEN);
+    }
+
+    const bool near_open   = width > (kGripperMaxWidth - grasp_confirm_tolerance_m_);
+    const bool near_closed = width < grasp_confirm_tolerance_m_;
+    if (near_open || near_closed) {
+        if (grasp_state_.load() == GraspState::HELD) {
+            grasp_state_.store(GraspState::LOST);
+            grasp_lost_latch_until_ = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(grasp_lost_latch_s_));
+        } else {
+            grasp_state_.store(GraspState::OPEN);
+        }
+        grasp_track_active_ = false;
+        return;
+    }
+
+    if (grasp_state_.load() == GraspState::HELD) return;
+
+    if (!grasp_track_active_ || std::abs(width - grasp_track_width_) > grasp_confirm_tolerance_m_) {
+        grasp_track_active_ = true;
+        grasp_track_width_  = width;
+        grasp_track_start_  = now;
+        return;
+    }
+
+    if (std::chrono::duration<double>(now - grasp_track_start_).count() >= grasp_confirm_time_s_)
+        grasp_state_.store(GraspState::HELD);
 }
 
 void ArmControl::restartLogger(const std::string& path) {

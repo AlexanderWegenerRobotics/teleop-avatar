@@ -75,11 +75,12 @@ RESET_STATE_NAMES = {
 
 # MsgHeader: uint32 seq, uint64 ts, uint8 state, uint8 fault, uint8 device_id = 15 bytes
 # ArmCommandMsg: header + 3f pos + 4f quat + 1f gripper = 47 bytes
-# ArmStateMsg:   header + 3f pos + 4f quat + 7f joints + 7f tau_ext + 1B recovering = 100 bytes
+# ArmStateMsg:   header + 3f pos + 4f quat + 7f joints + 7f tau_ext + 1B recovering
+#                + 1f gripper_width + 1B grasp_confirmed = 105 bytes
 ARM_CMD_FMT  = '<IQ3B3f4ff'
 ARM_CMD_SIZE = struct.calcsize(ARM_CMD_FMT)
 
-ARM_STATE_FMT  = '<IQ3B3f4f7f7fB'
+ARM_STATE_FMT  = '<IQ3B3f4f7f7fBfB'
 ARM_STATE_SIZE = struct.calcsize(ARM_STATE_FMT)
 
 # ── Math helpers ──────────────────────────────────────────────────────────────
@@ -173,7 +174,8 @@ def parse_arm_state(data):
     if len(data) != ARM_STATE_SIZE:
         return None
     fields = struct.unpack(ARM_STATE_FMT, data)
-    # seq, ts, state, fault, device_id, px, py, pz, qw, qx, qy, qz, j0-6, tau0-6, recovering
+    # seq, ts, state, fault, device_id, px, py, pz, qw, qx, qy, qz, j0-6, tau0-6,
+    # recovering, gripper_width, grasp_confirmed
     return {
         "device_id": fields[4],
         "state":     fields[2],
@@ -182,6 +184,8 @@ def parse_arm_state(data):
         "joints":    fields[12:19],
         "tau_ext":   fields[19:26],
         "recovering": fields[26],
+        "gripper_width": fields[27],
+        "grasp_confirmed": fields[28],
     }
 
 # ── Shared state ──────────────────────────────────────────────────────────────

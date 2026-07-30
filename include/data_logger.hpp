@@ -25,6 +25,7 @@ struct ArmLogEntry {
     std::array<double, 6>  F_ext;
     double                 gripper_width;
     double                 gripper_cmd;
+    uint8_t                grasp_state;
     SysState               state;
 };
 
@@ -236,6 +237,7 @@ inline std::string armLogHeader() {
     for (int i = 0; i < 6;  ++i) h += "F_ext_"      + std::to_string(i) + ";";
     h += "gripper_width;";
     h += "gripper_cmd;";
+    h += "grasp_state;";
     h += "state\n";
     return h;
 }
@@ -252,6 +254,7 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     for (auto v : e.F_ext)      r += std::to_string(v) + ";";
     r += std::to_string(e.gripper_width) + ";";
     r += std::to_string(e.gripper_cmd) + ";";
+    r += std::to_string(e.grasp_state) + ";";
     r += std::to_string(static_cast<uint8_t>(e.state)) + "\n";
     return r;
 }

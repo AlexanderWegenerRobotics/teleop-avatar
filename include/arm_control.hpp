@@ -86,16 +86,12 @@ private:
     void validateTargetPose(Eigen::Isometry3d& T_target);
     Vector7 jointLimitAvoidanceTorque(const Vector7& q, const Vector7& dq);
     void applyGripper(bool close);
+    void updateGraspConfirmation(double width);
 
 private:
     std::string name_;
     Eigen::Vector3d base_position_;
     Eigen::Quaterniond base_orientation_;
-    // Constant change-of-basis mapping the controller's (protocol-frame) local axes
-    // to the EE/flange local axes. Used for body-frame (tool) orientation retargeting.
-    // Loaded from config key "controller_axis_map"; defaults to identity. Must be a
-    // proper rotation (det = +1) - typically a signed permutation read off the
-    // single-axis rotation test.
     Eigen::Matrix3d R_ctrl_to_ee_ = Eigen::Matrix3d::Identity();
     Eigen::Isometry3d T_base_;
     Eigen::Isometry3d target_pose_, target_pose_raw_;
@@ -104,7 +100,6 @@ private:
     Vector7 tau_rate_max_;
     std::mutex state_mtx;
     franka::RobotState current_state;
-    // Owns the pinocchio dynamics model when using real Franka (not obtained from loadModel())
     std::unique_ptr<franka::Model> franka_owned_model_;
     Eigen::Isometry3d T_origin_;
     std::unique_ptr<SelfCollisionProtection> scp_;
@@ -116,6 +111,15 @@ private:
     std::atomic<bool>   grasp_allowed_{false};
     std::atomic<bool>   gripper_busy_{false};
     bool                gripper_close_applied_{true};
+
+    double              grasp_confirm_tolerance_m_{0.008};
+    double              grasp_confirm_time_s_{0.020};
+    double              grasp_lost_latch_s_{1.0};
+    bool                grasp_track_active_{false};
+    double              grasp_track_width_{0.0};
+    std::chrono::steady_clock::time_point grasp_track_start_;
+    std::chrono::steady_clock::time_point grasp_lost_latch_until_;
+    std::atomic<GraspState> grasp_state_{GraspState::OPEN};
 
     ControlMode control_mode_ = ControlMode::CARTESIAN_IMPEDANCE;
 
