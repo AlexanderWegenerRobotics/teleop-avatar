@@ -396,8 +396,7 @@ void ArmControl::updateRecovery() {
             bool trajectory_done = motion_gen_.isDone();
             bool arrived = (q_final - q).cwiseAbs().maxCoeff() < 0.3;
             bool settled = dq.cwiseAbs().maxCoeff() < 0.07;
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - recovery_start_time_).count();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - recovery_start_time_).count();
             bool timed_out = trajectory_done && elapsed > 5;
             if ((trajectory_done && arrived && settled) || timed_out) {
                 Eigen::Isometry3d T_ee;
