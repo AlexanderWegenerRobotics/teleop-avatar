@@ -31,8 +31,8 @@ devices:
       frequency: 200
 
     gripper:
-      grasp_confirm_tolerance_m: 0.008
-      grasp_confirm_time_s: 0.020
+      grasp_confirm_tolerance_m: 0.005
+      grasp_confirm_time_s: 0.050
 
     base_pose:
       position: [0, 0.4, 1.277]
@@ -97,8 +97,8 @@ devices:
       frequency: 500
 
     gripper:
-      grasp_confirm_tolerance_m: 0.008
-      grasp_confirm_time_s: 0.020
+      grasp_confirm_tolerance_m: 0.005
+      grasp_confirm_time_s: 0.050
 
     base_pose:
       position: [0, -0.4, 1.277]
