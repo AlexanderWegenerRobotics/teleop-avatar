@@ -13,7 +13,7 @@ cmake_install.cmake
 **/.cache/
 
 .claude/
-
+__pycache__/
 .vs/
 
 log/

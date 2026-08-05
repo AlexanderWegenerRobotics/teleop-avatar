@@ -1,0 +1,67 @@
+rendering:
+  enabled: false
+  fps: 15
+
+simulation:
+  timestep: 0.001
+  control_frequency: 1000
+  model_path: "../models/mujoco/scenes/world_scene.xml"
+  task_config: "../config/tasks/sorting.yaml"
+
+devices:
+  - name: arm
+    model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"
+    urdf_path: "../models/urdf/franka_fr3/fr3.urdf"
+    root_body: "link0"
+    urdf_ee_name: "fr3_link8"
+
+objects:
+  - name: table
+    type: static
+    model_path: "../models/mujoco/props/table.xml"
+    pose:
+      position: [0.4, 0, 0]
+      orientation: [1, 0, 0, 0]
+
+  - name: background_front
+    type: static
+    model_path: "../models/mujoco/props/background.xml"
+    pose:
+      position: [2.0, 0, 0]
+      orientation: [1, 0, 0, 0]
+
+  - name: background_left
+    type: static
+    model_path: "../models/mujoco/props/background.xml"
+    pose:
+      position: [0, 1.5, 0]
+      orientation: [0.7071, 0, 0, 0.7071]
+
+  - name: background_right
+    type: static
+    model_path: "../models/mujoco/props/background.xml"
+    pose:
+      position: [0, -1.5, 0]
+      orientation: [0.7071, 0, 0, 0.7071]
+
+cameras:
+  - name: workspace_overview_1
+    enabled: False
+    type: fixed
+    pos: [1.5, 0, 0.8]
+    look_at: [0.4, 0.0, 0.4]
+    fovy: 90
+
+  - name: workspace_overview_2
+    enabled: False
+    type: fixed
+    pos: [0.3, 0.3, 1.9]
+    look_at: [0.0, 0.0, 0.4]
+    fovy: 90
+
+  - name: desk_cam
+    enabled: True
+    type: fixed
+    pos: [1.3, -0.3, 1.3]
+    look_at: [0.65, 0.0, 0.73]
+    fovy: 90

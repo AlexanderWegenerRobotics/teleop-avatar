@@ -1,6 +1,7 @@
 #include "sim_env/model.hpp"
 #include "sim_env/robot.hpp"  // full RobotState definition
 
+#include <stdexcept>
 #include <pinocchio/parsers/urdf.hpp>
 #include <pinocchio/algorithm/jacobian.hpp>
 #include <pinocchio/algorithm/crba.hpp>
@@ -33,7 +34,7 @@ Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_qua
     pin_model_ = pinocchio::buildReducedModel(full_model, joints_to_lock, q_ref);
 
     if (!pin_model_.existFrame(ee_frame_name_))
-        std::cerr << "[Model] WARNING: EE frame '" << ee_frame_name_ << "' not found in URDF!\n";
+        throw std::runtime_error("[Model] EE frame '" + ee_frame_name_ + "' not found in URDF — check urdf_ee_name/urdf_path in sim_config");
 
 
     Eigen::Quaterniond q(base_quat[0], base_quat[1], base_quat[2], base_quat[3]);
