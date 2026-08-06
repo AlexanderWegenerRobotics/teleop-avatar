@@ -85,6 +85,22 @@ Avatar::Avatar(const YAML::Node& config) {
     setsockopt(episode_sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
+    // ── Scene object geometry, published for external consumers ────────────
+    if (sys_config["avatar"]["scene_objects"]) {
+        const auto& so = sys_config["avatar"]["scene_objects"];
+        if (so["enabled"].as<bool>(false)) {
+            scene_objects_host_ = so["host"].as<std::string>("127.0.0.1");
+            scene_objects_port_ = so["port"].as<int>(7200);
+            scene_objects_sock_ = socket(AF_INET, SOCK_DGRAM, 0);
+            if (scene_objects_sock_ == kInvalidSocket) {
+                std::cerr << "[AVATAR-WARN] Failed to create scene objects socket\n";
+                scene_objects_port_ = 0;
+            } else {
+                std::cout << "[AVATAR-INFO] Scene objects -> " << scene_objects_host_ << ":" << scene_objects_port_ << std::endl;
+            }
+        }
+    }
+
     // ── Pipeline logger episode signaling ─────────────────────────────────
     if (sys_config["avatar"]["pipeline_logger"]) {
         const auto& pl = sys_config["avatar"]["pipeline_logger"];
@@ -332,8 +348,9 @@ Avatar::Avatar(const YAML::Node& config) {
 }
 
 Avatar::~Avatar() {
-    if (episode_sock_ != kInvalidSocket) close_socket(episode_sock_);
-    if (logger_sock_  != kInvalidSocket) close_socket(logger_sock_);
+    if (episode_sock_       != kInvalidSocket) close_socket(episode_sock_);
+    if (logger_sock_        != kInvalidSocket) close_socket(logger_sock_);
+    if (scene_objects_sock_ != kInvalidSocket) close_socket(scene_objects_sock_);
 }
 
 void Avatar::start(){
@@ -477,6 +494,7 @@ void Avatar::start(){
                 }
 
                 intention_buffer_->snapshot(snap);
+                sendSceneObjects(snap);
             }
 
             if (scene_logger_) {
@@ -598,6 +616,33 @@ void Avatar::sendEpisodeEvent(const std::string& type, const std::string& reason
     dst.sin_port   = htons(static_cast<uint16_t>(logger_port_));
     inet_pton(AF_INET, logger_host_.c_str(), &dst.sin_addr);
     sendto(logger_sock_, buf.data(), static_cast<int>(buf.size()), 0,
+           reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+}
+
+void Avatar::sendSceneObjects(const StateSnapshot& snap) {
+    if (scene_objects_sock_ == kInvalidSocket || scene_objects_port_ == 0) return;
+    SceneObjectsMsg msg;
+    msg.frame_id     = snap.frame_id;
+    msg.timestamp_ns = snap.timestamp_ns;
+    msg.slots.reserve(snap.slots.size());
+    for (const auto& s : snap.slots) {
+        SceneObjectSlot slot;
+        slot.name = s.name;
+        slot.type = static_cast<uint8_t>(s.type);
+        const auto& p = s.T_world.translation();
+        Eigen::Quaterniond q(s.T_world.linear());
+        slot.position   = {static_cast<float>(p.x()), static_cast<float>(p.y()), static_cast<float>(p.z())};
+        slot.quaternion = {static_cast<float>(q.w()), static_cast<float>(q.x()), static_cast<float>(q.y()), static_cast<float>(q.z())};
+        slot.half_extents = {static_cast<float>(s.half_extents.x()), static_cast<float>(s.half_extents.y()), static_cast<float>(s.half_extents.z())};
+        msg.slots.push_back(std::move(slot));
+    }
+    msgpack::sbuffer buf;
+    msgpack::pack(buf, msg);
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port   = htons(static_cast<uint16_t>(scene_objects_port_));
+    inet_pton(AF_INET, scene_objects_host_.c_str(), &dst.sin_addr);
+    sendto(scene_objects_sock_, buf.data(), static_cast<int>(buf.size()), 0,
            reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
 }
 

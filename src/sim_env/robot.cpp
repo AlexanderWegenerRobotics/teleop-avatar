@@ -36,6 +36,39 @@ Model& Robot::loadModel() {
     return *model_;
 }
 
+void Robot::setCollisionBehavior(
+    const std::array<double, 7>& lower_torque_thresholds,
+    const std::array<double, 7>& upper_torque_thresholds,
+    const std::array<double, 6>& lower_force_thresholds,
+    const std::array<double, 6>& upper_force_thresholds) {
+    lower_torque_thresholds_ = lower_torque_thresholds;
+    upper_torque_thresholds_ = upper_torque_thresholds;
+    lower_force_thresholds_  = lower_force_thresholds;
+    upper_force_thresholds_  = upper_force_thresholds;
+    std::cout << "[SIM] " << name_ << ": setCollisionBehavior() applied (stored only - sim has no "
+                 "separate collision reflex yet; hard torque/velocity/position limits are still "
+                 "enforced via checkFrankaErrors)." << std::endl;
+}
+
+void Robot::setJointImpedance(const std::array<double, 7>& K_theta) {
+    joint_impedance_ = K_theta;
+}
+
+void Robot::setCartesianImpedance(const std::array<double, 6>& K_x) {
+    cartesian_impedance_ = K_x;
+}
+
+void Robot::automaticErrorRecovery() {
+    // Real hardware clears its reflex/lockout state here. Sim has no persistent
+    // lockout, so just reset the rate-limiting/GMO history so the next control()
+    // call starts clean, matching the "fresh start" behavior after a real recovery.
+    tau_prev_     = Vector7::Zero();
+    tau_filtered_ = Vector7::Zero();
+    r_            = Vector7::Zero();
+    p_prev_       = Vector7::Zero();
+    std::cout << "[SIM] " << name_ << ": automaticErrorRecovery()" << std::endl;
+}
+
 RobotState Robot::readOnce() {
     return robot_state_;
 }
@@ -77,28 +110,46 @@ void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const V
 
     constexpr double dt = 1.0 / 1000.0;
 
+    // Mirrors libfranka's behavior: a reflex-worthy condition throws
+    // franka::ControlException out of control(), rather than merely logging.
+    // This lets us exercise the same catch/retry/FAULT path in sim that the
+    // real robot forces us to handle on hardware.
     for (int i = 0; i < 7; ++i) {
-        if (std::abs(tau_cmd(i)) > kMaxTorque[i])
+        if (std::abs(tau_cmd(i)) > kMaxTorque[i]) {
             std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
                       << ": tau_J_range_violation - tau=" << tau_cmd(i)
                       << " Nm (limit=" << kMaxTorque[i] << " Nm)\n";
+            tau_prev_ = tau_cmd;
+            throw ControlException("sim robot (" + name_ + "): tau_J_range_violation on joint " +
+                                    std::to_string(i));
+        }
 
         double tau_rate = std::abs(tau_cmd(i) - tau_prev_(i)) / dt;
-        if (tau_rate > kMaxTorqueRate[i])
+        if (tau_rate > kMaxTorqueRate[i]) {
             std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
                       << ": torque_discontinuity - rate=" << tau_rate
                       << " Nm/s (limit=" << kMaxTorqueRate[i] << " Nm/s)\n";
+            tau_prev_ = tau_cmd;
+            throw ControlException("sim robot (" + name_ + "): torque_discontinuity on joint " +
+                                    std::to_string(i));
+        }
 
-        if (std::abs(dq(i)) > kMaxJointVelocity[i])
+        if (std::abs(dq(i)) > kMaxJointVelocity[i]) {
             std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
                       << ": joint_velocity_violation - dq=" << dq(i)
                       << " rad/s (limit=" << kMaxJointVelocity[i] << " rad/s)\n";
+            throw ControlException("sim robot (" + name_ + "): joint_velocity_violation on joint " +
+                                    std::to_string(i));
+        }
 
-        if (q(i) < kJointLimits[i].first || q(i) > kJointLimits[i].second)
+        if (q(i) < kJointLimits[i].first || q(i) > kJointLimits[i].second) {
             std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
                       << ": joint_position_limits_violation - q=" << q(i)
                       << " rad (limits=[" << kJointLimits[i].first
                       << ", " << kJointLimits[i].second << "] rad)\n";
+            throw ControlException("sim robot (" + name_ + "): joint_position_limits_violation on joint " +
+                                    std::to_string(i));
+        }
     }
 
     tau_prev_ = tau_cmd;
@@ -125,45 +176,53 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
     tau_prev_     = Vector7::Zero();
     bRunning = true;
 
-    while (bRunning) {
-        if (!sim->isRunning()) {
-            std::cout << "Simulation stopped" << std::endl;
-            bRunning = false;
-            break;
+    try {
+        while (bRunning) {
+            if (!sim->isRunning()) {
+                std::cout << "Simulation stopped" << std::endl;
+                bRunning = false;
+                break;
+            }
+
+            DeviceState device_state = sim->getDeviceState(name_);
+            populateRobotState(device_state, dt);
+
+            Torques tau_cmd = control_callback(robot_state_, dur);
+
+            std::array<double, 7> gravity = model_->gravity(robot_state_.q);
+
+            Vector7 tau_raw;
+            for (int i = 0; i < 7; ++i)
+                tau_raw[i] = tau_cmd.tau_J[i] + gravity[i];
+
+            Vector7 dq_eig = Eigen::Map<const Vector7>(robot_state_.dq.data());
+            Vector7 q_eig  = Eigen::Map<const Vector7>(robot_state_.q.data());
+            Vector7 tau_cmd_eig = Eigen::Map<const Vector7>(tau_cmd.tau_J.data());
+
+            // May throw franka::ControlException, same as real hardware hitting a
+            // reflex stop - propagates out of control() below, exactly like libfranka.
+            checkFrankaErrors(tau_cmd_eig, dq_eig, q_eig);
+
+            tau_filtered_ = alpha * tau_raw + (1.0 - alpha) * tau_filtered_;
+
+            if (tau_cmd.motion_finished) {
+                std::cout << "Stopped robot arm control loop" << std::endl;
+                bRunning = false;
+            }
+
+            if (bRunning) {
+                std::array<double, 7> tau_out;
+                Eigen::Map<Vector7>(tau_out.data()) = tau_filtered_;
+                robot_state_.tau_J_d = tau_out;
+                sim->setCtrl(name_, std::vector<double>(tau_out.begin(), tau_out.end()));
+                next_control_time += control_period;
+                std::this_thread::sleep_until(next_control_time);
+            }
         }
-
-        DeviceState device_state = sim->getDeviceState(name_);
-        populateRobotState(device_state, dt);
-
-        Torques tau_cmd = control_callback(robot_state_, dur);
-
-        std::array<double, 7> gravity = model_->gravity(robot_state_.q);
-
-        Vector7 tau_raw;
-        for (int i = 0; i < 7; ++i)
-            tau_raw[i] = tau_cmd.tau_J[i] + gravity[i];
-
-        Vector7 dq_eig = Eigen::Map<const Vector7>(robot_state_.dq.data());
-        Vector7 q_eig  = Eigen::Map<const Vector7>(robot_state_.q.data());
-        Vector7 tau_cmd_eig = Eigen::Map<const Vector7>(tau_cmd.tau_J.data());
-
-        checkFrankaErrors(tau_cmd_eig, dq_eig, q_eig);
-
-        tau_filtered_ = alpha * tau_raw + (1.0 - alpha) * tau_filtered_;
-
-        if (tau_cmd.motion_finished) {
-            std::cout << "Stopped robot arm control loop" << std::endl;
-            bRunning = false;
-        }
-
-        if (bRunning) {
-            std::array<double, 7> tau_out;
-            Eigen::Map<Vector7>(tau_out.data()) = tau_filtered_;
-            robot_state_.tau_J_d = tau_out;
-            sim->setCtrl(name_, std::vector<double>(tau_out.begin(), tau_out.end()));
-            next_control_time += control_period;
-            std::this_thread::sleep_until(next_control_time);
-        }
+    } catch (...) {
+        bRunning = false;
+        sim->setDeviceActive(name_, false);
+        throw;
     }
     sim->setDeviceActive(name_, false);
 }

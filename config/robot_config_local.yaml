@@ -12,6 +12,14 @@ avatar:
     host:     "127.0.0.1"
     port:     7100          # must match pipeline_config.yaml episode_listener_port
 
+  # Candidate/bin world geometry (StateSnapshot slots), published once per tick
+  # for external consumers -- e.g. teleop-orchestrator's SimObjectSource.
+  # Matches teleop-orchestrator/configs/system.yaml's network.scene_objects.
+  scene_objects:
+    enabled: true
+    host:    "127.0.0.1"
+    port:    7200
+
   self_collision:
     enabled: false
     d_min: 0.10

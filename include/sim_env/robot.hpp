@@ -9,6 +9,7 @@
 #include <string>
 #include <functional>
 #include <atomic>
+#include <stdexcept>
 
 #include <Eigen/Dense>
 #include <yaml-cpp/yaml.h>
@@ -17,6 +18,19 @@ class Simulation;
 struct DeviceState;
 
 namespace franka {
+
+// Mirrors libfranka's exception hierarchy (franka/exception.h) closely enough
+// that arm_control.cpp can catch franka::ControlException / franka::Exception
+// identically in sim and real-robot builds, with no #ifdef at the call site.
+class Exception : public std::runtime_error {
+public:
+    explicit Exception(const std::string& what) : std::runtime_error(what) {}
+};
+
+class ControlException : public Exception {
+public:
+    explicit ControlException(const std::string& what) : Exception(what) {}
+};
 
 struct RobotState {
     std::array<double, 7>  q;
@@ -62,6 +76,17 @@ public:
     RobotState readOnce();
     void control(std::function<Torques(const RobotState&, Duration)> control_callback);
 
+    // API parity with real libfranka (franka/robot.h) so arm_control.cpp can call
+    // these unconditionally, without #ifdef WITH_FRANKA around every call site.
+    void setCollisionBehavior(
+        const std::array<double, 7>& lower_torque_thresholds,
+        const std::array<double, 7>& upper_torque_thresholds,
+        const std::array<double, 6>& lower_force_thresholds,
+        const std::array<double, 6>& upper_force_thresholds);
+    void setJointImpedance(const std::array<double, 7>& K_theta);
+    void setCartesianImpedance(const std::array<double, 6>& K_x);
+    void automaticErrorRecovery();
+
 private:
     void populateRobotState(const DeviceState& ds, double dt);
     void updateGMO(const std::array<double, 7>& q,
@@ -83,12 +108,23 @@ private:
     Vector7 r_;
     Vector7 p_prev_;
     static constexpr double K_GMO = 50.0;
+
+    // Stored for parity with the real API; sim has no separate collision-reflex
+    // path yet, so these aren't consumed anywhere (see checkFrankaErrors for the
+    // hard torque/velocity/position limits that ARE enforced in sim).
+    std::array<double, 7> lower_torque_thresholds_{};
+    std::array<double, 7> upper_torque_thresholds_{};
+    std::array<double, 6> lower_force_thresholds_{};
+    std::array<double, 6> upper_force_thresholds_{};
+    std::array<double, 7> joint_impedance_{};
+    std::array<double, 6> cartesian_impedance_{};
 };
 
 }  // namespace franka
 
 #else  // WITH_FRANKA — use real libfranka; model.hpp above provides franka::Model
 
-#include <franka/robot.h>  // brings in franka::Robot, RobotState, Torques, Duration
+#include <franka/robot.h>     // brings in franka::Robot, RobotState, Torques, Duration
+#include <franka/exception.h> // franka::Exception, franka::ControlException
 
 #endif  // WITH_FRANKA

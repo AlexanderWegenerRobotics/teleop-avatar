@@ -5,11 +5,21 @@
 #include "sim_env/gripper.hpp"
 #include "sim_env/model.hpp"
 #include "rt_thread.hpp"
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <thread>
 
-namespace { constexpr double kGripperMaxWidth = 0.08; }
+namespace {
+constexpr double kGripperMaxWidth = 0.08;
+
+template<size_t N>
+std::array<double, N> toArray(const std::vector<double>& v) {
+    std::array<double, N> a{};
+    for (size_t i = 0; i < N && i < v.size(); ++i) a[i] = v[i];
+    return a;
+}
+}
 
 ArmControl::ArmControl(const YAML::Node& device_config, const std::string& session_id)
 #ifdef WITH_FRANKA
@@ -83,6 +93,30 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     kp_joint_limit_ = yamlToVector<7>(device_config["control"]["kp_joint_limit"]);
     joint_limit_buffer_  = device_config["safety"]["joint_limit_buffer"].as<double>();
     joint_limit_torque_frac_ = device_config["safety"]["joint_limit_torque_frac"].as<double>();
+
+    // ── Collision behavior / impedance ──────────────────────────────────────
+    // Applied once at startup, before the control thread ever calls robot->control().
+    // Left optional and explicit: if not present in config we deliberately keep
+    // whatever the robot/Desk already has configured rather than guessing values.
+    if (device_config["safety"]["collision_lower_torque"] && device_config["safety"]["collision_upper_torque"] &&
+        device_config["safety"]["collision_lower_force"]  && device_config["safety"]["collision_upper_force"]) {
+        auto lower_torque = toArray<7>(device_config["safety"]["collision_lower_torque"].as<std::vector<double>>());
+        auto upper_torque = toArray<7>(device_config["safety"]["collision_upper_torque"].as<std::vector<double>>());
+        auto lower_force  = toArray<6>(device_config["safety"]["collision_lower_force"].as<std::vector<double>>());
+        auto upper_force  = toArray<6>(device_config["safety"]["collision_upper_force"].as<std::vector<double>>());
+        robot->setCollisionBehavior(lower_torque, upper_torque, lower_force, upper_force);
+        std::cout << "[INFO] " << name_ << ": collision behavior thresholds applied from config." << std::endl;
+    } else {
+        std::cout << "[INFO] " << name_ << ": no safety.collision_* thresholds in config - keeping "
+                                            "robot/Desk defaults." << std::endl;
+    }
+
+    if (device_config["control"]["joint_impedance"]) {
+        robot->setJointImpedance(toArray<7>(device_config["control"]["joint_impedance"].as<std::vector<double>>()));
+    }
+    if (device_config["control"]["cartesian_impedance"]) {
+        robot->setCartesianImpedance(toArray<6>(device_config["control"]["cartesian_impedance"].as<std::vector<double>>()));
+    }
 
     if (device_config["transmission"]) {
         UdpStreamConfig stream_cfg;
@@ -560,6 +594,14 @@ void ArmControl::runControlHandler(){
                 std::copy(robot_state.tau_ext_hat_filtered.begin(), robot_state.tau_ext_hat_filtered.end(), entry.tau_ext.begin());
                 std::copy(robot_state.O_T_EE.begin(),               robot_state.O_T_EE.end(),               entry.O_T_EE.begin());
                 Eigen::Map<Matrix4>(entry.O_T_EE_cmd.data()) = T_target;
+                // World-frame counterparts of the two above (T_base_ * local), additive --
+                // same T_base_ * T composition already used live for ArmStateMsg (see
+                // publishArmState) and target_pose_, just also logged per-tick here so
+                // future policy training can consume world-frame poses directly instead
+                // of a base-frame pose tied to this arm's mounting calibration.
+                Eigen::Isometry3d T_ee_raw(Eigen::Map<const Eigen::Matrix4d>(robot_state.O_T_EE.data()));
+                Eigen::Map<Matrix4>(entry.O_T_EE_world.data())     = (T_base_ * T_ee_raw).matrix();
+                Eigen::Map<Matrix4>(entry.O_T_EE_cmd_world.data()) = (T_base_ * Eigen::Isometry3d(T_target)).matrix();
                 std::copy(robot_state.O_F_ext_hat_K.begin(),        robot_state.O_F_ext_hat_K.end(),        entry.F_ext.begin());
                 logger_->write(entry);
             }
@@ -571,7 +613,54 @@ void ArmControl::runControlHandler(){
             return tau;
         };
 
-    robot->control(control_callback);
+    constexpr int kMaxConsecutiveFaults = 3;
+    int fault_count = 0;
+
+    // Enter FAULT and block the control thread (not exit it) until an operator
+    // clears it. The existing arm_reset / reset_all commands already drive
+    // ArmRecovery -> updateRecovery() on the state thread, which moves state_
+    // out of FAULT into RECOVERING on its own - we just wait for that to happen.
+    auto enterFaultAndWaitForReset = [this]() {
+        state_ = SysState::FAULT;
+        if (transmission_) transmission_->setState(state_, FaultCode::INTERNAL_ERROR);
+        std::cout << "[WARN] " << name_
+                  << ": control loop faulted - holding in FAULT until an operator reset "
+                     "(arm_reset / reset_all)." << std::endl;
+        while (bRunning && state_ == SysState::FAULT) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (bRunning) {
+            std::cout << "[INFO] " << name_ << ": FAULT cleared, resuming control." << std::endl;
+        }
+    };
+
+    while (bRunning) {
+        try {
+            robot->control(control_callback);
+            break;  // clean stop: control_callback set motion_finished from ArmControl::stop()
+        } catch (const franka::ControlException& e) {
+            ++fault_count;
+            std::cout << "[WARN] " << name_ << ": franka::ControlException (#" << fault_count
+                      << "/" << kMaxConsecutiveFaults << "): " << e.what() << std::endl;
+            try {
+                robot->automaticErrorRecovery();
+            } catch (const franka::Exception& recovery_err) {
+                std::cout << "[WARN] " << name_ << ": automaticErrorRecovery() failed: "
+                          << recovery_err.what() << std::endl;
+            }
+            if (fault_count > kMaxConsecutiveFaults) {
+                enterFaultAndWaitForReset();
+                fault_count = 0;
+            }
+        } catch (const franka::Exception& e) {
+            // Non-control franka errors (e.g. connection-level) aren't something a
+            // retry loop can paper over - surface as FAULT and wait for the operator
+            // rather than spinning or terminating the process.
+            std::cout << "[ERROR] " << name_ << ": franka::Exception: " << e.what() << std::endl;
+            enterFaultAndWaitForReset();
+            fault_count = 0;
+        }
+    }
 }
 
 

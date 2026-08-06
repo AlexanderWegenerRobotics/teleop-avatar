@@ -16,6 +16,7 @@
 #include "data_logger.hpp"
 #include "intention/intention_buffer.hpp"
 #include "intention/intention_recognizer.hpp"
+#include "intention/scene_objects_msg.hpp"
 #include "pipeline/episode_msg.hpp"
 
 class Avatar{
@@ -116,4 +117,11 @@ private:
     std::string current_episode_folder_;      // absolute path set by startNewEpisodeFolder
 
     void sendEpisodeEvent(const std::string& type, const std::string& reason);
+
+    // ── Scene object geometry, published for external consumers (orchestrator) ──
+    std::string scene_objects_host_;
+    int         scene_objects_port_ = 0;
+    socket_t    scene_objects_sock_ = kInvalidSocket;
+
+    void sendSceneObjects(const StateSnapshot& snap);
 };

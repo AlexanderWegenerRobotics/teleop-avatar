@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <functional>
@@ -11,7 +12,12 @@
 
 #include "pipeline/shared_memory.hpp"
 
-using FrameCallback = std::function<void(const uint8_t*, uint32_t, uint32_t)>;
+// capture_time_ns is nanoseconds since the Unix epoch (std::chrono::system_clock
+// domain), representing when the frame was captured (or rendered, for MuJoCo).
+// Each CameraSource is responsible for producing a value in that domain even if
+// its underlying hardware/driver timestamp uses a different clock - see the
+// per-source implementations for how each one normalizes to it.
+using FrameCallback = std::function<void(const uint8_t*, uint32_t, uint32_t, uint64_t)>;
 
 class CameraSource {
 public:
@@ -65,8 +71,9 @@ private:
 
         while (bRunning_) {
             if (reader_->hasNewFrame()) {
-                const uint8_t* frame = reader_->read();
-                cb_(frame, reader_->width(), reader_->height());
+                uint64_t capture_time_ns = 0;
+                const uint8_t* frame = reader_->read(&capture_time_ns);
+                cb_(frame, reader_->width(), reader_->height(), capture_time_ns);
             }
             next += period;
             std::this_thread::sleep_until(next);
@@ -149,8 +156,12 @@ private:
             // Accept the most recent frame from each shm, even if only one
             // has a strictly-new flag, so we never stall on one lagging.
             if (left_reader_->hasNewFrame() || right_reader_->hasNewFrame()) {
-                const uint8_t* left  = left_reader_->read();
-                const uint8_t* right = right_reader_->read();
+                uint64_t left_ts = 0, right_ts = 0;
+                const uint8_t* left  = left_reader_->read(&left_ts);
+                const uint8_t* right = right_reader_->read(&right_ts);
+                // Whichever eye lagged this poll returns its previous (older) capture
+                // time; the fresher of the two is the real capture time of this composite.
+                uint64_t capture_time_ns = std::max(left_ts, right_ts);
 
                 const uint32_t w        = left_reader_->width();
                 const uint32_t h        = left_reader_->height();
@@ -165,7 +176,7 @@ private:
                     std::memcpy(dst + row_src, right + y * row_src, row_src);
                 }
 
-                cb_(composite_.data(), w * 2, h);
+                cb_(composite_.data(), w * 2, h, capture_time_ns);
             }
 
             next += period;

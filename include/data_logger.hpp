@@ -22,6 +22,8 @@ struct ArmLogEntry {
     std::array<double, 7>  tau_ext;
     std::array<double, 16> O_T_EE;
     std::array<double, 16> O_T_EE_cmd;
+    std::array<double, 16> O_T_EE_world;      // T_base_ * O_T_EE -- world-frame EE pose, additive alongside base-frame O_T_EE (see arm_control.cpp)
+    std::array<double, 16> O_T_EE_cmd_world;  // T_base_ * O_T_EE_cmd -- world-frame command target, same rationale
     std::array<double, 6>  F_ext;
     double                 gripper_width;
     double                 gripper_cmd;
@@ -232,9 +234,11 @@ inline std::string armLogHeader() {
     for (int i = 0; i < 7;  ++i) h += "dq_"         + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "tau_J_"      + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "tau_ext_"    + std::to_string(i) + ";";
-    for (int i = 0; i < 16; ++i) h += "O_T_EE_"     + std::to_string(i) + ";";
-    for (int i = 0; i < 16; ++i) h += "O_T_EE_cmd_" + std::to_string(i) + ";";
-    for (int i = 0; i < 6;  ++i) h += "F_ext_"      + std::to_string(i) + ";";
+    for (int i = 0; i < 16; ++i) h += "O_T_EE_"           + std::to_string(i) + ";";
+    for (int i = 0; i < 16; ++i) h += "O_T_EE_cmd_"       + std::to_string(i) + ";";
+    for (int i = 0; i < 16; ++i) h += "O_T_EE_world_"     + std::to_string(i) + ";";
+    for (int i = 0; i < 16; ++i) h += "O_T_EE_cmd_world_" + std::to_string(i) + ";";
+    for (int i = 0; i < 6;  ++i) h += "F_ext_"            + std::to_string(i) + ";";
     h += "gripper_width;";
     h += "gripper_cmd;";
     h += "grasp_state;";
@@ -249,9 +253,11 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     for (auto v : e.dq)         r += std::to_string(v) + ";";
     for (auto v : e.tau_J)      r += std::to_string(v) + ";";
     for (auto v : e.tau_ext)    r += std::to_string(v) + ";";
-    for (auto v : e.O_T_EE)     r += std::to_string(v) + ";";
-    for (auto v : e.O_T_EE_cmd) r += std::to_string(v) + ";";
-    for (auto v : e.F_ext)      r += std::to_string(v) + ";";
+    for (auto v : e.O_T_EE)           r += std::to_string(v) + ";";
+    for (auto v : e.O_T_EE_cmd)       r += std::to_string(v) + ";";
+    for (auto v : e.O_T_EE_world)     r += std::to_string(v) + ";";
+    for (auto v : e.O_T_EE_cmd_world) r += std::to_string(v) + ";";
+    for (auto v : e.F_ext)            r += std::to_string(v) + ";";
     r += std::to_string(e.gripper_width) + ";";
     r += std::to_string(e.gripper_cmd) + ";";
     r += std::to_string(e.grasp_state) + ";";

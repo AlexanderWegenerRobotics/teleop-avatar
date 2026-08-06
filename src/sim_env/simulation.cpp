@@ -361,7 +361,13 @@ void Simulation::renderStreamFrame() {
             std::swap_ranges(top, top + cw * 3, bot);
         }
 
-        shm_writers_[i]->write(pixels.data(), pixels.size());
+        // Sim has no separate hardware capture step - "capture" for MuJoCo is the
+        // instant the rendered pixels are actually available (i.e. now).
+        const uint64_t capture_time_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+
+        shm_writers_[i]->write(pixels.data(), pixels.size(), capture_time_ns);
     }
 }
 
