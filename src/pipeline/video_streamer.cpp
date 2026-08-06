@@ -216,15 +216,23 @@ GstFlowReturn VideoStreamer::onNewSample(GstAppSink* sink, gpointer user) {
         std::lock_guard<std::mutex> lk(self->enc_mutex_);
         if (self->enc_file_) {
             bool keyframe = !GST_BUFFER_FLAG_IS_SET(buf, GST_BUFFER_FLAG_DELTA_UNIT);
-            uint64_t ts = 0; bool have_ts = false;
+            PendingFrameTs ts{0, 0}; bool have_ts = false;
             if (!self->ts_queue_.empty()) { ts = self->ts_queue_.front(); self->ts_queue_.pop_front(); have_ts = true; }
             if (have_ts && !(self->await_keyframe_ && !keyframe)) {   // skip leading P-frames; file starts on an IDR
                 self->await_keyframe_ = false;
                 std::fwrite(map.data, 1, map.size, self->enc_file_);
-                if (self->ts_file_)
-                    std::fprintf(self->ts_file_, "%llu,%llu\n",
+                if (self->ts_file_) {
+                    // capture_to_encode_ns is only meaningful when the source supplied a
+                    // real capture_ns (non-zero); left as 0 otherwise rather than a bogus delta.
+                    uint64_t capture_to_encode_ns =
+                        (ts.capture_ns != 0 && ts.encode_ns >= ts.capture_ns)
+                            ? (ts.encode_ns - ts.capture_ns) : 0;
+                    std::fprintf(self->ts_file_, "%llu,%llu,%llu,%llu\n",
                                  (unsigned long long)self->log_frame_idx_++,
-                                 (unsigned long long)ts);
+                                 (unsigned long long)ts.encode_ns,
+                                 (unsigned long long)ts.capture_ns,
+                                 (unsigned long long)capture_to_encode_ns);
+                }
             }
         }
         gst_buffer_unmap(buf, &map);
@@ -246,7 +254,7 @@ void VideoStreamer::startEncodedLog(const std::string& path) {
         }
         std::string ts_path = path.substr(0, path.find_last_of('.')) + ".timestamps.csv";
         ts_file_ = std::fopen(ts_path.c_str(), "wb");
-        if (ts_file_) std::fprintf(ts_file_, "frame_idx,wall_clock_ns\n");
+        if (ts_file_) std::fprintf(ts_file_, "frame_idx,wall_clock_ns,capture_time_ns,capture_to_encode_ns\n");
         ts_queue_.clear();
         log_frame_idx_  = 0;
         await_keyframe_ = true;
@@ -273,7 +281,7 @@ void VideoStreamer::stopEncodedLog() {
     ts_queue_.clear();
 }
 
-void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height) {
+void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height, uint64_t capture_time_ns) {
     if (!appsrc_ || !bRunning_) return;
 
     int tfps = target_fps_.load();
@@ -329,7 +337,10 @@ void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t heigh
 
     {
         std::lock_guard<std::mutex> lk(enc_mutex_);
-        if (enc_file_) ts_queue_.push_back(now_ns);   // align capture time to the encoded AU in onNewSample
+        // Aligned to the encoded AU in onNewSample. now_ns is the encode-push wall clock
+        // (same value embedded in the pixel timestamp row); capture_time_ns is when the
+        // source captured/rendered the frame, letting onNewSample log the capture->encode delta.
+        if (enc_file_) ts_queue_.push_back({now_ns, capture_time_ns});
     }
 
     gst_app_src_push_buffer(GST_APP_SRC(appsrc_), buffer);

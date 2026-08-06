@@ -2,6 +2,7 @@
 
 #ifdef WITH_REALSENSE
 
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 
@@ -61,9 +62,33 @@ void RealSenseSource::run() {
         rs2::video_frame color = frames.get_color_frame();
         if (!color) continue;
 
+        // RealSense timestamps are only directly comparable to host wall-clock
+        // (system_clock) when the domain is SYSTEM_TIME. HARDWARE_CLOCK/GLOBAL_TIME
+        // domains use the device's free-running clock and would need a calibrated
+        // offset to translate - not attempted here. Fall back to time-of-retrieval
+        // in that case (loses the capture->USB-delivery portion of the latency, but
+        // stays clock-consistent with the rest of the pipeline).
+        uint64_t capture_time_ns;
+        if (color.get_frame_timestamp_domain() == RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME) {
+            capture_time_ns = static_cast<uint64_t>(color.get_timestamp() * 1e6);  // ms -> ns
+        } else {
+            capture_time_ns = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+            static bool warned = false;
+            if (!warned) {
+                std::cout << "[RealSenseSource] WARNING: frame timestamp domain is not "
+                             "SYSTEM_TIME - capture_time_ns falls back to time-of-retrieval "
+                             "(missing the sensor->USB delivery portion of capture latency)."
+                          << std::endl;
+                warned = true;
+            }
+        }
+
         const uint8_t* data = static_cast<const uint8_t*>(color.get_data());
         cb_(data, static_cast<uint32_t>(color.get_width()),
-                  static_cast<uint32_t>(color.get_height()));
+                  static_cast<uint32_t>(color.get_height()),
+                  capture_time_ns);
     }
 }
 

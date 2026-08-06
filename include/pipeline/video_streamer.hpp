@@ -49,7 +49,10 @@ public:
     void stop();
 
     // Push one raw RGB frame from CameraChannel. w/h must match config stream_width/height.
-    void pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height);
+    // capture_time_ns is the frame's capture/render time (system_clock domain, 0 if unknown);
+    // used to compute and log the capture->encode latency leg alongside the existing
+    // encode-transmit-decode instrumentation.
+    void pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height, uint64_t capture_time_ns);
 
     // Per-episode logging of the already-encoded H.264 stream (no extra CPU encode/resize).
     void startEncodedLog(const std::string& path);
@@ -79,9 +82,16 @@ private:
 
     GstElement* logsink_  = nullptr;
     FILE*       enc_file_ = nullptr;
-    FILE*       ts_file_  = nullptr;             // sidecar: per logged frame "frame_idx,wall_clock_ns"
+    // sidecar: per logged frame "frame_idx,wall_clock_ns,capture_time_ns,capture_to_encode_ns"
+    FILE*       ts_file_  = nullptr;
     std::mutex  enc_mutex_;
     std::atomic<bool>     await_keyframe_{false};  // skip encoded buffers until the first IDR of an episode
-    std::deque<uint64_t>  ts_queue_;             // capture wall-clocks of pushed frames awaiting their encoded AU
+
+    // Timestamps of pushed frames awaiting their encoded AU in onNewSample.
+    struct PendingFrameTs {
+        uint64_t encode_ns;   // wall clock when pushFrame encoded this frame (== embedded pixel row)
+        uint64_t capture_ns;  // capture_time_ns passed in to pushFrame (0 if source didn't provide one)
+    };
+    std::deque<PendingFrameTs> ts_queue_;
     uint64_t              log_frame_idx_ = 0;    // index of the next frame written to the current episode
 };

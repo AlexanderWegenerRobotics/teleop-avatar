@@ -21,6 +21,10 @@ struct SharedFrameBuffer {
     std::atomic<uint32_t> frame_count{0};
     uint32_t width  = 0;
     uint32_t height = 0;
+    // Nanoseconds since Unix epoch (system_clock domain) at which each slot's frame
+    // was captured/rendered. Indexed identically to slots[] below - written just
+    // before the corresponding memcpy, read using the same slot resolved in read().
+    uint64_t capture_time_ns[SHM_N_SLOTS]{};
     uint8_t  slots[SHM_N_SLOTS][SHM_MAX_W * SHM_MAX_H * SHM_CHANNELS]{};
 };
 
@@ -62,11 +66,12 @@ public:
         if (handle_) CloseHandle(handle_);
     }
 
-    void write(const uint8_t* rgb, size_t size) {
+    void write(const uint8_t* rgb, size_t size, uint64_t capture_time_ns = 0) {
         constexpr size_t max_size = SHM_MAX_W * SHM_MAX_H * SHM_CHANNELS;
         if (size > max_size)
             throw std::runtime_error("SharedMemoryWriter::write: frame exceeds slot capacity");
         uint32_t slot = buf_->write_idx.load() % SHM_N_SLOTS;
+        buf_->capture_time_ns[slot] = capture_time_ns;
         std::memcpy(buf_->slots[slot], rgb, size);
         buf_->write_idx.fetch_add(1);
         buf_->frame_count.fetch_add(1);
@@ -108,10 +113,13 @@ public:
         return buf_->frame_count.load() != last_frame_;
     }
 
-    const uint8_t* read() {
+    // capture_time_ns_out, if non-null, receives the capture_time_ns stamped by the
+    // writer for the slot being returned.
+    const uint8_t* read(uint64_t* capture_time_ns_out = nullptr) {
         uint32_t slot = (buf_->write_idx.load(std::memory_order_acquire)
                          + SHM_N_SLOTS - 1) % SHM_N_SLOTS;
         last_frame_   = buf_->frame_count.load();
+        if (capture_time_ns_out) *capture_time_ns_out = buf_->capture_time_ns[slot];
         return buf_->slots[slot];
     }
 
@@ -141,6 +149,10 @@ struct SharedFrameBuffer {
     std::atomic<uint32_t> frame_count;
     uint32_t width;
     uint32_t height;
+    // Nanoseconds since Unix epoch (system_clock domain) at which each slot's frame
+    // was captured/rendered. Indexed identically to slots[] below - written just
+    // before the corresponding memcpy, read using the same slot resolved in read().
+    uint64_t capture_time_ns[SHM_N_SLOTS];
     uint8_t  slots[SHM_N_SLOTS][SHM_MAX_W * SHM_MAX_H * SHM_CHANNELS];
 };
 
@@ -171,13 +183,14 @@ public:
         shm_unlink(name_.c_str());
     }
 
-    void write(const uint8_t* rgb, size_t size) {
+    void write(const uint8_t* rgb, size_t size, uint64_t capture_time_ns = 0) {
         size_t max_size = SHM_MAX_W * SHM_MAX_H * SHM_CHANNELS;
         if (size > max_size)
             throw std::runtime_error("SharedMemoryWriter::write: frame size " +
                 std::to_string(size) + " exceeds slot capacity " +
                 std::to_string(max_size));
         uint32_t slot = buf_->write_idx.load() % SHM_N_SLOTS;
+        buf_->capture_time_ns[slot] = capture_time_ns;
         std::memcpy(buf_->slots[slot], rgb, size);
         buf_->write_idx.fetch_add(1);
         buf_->frame_count.fetch_add(1);
@@ -215,10 +228,13 @@ public:
         return buf_->frame_count.load() != last_frame_;
     }
 
-    const uint8_t* read() {
+    // capture_time_ns_out, if non-null, receives the capture_time_ns stamped by the
+    // writer for the slot being returned.
+    const uint8_t* read(uint64_t* capture_time_ns_out = nullptr) {
         // take a snapshot of write_idx before reading
         uint32_t slot = (buf_->write_idx.load(std::memory_order_acquire) + SHM_N_SLOTS - 1) % SHM_N_SLOTS;
         last_frame_   = buf_->frame_count.load();
+        if (capture_time_ns_out) *capture_time_ns_out = buf_->capture_time_ns[slot];
         return buf_->slots[slot];
     }
 

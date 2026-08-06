@@ -71,18 +71,21 @@ CameraChannel::~CameraChannel() { stop(); }
 void CameraChannel::start() {
     if (streamer_) streamer_->start();
 
-    source_->start([this](const uint8_t* rgb, uint32_t w, uint32_t h) {
+    source_->start([this](const uint8_t* rgb, uint32_t w, uint32_t h, uint64_t capture_time_ns) {
         const uint64_t frame_id = frame_count_.fetch_add(1, std::memory_order_relaxed);
 
-        // Streamer gets the raw frame — it appends its own timestamp rows internally.
-        if (streamer_) streamer_->pushFrame(rgb, w, h);
+        // Streamer gets the raw frame — it appends its own timestamp rows internally,
+        // and uses capture_time_ns to log the capture->encode latency leg.
+        if (streamer_) streamer_->pushFrame(rgb, w, h, capture_time_ns);
 
-        // Logger gets the clean frame without any embedded timestamp rows,
-        // plus an explicit wall-clock timestamp.
+        // Logger gets the clean frame without any embedded timestamp rows. Prefer the
+        // source's real capture_time_ns over a receipt-time stamp; fall back to "now"
+        // only if a source hasn't got a real one yet (shouldn't happen once frames flow).
         if (logger_) {
-            const uint64_t ts = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count());
+            const uint64_t ts = capture_time_ns != 0 ? capture_time_ns
+                : static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
             logger_->writeFrame(rgb, w, h, ts, frame_id);
         }
     });

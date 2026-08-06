@@ -10,6 +10,7 @@
 #include <linux/videodev2.h>
 
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -119,6 +120,18 @@ void V4L2Source::initDevice() {
 
     rgb_buf_.resize(static_cast<size_t>(width_) * height_ * 3);
 
+    // Sample the CLOCK_MONOTONIC -> CLOCK_REALTIME offset once. VIDIOC_DQBUF gives us
+    // a monotonic-clock timestamp per buffer; this offset lets us convert it into
+    // the wall-clock (system_clock) domain the rest of the pipeline expects.
+    {
+        timespec mono{}, real{};
+        clock_gettime(CLOCK_MONOTONIC, &mono);
+        clock_gettime(CLOCK_REALTIME, &real);
+        int64_t mono_ns = static_cast<int64_t>(mono.tv_sec) * 1000000000LL + mono.tv_nsec;
+        int64_t real_ns = static_cast<int64_t>(real.tv_sec) * 1000000000LL + real.tv_nsec;
+        clock_offset_ns_ = real_ns - mono_ns;
+    }
+
     std::cout << "[V4L2Source] opened " << device_
               << " negotiated " << width_ << "x" << height_ << " @ " << fps_ << "fps" << std::endl;
 }
@@ -176,8 +189,13 @@ void V4L2Source::run() {
             continue;
         }
 
+        // buf.timestamp is CLOCK_MONOTONIC-based; translate to system_clock domain.
+        int64_t buf_ts_ns = static_cast<int64_t>(buf.timestamp.tv_sec) * 1000000000LL +
+                            static_cast<int64_t>(buf.timestamp.tv_usec) * 1000LL;
+        uint64_t capture_time_ns = static_cast<uint64_t>(buf_ts_ns + clock_offset_ns_);
+
         yuyvToRgb(static_cast<const uint8_t*>(buffers_[buf.index]), rgb_buf_.data(), width_, height_);
-        cb_(rgb_buf_.data(), static_cast<uint32_t>(width_), static_cast<uint32_t>(height_));
+        cb_(rgb_buf_.data(), static_cast<uint32_t>(width_), static_cast<uint32_t>(height_), capture_time_ns);
         xioctl(fd_, VIDIOC_QBUF, &buf);
     }
 }

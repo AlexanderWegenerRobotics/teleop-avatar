@@ -36,6 +36,13 @@ private:
     std::atomic<bool> bRunning_{false};
 
     std::vector<uint8_t> rgb_buf_;
+
+    // V4L2 buffer timestamps are CLOCK_MONOTONIC-based (V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC
+    // on modern kernels/drivers), not wall-clock. This is the CLOCK_REALTIME - CLOCK_MONOTONIC
+    // offset sampled once in initDevice(), used to translate buffer timestamps into the
+    // system_clock domain the rest of the pipeline expects. Drift between the two clocks
+    // over a session is assumed negligible for these sub-second latency measurements.
+    int64_t clock_offset_ns_ = 0;
 };
 
 #endif // WITH_V4L2
