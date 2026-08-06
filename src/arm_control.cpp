@@ -127,6 +127,22 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         transmission_ = std::make_unique<ArmStream>(stream_cfg);
     }
 
+    // Optional second channel, own port, same ArmCommandMsg struct -- for an
+    // autonomous policy's absolute world-frame pose commands (see
+    // worldAbsoluteToBase), kept fully separate from transmission_'s
+    // delta-from-origin VR path above so nothing sending there is affected.
+    // Its outgoing ArmStateMsg echo isn't consumed by anything -- state is
+    // already published on transmission_ -- so remote_ip/send_port here just
+    // need to be valid, not actually listened to.
+    if (device_config["transmission_absolute"]) {
+        UdpStreamConfig stream_cfg;
+        stream_cfg.transport.remote_ip   = device_config["transmission_absolute"]["remote_ip"].as<std::string>();
+        stream_cfg.transport.remote_port = device_config["transmission_absolute"]["send_port"].as<int>();
+        stream_cfg.transport.bind_port   = device_config["transmission_absolute"]["receive_port"].as<int>();
+        stream_cfg.send_rate_hz          = device_config["transmission_absolute"]["frequency"].as<int>();
+        transmission_absolute_ = std::make_unique<ArmStream>(stream_cfg);
+    }
+
     workspace_min_ = Eigen::Vector3d(
         device_config["safety"]["workspace_min"][0].as<double>(),
         device_config["safety"]["workspace_min"][1].as<double>(),
@@ -218,6 +234,7 @@ void ArmControl::start(){
     state_thread = std::thread(&ArmControl::runStateHandler, this);
     set_realtime(state_thread, name_ == "arm_right" ? 3 : 1);
     if (transmission_) transmission_->start();
+    if (transmission_absolute_) transmission_absolute_->start();
     logger_->start();
     logger_->enable(true);
     startTime_ = std::chrono::high_resolution_clock::now();
@@ -230,6 +247,7 @@ void ArmControl::stop(){
     if (control_thread.joinable()) control_thread.join();
     if (state_thread.joinable()) state_thread.join();
     if (transmission_) transmission_->stop();
+    if (transmission_absolute_) transmission_absolute_->stop();
 }
 
 void ArmControl::runStateHandler(){
@@ -239,7 +257,9 @@ void ArmControl::runStateHandler(){
     SysState prev_state = state_;
     Eigen::VectorXd q_current = Eigen::VectorXd::Zero(7);
     bool has_cmd = false;
+    bool has_cmd_abs = false;
     ArmCommandMsg cmd;
+    ArmCommandMsg cmd_abs;
     Eigen::Quaterniond prev_cmd_quat_ = Eigen::Quaterniond::Identity();
 
     while(bRunning){
@@ -249,12 +269,18 @@ void ArmControl::runStateHandler(){
             has_cmd = true;
             desired_gripper_closed_.store(cmd.gripper > 0.5f);
         }
+        if (transmission_absolute_ && transmission_absolute_->hasNew()) {
+            cmd_abs = transmission_absolute_->getRecvData();
+            has_cmd_abs = true;
+            desired_gripper_closed_.store(cmd_abs.gripper > 0.5f);
+        }
 
         updateRecovery();
         updateStateMachine(cmd_state_);
 
         if (state_ != SysState::ENGAGED) {
             has_cmd = false;
+            has_cmd_abs = false;
         }
 
         // ── HOMING entry ──────────────────────────────────────────────────────
@@ -282,17 +308,29 @@ void ArmControl::runStateHandler(){
 
         // ── ENGAGED tick ──────────────────────────────────────────────────────
         else if (state_ == SysState::ENGAGED) {
-            if (has_cmd) {
+            if (has_cmd || has_cmd_abs) {
+                // Absolute (autonomous policy) takes priority if both arrived
+                // this tick -- shouldn't happen in practice, since
+                // SystemArbitrator/policy mode gating means only one sender
+                // is ever actually active, but this keeps it deterministic
+                // rather than order-of-arrival dependent.
+                bool absolute = has_cmd_abs;
+                const ArmCommandMsg& src = absolute ? cmd_abs : cmd;
+
                 Eigen::Isometry3d T_cmd = Eigen::Isometry3d::Identity();
-                Eigen::Vector3d pos(cmd.position[0], cmd.position[1], cmd.position[2]);
-                Eigen::Quaterniond q(cmd.quaternion[0], cmd.quaternion[1], cmd.quaternion[2], cmd.quaternion[3]);
+                Eigen::Vector3d pos(src.position[0], src.position[1], src.position[2]);
+                Eigen::Quaterniond q(src.quaternion[0], src.quaternion[1], src.quaternion[2], src.quaternion[3]);
                 q.normalize();
                 if (q.dot(prev_cmd_quat_) < 0.0) q.coeffs() *= -1.0;
                 prev_cmd_quat_ = q;
                 T_cmd.translation() = pos;
                 T_cmd.linear() = q.toRotationMatrix();
 
-                Eigen::Isometry3d T_target = transformCommandToBase(T_cmd);
+                // Absolute: world-frame target, no origin/controller-remap
+                // involved (worldAbsoluteToBase). Otherwise: existing
+                // delta-from-origin VR semantics (transformCommandToBase),
+                // unchanged.
+                Eigen::Isometry3d T_target = absolute ? worldAbsoluteToBase(T_cmd) : transformCommandToBase(T_cmd);
                 target_pose_raw_ = T_base_ * T_target;
                 applySelfCollisionFilter(T_target);
                 validateTargetPose(T_target);
@@ -307,6 +345,7 @@ void ArmControl::runStateHandler(){
 
                 target_pose_ = T_base_ * T_target;
                 has_cmd = false;
+                has_cmd_abs = false;
 
             } else if (control_mode_ == ControlMode::CARTESIAN_IMPEDANCE) {
                 Eigen::Isometry3d T_current_target = motion_gen_.getCurrentCartesian();
@@ -776,6 +815,14 @@ Eigen::Isometry3d ArmControl::transformCommandToBase(const Eigen::Isometry3d& T_
     T_target.linear() = T_origin_.rotation() * (M * T_cmd_world.rotation() * M.transpose());
 
     return T_target;
+}
+
+Eigen::Isometry3d ArmControl::worldAbsoluteToBase(const Eigen::Isometry3d& T_world_abs) const {
+    // Exact inverse of the T_base_ * T_local composition used everywhere else
+    // for state/logging (see O_T_EE_world in the ArmLogEntry write site) --
+    // no T_origin_/controller-remap involved, since this path is for an
+    // absolute target, not a delta from wherever homing last landed.
+    return T_base_.inverse() * T_world_abs;
 }
 
 Eigen::Isometry3d ArmControl::transformBaseToWorld(const Eigen::Isometry3d& T_base) const {

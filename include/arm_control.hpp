@@ -68,6 +68,12 @@ private:
     MotionGenerator motion_gen_;
     using ArmStream = UdpStream<ArmCommandMsg, ArmStateMsg>;
     std::unique_ptr<ArmStream> transmission_;
+    // Second, optional channel on its own port -- same ArmCommandMsg struct,
+    // unchanged, but interpreted as an absolute world-frame pose (see
+    // worldAbsoluteToBase) instead of transmission_'s delta-from-origin/VR
+    // semantics. Config-gated (transmission_absolute in device_config) so
+    // nothing sending on the existing port/struct is affected.
+    std::unique_ptr<ArmStream> transmission_absolute_;
     std::unique_ptr<DataLogger<ArmLogEntry>> logger_;
     std::chrono::high_resolution_clock::time_point startTime_;
     ArmRecovery recovery_;
@@ -82,6 +88,7 @@ private:
     bool isHome();
     Eigen::Isometry3d transformCommandToBase(const Eigen::Isometry3d& T_cmd_world) const;
     Eigen::Isometry3d transformBaseToWorld(const Eigen::Isometry3d& T_base) const;
+    Eigen::Isometry3d worldAbsoluteToBase(const Eigen::Isometry3d& T_world_abs) const;
     void applySelfCollisionFilter(Eigen::Isometry3d& T_target);
     void validateTargetPose(Eigen::Isometry3d& T_target);
     Vector7 jointLimitAvoidanceTorque(const Vector7& q, const Vector7& dq);

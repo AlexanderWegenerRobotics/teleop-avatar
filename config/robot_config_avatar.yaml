@@ -30,6 +30,17 @@ devices:
       receive_port: 7001
       frequency: 200
 
+    # Absolute-pose channel for an autonomous policy (world frame, no
+    # origin/VR semantics) -- own port, same ArmCommandMsg struct as
+    # transmission above, see ArmControl::worldAbsoluteToBase. send_port's
+    # ArmStateMsg echo isn't consumed by anything (state already publishes on
+    # transmission above), it just needs to be a valid target.
+    transmission_absolute:
+      remote_ip: "10.112.24.173"
+      send_port: 8011
+      receive_port: 7011
+      frequency: 200
+
     gripper:
       grasp_confirm_tolerance_m: 0.005
       grasp_confirm_time_s: 0.050
@@ -94,6 +105,12 @@ devices:
       remote_ip: "10.112.24.173"
       send_port: 8002
       receive_port: 7002
+      frequency: 200
+
+    transmission_absolute:  # see arm_left's transmission_absolute comment
+      remote_ip: "10.112.24.173"
+      send_port: 8012
+      receive_port: 7012
       frequency: 200
 
     gripper:
