@@ -4,6 +4,18 @@ setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
+rem --- optional role override, forwarded as-is to both avatar.exe and
+rem     avatar_pipeline.exe (see twin/role.hpp parseRoleFlag). Omit to use
+rem     whatever config.yaml's role: key says -- unchanged from before this
+rem     flag existed. Usage: launch.bat --twin   |   launch.bat --avatar
+set "ROLE_ARG=%~1"
+if not "%ROLE_ARG%"=="" (
+    if not "%ROLE_ARG%"=="--twin" if not "%ROLE_ARG%"=="--avatar" (
+        echo [ERROR]: unrecognized argument "%ROLE_ARG%" ^(expected --twin or --avatar^)
+        exit /b 1
+    )
+)
+
 rem --- locate binaries (Release preferred, Debug fallback) ---
 set "AVATAR="
 set "STREAMER="
@@ -37,7 +49,11 @@ set "LOG_ERR=%SCRIPT_DIR%\avatar_stderr.log"
 set "CRASH_LOG=%SCRIPT_DIR%\avatar_crash.log"
 set "PS_FILE=%TEMP%\avatar_monitor_%RANDOM%.ps1"
 
-echo [LAUNCH]: Starting avatar  ^(stdout: avatar_stdout.log  stderr: avatar_stderr.log^)
+if "%ROLE_ARG%"=="" (
+    echo [LAUNCH]: Starting avatar  ^(role: config.yaml default^)  ^(stdout: avatar_stdout.log  stderr: avatar_stderr.log^)
+) else (
+    echo [LAUNCH]: Starting avatar  ^(role: %ROLE_ARG%^)  ^(stdout: avatar_stdout.log  stderr: avatar_stderr.log^)
+)
 
 rem --- Write the PowerShell monitor script line by line.
 rem     Using individual >> redirections avoids cmd mis-parsing parentheses inside
@@ -51,15 +67,32 @@ del "%PS_FILE%" 2>nul
 >>"%PS_FILE%" echo $logOut      = '%LOG_OUT%'
 >>"%PS_FILE%" echo $logErr      = '%LOG_ERR%'
 >>"%PS_FILE%" echo $crashLog    = '%CRASH_LOG%'
+>>"%PS_FILE%" echo $roleArg     = '%ROLE_ARG%'
 >>"%PS_FILE%" echo.
->>"%PS_FILE%" echo $avProc = Start-Process -FilePath $avatarExe -WorkingDirectory $workDir -RedirectStandardOutput $logOut -RedirectStandardError $logErr -PassThru -NoNewWindow
+>>"%PS_FILE%" echo $avatarParams = @{
+>>"%PS_FILE%" echo     FilePath               = $avatarExe
+>>"%PS_FILE%" echo     WorkingDirectory       = $workDir
+>>"%PS_FILE%" echo     RedirectStandardOutput = $logOut
+>>"%PS_FILE%" echo     RedirectStandardError  = $logErr
+>>"%PS_FILE%" echo     PassThru               = $true
+>>"%PS_FILE%" echo     NoNewWindow            = $true
+>>"%PS_FILE%" echo }
+>>"%PS_FILE%" echo if ^($roleArg -ne ''^) { $avatarParams['ArgumentList'] = $roleArg }
+>>"%PS_FILE%" echo $avProc = Start-Process @avatarParams
 >>"%PS_FILE%" echo if ^(-not $avProc^) { Write-Host '[ERROR]: Failed to start avatar.exe'; exit 1 }
 >>"%PS_FILE%" echo $avPid = $avProc.Id
 >>"%PS_FILE%" echo Write-Host "[LAUNCH]: avatar PID=$avPid"
 >>"%PS_FILE%" echo.
 >>"%PS_FILE%" echo Start-Sleep -Seconds 2
 >>"%PS_FILE%" echo.
->>"%PS_FILE%" echo $stProc = Start-Process -FilePath $streamerExe -WorkingDirectory $workDir -PassThru -NoNewWindow
+>>"%PS_FILE%" echo $streamerParams = @{
+>>"%PS_FILE%" echo     FilePath         = $streamerExe
+>>"%PS_FILE%" echo     WorkingDirectory = $workDir
+>>"%PS_FILE%" echo     PassThru         = $true
+>>"%PS_FILE%" echo     NoNewWindow      = $true
+>>"%PS_FILE%" echo }
+>>"%PS_FILE%" echo if ^($roleArg -ne ''^) { $streamerParams['ArgumentList'] = $roleArg }
+>>"%PS_FILE%" echo $stProc = Start-Process @streamerParams
 >>"%PS_FILE%" echo if ^(-not $stProc^) {
 >>"%PS_FILE%" echo     Write-Host '[ERROR]: Failed to start avatar_pipeline.exe'
 >>"%PS_FILE%" echo     Stop-Process -Id $avProc.Id -Force -EA SilentlyContinue

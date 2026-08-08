@@ -4,8 +4,10 @@
 #include "data_logger.hpp"
 #include "intention/annotation_msg.hpp"
 #include "sim_env/scene_builder.hpp"
+#include "twin/config_overlay.hpp"
 
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <filesystem>
@@ -13,8 +15,19 @@
 #include <chrono>
 #include "network/platform_socket.hpp"
 
-Avatar::Avatar(const YAML::Node& config) {
+Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
     YAML::Node sys_config = YAML::LoadFile(config["robot_config"].as<std::string>());
+
+    // Twin-role port overlay (see twin/config_overlay.hpp) -- only patches
+    // transmission send_port/receive_port fields, so avatar and twin can run
+    // locally against the same robot_config file without a duplicated copy.
+    // No-op for role == Avatar, and for role == Twin when the config doesn't
+    // define transmission_overlay (real cross-continent deployment).
+    if (role_ == Role::Twin && config["transmission_overlay"]) {
+        applyTwinTransmissionOverlay(sys_config, config["transmission_overlay"].as<std::string>());
+        std::cout << "[AVATAR-INFO] Applied twin transmission overlay: "
+                  << config["transmission_overlay"].as<std::string>() << std::endl;
+    }
 
     session_id_ = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 
@@ -115,6 +128,12 @@ Avatar::Avatar(const YAML::Node& config) {
                 std::cout << "[AVATAR-INFO] Pipeline logger signals -> " << logger_host_ << ":" << logger_port_ << std::endl;
             }
         }
+    }
+
+    // ── Twin telemetry forward (role == Avatar only; harmless no-op
+    // otherwise, since maybeSend() is never called when role_ == Twin) ─────
+    if (role_ == Role::Avatar && sys_config["avatar"]) {
+        twin_telemetry_ = std::make_unique<TelemetryForwarder>(sys_config["avatar"]);
     }
 
     if (sys_config["avatar"]["transmission"]) {
@@ -250,7 +269,7 @@ Avatar::Avatar(const YAML::Node& config) {
     }
 
 #ifndef WITH_FRANKA
-    sim_ = std::make_shared<Simulation>(config);
+    sim_ = std::make_shared<Simulation>(config, role_);
 
     YAML::Node sim_config = SceneBuilder::loadMergedSimConfig(config["sim_config"].as<std::string>());
 
@@ -344,6 +363,25 @@ Avatar::Avatar(const YAML::Node& config) {
     }
 
     writeCameraParams();
+
+    // ── Reconciler (role == Twin only) ──────────────────────────────────
+    // Constructed here (not in main.cpp) because it needs sim_, which only
+    // exists in this !WITH_FRANKA branch -- see role.hpp / reconciler.hpp
+    // header comments for why role: twin implicitly requires a MuJoCo build.
+    if (role_ == Role::Twin) {
+        if (!config["reconciler_config"])
+            throw std::runtime_error("role: twin requires twin_config.reconciler_config in config.yaml");
+        YAML::Node reconciler_yaml = YAML::LoadFile(config["reconciler_config"].as<std::string>());
+        ReconcilerConfig rcfg = ReconcilerConfig::load(reconciler_yaml);
+        reconciler_ = std::make_unique<Reconciler>(rcfg, sim_.get());
+        std::cout << "[AVATAR-INFO]: Reconciler constructed (role: twin)" << std::endl;
+    }
+#else
+    if (role_ == Role::Twin) {
+        throw std::runtime_error(
+            "role: twin requires a build with Simulation available (i.e. not WITH_FRANKA). "
+            "This binary was compiled WITH_FRANKA (real-hardware avatar build).");
+    }
 #endif
 }
 
@@ -355,6 +393,7 @@ Avatar::~Avatar() {
 
 void Avatar::start(){
     if (cmd_channel_) cmd_channel_->start();
+    if (reconciler_) reconciler_->start();
     for(const auto& head : head_instances){
         head->start();
     }
@@ -396,6 +435,10 @@ void Avatar::start(){
     bRunning = true;
    
     while(bRunning){
+        // Top of tick, before anything else touches sim state (section 5 of
+        // docs/twin_concept.md): apply any pending reconciler correction.
+        if (reconciler_) reconciler_->applyPendingCorrection();
+
         SysState cmd_state = cmd_requested_.load();
 
         if (cmd_channel_ && !cmd_channel_->isAlive()) {
@@ -425,6 +468,14 @@ void Avatar::start(){
             cmd_channel_->send("heartbeat", buf, false);
             last_heartbeat = now;
         }
+
+        // role == Avatar: forward real joint telemetry y(t_s) to a paired
+        // twin's reconciler (docs/twin_concept.md section 4). Works
+        // identically on real-hardware (WITH_FRANKA) and sim-as-avatar
+        // builds since it only reads ArmControl's current_state via the
+        // franka::Robot abstraction, never sim_ directly.
+        if (twin_telemetry_ && twin_telemetry_->enabled()) sendTwinTelemetry();
+
         #ifndef WITH_FRANKA
             for (auto& arm : arm_instances) {
                 Eigen::Isometry3d T = arm->getTargetPose();
@@ -434,6 +485,26 @@ void Avatar::start(){
 
                 T = arm->getRawTargetPose();
                 sim_->setFramePose("target_raw_" + side + "_frame", T.translation(), Eigen::Quaterniond(T.rotation()), 0.107);
+            }
+
+            // role == Twin: feed the reconciler's ring buffer with the
+            // twin's own just-computed state + applied ctrl this tick
+            // (docs/twin_concept.md section 3). Order is fixed: arm_left
+            // then arm_right, matching TwinTelemetryMsg's q_left/q_right
+            // layout and Reconciler's default device_names.
+            if (reconciler_) {
+                double q[kTwinDof] = {}, dq[kTwinDof] = {}, ctrl[kTwinDof] = {};
+                static const std::array<std::string, 2> kTwinDevices{"arm_left", "arm_right"};
+                for (size_t d = 0; d < kTwinDevices.size(); ++d) {
+                    DeviceState ds = sim_->getDeviceState(kTwinDevices[d]);
+                    std::vector<double> c = sim_->getDeviceCtrl(kTwinDevices[d]);
+                    for (size_t i = 0; i < ds.q.size()  && i < 7; ++i) q [d * 7 + i] = ds.q[i];
+                    for (size_t i = 0; i < ds.dq.size() && i < 7; ++i) dq[d * 7 + i] = ds.dq[i];
+                    for (size_t i = 0; i < c.size()      && i < 7; ++i) ctrl[d * 7 + i] = c[i];
+                }
+                uint64_t t_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+                reconciler_->pushTwinState(t_ns, q, dq, ctrl);
             }
 
             if (intention_buffer_) {
@@ -566,6 +637,7 @@ void Avatar::start(){
 
 void Avatar::stop(){
     bRunning = false;
+    if (reconciler_) reconciler_->stop();
     if (intention_recognizer_) intention_recognizer_->stop();
     if (scene_logger_) {
         scene_logger_->enable(false);
@@ -644,6 +716,36 @@ void Avatar::sendSceneObjects(const StateSnapshot& snap) {
     inet_pton(AF_INET, scene_objects_host_.c_str(), &dst.sin_addr);
     sendto(scene_objects_sock_, buf.data(), static_cast<int>(buf.size()), 0,
            reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+}
+
+void Avatar::sendTwinTelemetry() {
+    if (!twin_telemetry_) return;
+
+    TwinTelemetryMsg msg{};
+    msg.header.timestamp_ns = timestamp_ns();  // t_s -- sample time; both machines NTP-synced (section 2)
+    msg.header.state        = state_.load();
+    msg.header.device_id    = DeviceId::AVATAR;
+
+    if (ArmControl* left = getArm("arm_left")) {
+        Vector7 q, dq;
+        left->getJointState(q, dq);
+        for (int i = 0; i < 7; ++i) {
+            msg.q_left[i]  = static_cast<float>(q[i]);
+            msg.dq_left[i] = static_cast<float>(dq[i]);
+        }
+        msg.valid_left = 1;
+    }
+    if (ArmControl* right = getArm("arm_right")) {
+        Vector7 q, dq;
+        right->getJointState(q, dq);
+        for (int i = 0; i < 7; ++i) {
+            msg.q_right[i]  = static_cast<float>(q[i]);
+            msg.dq_right[i] = static_cast<float>(dq[i]);
+        }
+        msg.valid_right = 1;
+    }
+
+    twin_telemetry_->maybeSend(msg);
 }
 
 void Avatar::processRecoveryNotifications() {

@@ -14,6 +14,8 @@
 
 #include "pipeline/camera_channel.hpp"
 #include "pipeline/episode_controller.hpp"
+#include "twin/role.hpp"
+#include "twin/config_overlay.hpp"
 
 // ---------------------------------------------------------------------------
 // Global state (signal handler needs access)
@@ -102,8 +104,16 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    // --avatar/--twin select which role's config sub-tree to use, same flag
+    // and same meaning as avatar.exe (see twin/role.hpp) -- launch.bat passes
+    // the same flag to both processes. Any other positional argument is
+    // treated as a config.yaml path override (legacy behavior, kept for
+    // scripts/tests that relied on it).
     std::string global_config_path = "../config/config.yaml";
-    if (argc > 1) global_config_path = argv[1];
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg != "--twin" && arg != "--avatar") global_config_path = arg;
+    }
 
     YAML::Node global_cfg;
     try {
@@ -116,7 +126,29 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::string config_path = global_cfg["streamer_config"].as<std::string>("../config/pipeline_config.yaml");
+    ResolvedConfig resolved;
+    try {
+        resolved = resolveRoleConfig(global_cfg, parseRoleFlag(argc, argv));
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] " << e.what() << std::endl;
+    #ifdef _WIN32
+            WSACleanup();
+    #endif
+        return 1;
+    }
+    std::cout << "[INFO] Role: " << roleToString(resolved.role) << std::endl;
+
+    std::string config_path;
+    try {
+        config_path = resolved.node["streamer_config"].as<std::string>();
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] config.yaml: " << roleToString(resolved.role)
+                   << "_config missing/invalid 'streamer_config' key: " << e.what() << std::endl;
+    #ifdef _WIN32
+            WSACleanup();
+    #endif
+        return 1;
+    }
 
     YAML::Node cfg;
     try {
@@ -127,6 +159,25 @@ int main(int argc, char** argv) {
             WSACleanup();
     #endif
         return 1;
+    }
+
+    // Twin-role shm/port overlay (see twin/config_overlay.hpp) -- lets avatar
+    // and twin each run their own avatar_pipeline locally from the same
+    // pipeline_config file without shm-name/port collisions. No-op for
+    // role == Avatar, and for role == Twin when the config doesn't define
+    // streamer_overlay (real cross-continent deployment).
+    if (resolved.role == Role::Twin && resolved.node["streamer_overlay"]) {
+        try {
+            applyTwinStreamerOverlay(cfg, resolved.node["streamer_overlay"].as<std::string>());
+            std::cout << "[INFO] Applied twin streamer overlay: "
+                      << resolved.node["streamer_overlay"].as<std::string>() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] " << e.what() << std::endl;
+        #ifdef _WIN32
+                WSACleanup();
+        #endif
+            return 1;
+        }
     }
 
     // GStreamer must be initialised once before any VideoStreamer is constructed.

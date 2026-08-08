@@ -1,0 +1,71 @@
+# Twin-role overlay for pipeline_config_local.yaml (see twin/config_overlay.hpp
+# and config.yaml's twin_config.streamer_overlay).
+#
+# Lets an avatar process and a twin process run locally at the same time
+# against the SAME pipeline_config_local.yaml -- both processes read/write
+# the SAME MuJoCo instance's cameras otherwise -- without a second copy of
+# the file (which would risk camera/stream definitions drifting between the
+# two). Only shm names, stream ports, and episode_listener_port are listed
+# here; everything else (bitrate, fps, log settings, ...) is left untouched
+# from the base file.
+#
+# Offset scheme: every twin shm name = the matching avatar shm name + "_twin"
+# suffix; every twin stream/feedback/status port = the matching avatar port
+# + 900 (same scheme as robot_config_twin_overlay_local.yaml's device ports).
+#
+# episode_listener_port is the one exception: avatar's value (7100) + 900
+# would be 8000, which collides with avatar.transmission.send_port in
+# robot_config_local.yaml. Using 8100 instead -- see the matching
+# avatar.pipeline_logger.port override in robot_config_twin_overlay_local.yaml,
+# which must stay equal to this value.
+episode_listener_port: 8100   # base: 7100
+
+# Matched against stream_cameras[].camera (Simulation's shm-writer list).
+stream_cameras:
+  - camera:   "head_head_cam"
+    shm_name: "avatar_cam_twin"              # base: avatar_cam
+
+  - camera:   "head_head_cam_left"
+    shm_name: "avatar_cam_left_twin"         # base: avatar_cam_left
+
+  - camera:   "head_head_cam_right"
+    shm_name: "avatar_cam_right_twin"        # base: avatar_cam_right
+
+  - camera:   "camera_right_rgb"
+    shm_name: "avatar_wrist_cam_right_twin"  # base: avatar_wrist_cam_right
+
+  - camera:   "camera_left_rgb"
+    shm_name: "avatar_wrist_cam_left_twin"   # base: avatar_wrist_cam_left
+
+# Matched against cameras[].name (avatar_pipeline's shm-reader + streamer list).
+cameras:
+  - name:     "head_cam"
+    shm_name: "avatar_cam_twin"              # base: avatar_cam
+    stream:
+      port:          5904   # base: 5004
+      feedback_port: 5905   # base: 5005
+      status_port:   5907   # base: 5007
+
+  - name:     "wrist_cam_right"
+    shm_name: "avatar_wrist_cam_right_twin"  # base: avatar_wrist_cam_right
+    stream:
+      port:          5910   # base: 5010
+      feedback_port: 5911   # base: 5011
+      status_port:   5912   # base: 5012
+
+  - name:     "wrist_cam_left"
+    shm_name: "avatar_wrist_cam_left_twin"   # base: avatar_wrist_cam_left
+    stream:
+      port:          5913   # base: 5013
+      feedback_port: 5914   # base: 5014
+      status_port:   5915   # base: 5015
+
+  - name:               "head_cam_stereo"
+    shm_name:           "avatar_cam_left_twin"    # base: avatar_cam_left
+    stereo_partner_shm: "avatar_cam_right_twin"   # base: avatar_cam_right
+    stream:
+      port:          5904   # base: 5004 (same physical head-cam port pair as
+      feedback_port: 5905   # base: 5005  the mono "head_cam" entry above --
+      status_port:   5907   # base: 5007  only one of the two is ever active,
+                             #             gated by stereo: true/false, same as
+                             #             the base file)

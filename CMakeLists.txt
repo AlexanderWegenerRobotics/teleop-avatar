@@ -155,6 +155,8 @@ set(SOURCES
     src/network/udp_reliable.cpp
     src/intention/intention_buffer.cpp
     src/intention/intention_recognizer.cpp
+    src/twin/telemetry_forward.cpp
+    src/twin/reconciler.cpp
 )
 
 if(BUILD_WITH_MUJOCO)

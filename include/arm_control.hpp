@@ -38,6 +38,10 @@ public:
     SysState getState() const {return state_;}
     Eigen::Isometry3d getTargetPose() const;
     Eigen::Isometry3d getRawTargetPose() const;
+    // Raw joint state (q, dq), uniform across sim/real-hardware builds since
+    // current_state is populated via the franka::Robot abstraction either
+    // way. Used by Avatar to build TwinTelemetryMsg (docs/twin_concept.md).
+    void getJointState(Vector7& q, Vector7& dq) const;
     void initSelfCollisionProtection(std::shared_ptr<DeviceRegistry> registry, const SelfCollisionConfig& config) {
         scp_ = std::make_unique<SelfCollisionProtection>(name_, std::move(registry), config);
     }
@@ -105,7 +109,7 @@ private:
     Vector7 q0_, q_min_, q_max_;
     Vector7 tau_max_;
     Vector7 tau_rate_max_;
-    std::mutex state_mtx;
+    mutable std::mutex state_mtx;
     franka::RobotState current_state;
     std::unique_ptr<franka::Model> franka_owned_model_;
     Eigen::Isometry3d T_origin_;

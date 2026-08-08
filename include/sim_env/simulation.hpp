@@ -17,6 +17,7 @@
 #include "pipeline/shared_memory.hpp"
 #include "sim_env/scene_builder.hpp"
 #include "intention/intention_sample.hpp"
+#include "twin/role.hpp"
 
 struct LightingConfig {
     float main_pos[3]           = {0.5f,  0.0f,  1.8f};
@@ -67,7 +68,13 @@ struct DeviceState {
 
 class Simulation {
 public:
-    explicit Simulation(const YAML::Node& config);
+    // role defaults to Avatar so any other/future callers behave exactly as
+    // before. When role == Twin and config["streamer_overlay"] is present,
+    // the loaded streamer_config (config["streamer_config"]) is patched via
+    // applyTwinStreamerOverlay before shm writers are built, so avatar and
+    // twin can run locally at once without shm-name/port collisions (see
+    // twin/config_overlay.hpp).
+    explicit Simulation(const YAML::Node& config, Role role = Role::Avatar);
     ~Simulation();
 
     void start();
@@ -86,6 +93,51 @@ public:
     void setLighting(const LightingConfig& lc);
     void setBodyScale(const std::string& bodyName, double scale);
     uint64_t         getFrameId() const { return stream_frame_count_.load(); }
+
+    // ── Twin / reconciler support (docs/twin_concept.md) ────────────────────
+    // Read-only access to the loaded mjModel so a Reconciler can build its own
+    // private, headless mjData (mj_makeData(model)) that shares this model --
+    // "scratch calculator" for forward replay, never touching the live `data`.
+    // The model is effectively immutable after construction (only body-scale
+    // geom/inertial fields change, via setBodyScale), so sharing the raw
+    // pointer across threads is safe; only `data` needs the lock below.
+    const mjModel* mjModelPtr() const { return model; }
+
+    // Directly nudge a device's joint qpos/qvel by the given deltas (radians,
+    // rad/s), bypassing actuators/controllers entirely. This is the
+    // reconciler's filtered-pull correction application (section 4/5):
+    // "applies it at the top of its next tick" -- a state write, not a
+    // control force. deltas.size() must match the device's joint count
+    // (silently truncated/ignored beyond that). No-op for unknown devices.
+    void applyJointCorrection(const std::string& deviceName,
+                               const std::vector<double>& dq_delta,
+                               const std::vector<double>& ddq_delta);
+
+    // Current per-tick joint-actuator ctrl values for a device (same order as
+    // getDeviceState's q/dq), i.e. exactly what run_model() writes into
+    // data->ctrl this step. The reconciler buffers these alongside q/dq so
+    // its forward-replay Phi_fhat can re-drive a scratch mjData with the
+    // twin's actual applied low-level commands, not just re-integrate an
+    // uncontrolled model (section 3/4 of docs/twin_concept.md).
+    std::vector<double> getDeviceCtrl(const std::string& deviceName);
+
+    // ── Replay support for the reconciler's private scratch mjData ─────────
+    // The reconciler owns a headless mjData (mj_makeData(mjModelPtr())) and
+    // drives it through these calls to re-integrate forward from a delayed
+    // telemetry sample using the twin's actually-applied ctrl history
+    // (docs/twin_concept.md section 4, Phi_fhat). Joint/actuator index
+    // bookkeeping stays inside Simulation either way -- these are thin
+    // wrappers so nothing outside this class needs jnt_qposadr/jnt_dofadr/
+    // actuator-id internals. replay_data is caller-owned and never touches
+    // the live `data`/data_mtx (single-source-of-truth: the replay instance
+    // is never an authority).
+    void replaySeed(mjData* replay_data, const std::string& deviceName,
+                     const std::vector<double>& q, const std::vector<double>& dq);
+    void replaySetCtrl(mjData* replay_data, const std::string& deviceName,
+                        const std::vector<double>& ctrl);
+    void replayAdvance(mjData* replay_data);
+    std::vector<double> replayReadQ(mjData* replay_data, const std::string& deviceName) const;
+    std::vector<double> replayReadDq(mjData* replay_data, const std::string& deviceName) const;
 
 private:
     mjModel* model = nullptr;

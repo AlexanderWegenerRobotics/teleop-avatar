@@ -1,0 +1,30 @@
+# Reconciler tuning -- only read when role: twin.
+# See docs/twin_concept.md sections 4-5 for the derivation of these knobs.
+
+# UDP port this process listens on for TwinTelemetryMsg (y(t_s)) sent by the
+# avatar process's twin_telemetry forward. remote_ip is not needed here --
+# it's a passive listener; the avatar side owns the destination address.
+listen_port: 7400
+
+# Ring buffer horizon T -- must cover at least the largest expected d_f + a
+# safety margin, so replay always has commands to integrate over.
+buffer_horizon_s: 1.0
+
+# Filtered-pull correction time constant tau (ms). K = 1 - exp(-dt/tau).
+correction_tau_ms: 300
+
+# Innovation-norm regimes (see section 4). Two independent thresholds:
+# joint-space L2 norm of e = y - x_hat(t_s - d_f), in radians (position part)
+# and rad/s (velocity part), combined via epsilon_soft/epsilon_hard on
+# ||e_q|| (position) -- velocity is logged but not currently gated.
+epsilon_soft_rad: 0.035   # ~2 deg -- corrections below this dissolve into the servo, no visible jump
+epsilon_hard_rad: 0.175   # ~10 deg -- hard resync + UI cue; model broke (contact, e-stop, joint limit)
+
+# Reconciler thread rate. Should match/roughly track the incoming telemetry
+# rate (avatar's twin_telemetry send frequency).
+reconciler_hz: 100
+
+# Mailbox staleness guard (section 5) -- control loop discards corrections
+# older than this so a stalled reconciler thread degrades gracefully to
+# open-loop prediction instead of applying ancient corrections.
+mailbox_stale_ms: 50

@@ -19,6 +19,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include "avatar.hpp"
+#include "twin/role.hpp"
 
 static std::atomic<bool> g_shutdown_requested{false};
 
@@ -76,7 +77,7 @@ static void terminateHandler()
     std::_Exit(1);
 }
 
-int main() {
+int main(int argc, char** argv) {
     std::set_terminate(terminateHandler);
 
 #ifdef _WIN32
@@ -91,9 +92,12 @@ int main() {
 #endif
 
     try {
-        YAML::Node config = YAML::LoadFile("../config/config.yaml");
+        YAML::Node top_config = YAML::LoadFile("../config/config.yaml");
+        ResolvedConfig resolved = resolveRoleConfig(top_config, parseRoleFlag(argc, argv));
 
-        Avatar avatar(config);
+        std::cout << "Role: " << roleToString(resolved.role) << std::endl;
+
+        Avatar avatar(resolved.node, resolved.role);
 
 #ifdef WITH_FRANKA
         std::thread avatar_thread([&]() {

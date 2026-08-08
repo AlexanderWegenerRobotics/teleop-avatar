@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <Eigen/Dense>
 #include <yaml-cpp/yaml.h>

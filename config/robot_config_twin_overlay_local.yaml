@@ -1,0 +1,49 @@
+# Twin-role port overlay, applied on top of robot_config_local.yaml (see
+# twin/config_overlay.hpp and config.yaml's twin_config.transmission_overlay).
+#
+# Lets an avatar process and a twin process run locally at the same time
+# against the SAME robot_config_local.yaml -- e.g. for reconciler dev/testing
+# -- without a second copy of the file (which would risk q0/gains/safety
+# limits silently drifting between the two). Only send_port/receive_port are
+# listed here; remote_ip and frequency are left untouched from the base file.
+#
+# Offset scheme: every twin port = the matching avatar-role port + 900.
+# (transmission_absolute, already used for a different purpose, is offset
+# +10/+11/+12 from its own base -- this overlay never touches those blocks.)
+
+avatar:
+  transmission:
+    send_port:    8900   # base: avatar.transmission.send_port    (8000)
+    receive_port: 7900   # base: avatar.transmission.receive_port (7000)
+  pipeline_logger:
+    # NOT a straight +900 (8000 would collide with avatar.transmission.send_port
+    # above). Must match pipeline_config_twin_overlay_local.yaml's
+    # episode_listener_port so twin's Avatar process signals twin's own
+    # avatar_pipeline instance, not avatar's.
+    port: 8100            # base: avatar.pipeline_logger.port (7100)
+
+devices:
+  - name: arm_left
+    transmission:
+      send_port:    8901   # base: 8001
+      receive_port: 7901   # base: 7001
+
+  - name: arm_right
+    transmission:
+      send_port:    8902   # base: 8002
+      receive_port: 7902   # base: 7002
+
+  - name: head
+    transmission:
+      send_port:    8903   # base: 8003
+      receive_port: 7903   # base: 7003
+
+  - name: hand_left
+    transmission:
+      send_port:    8904   # base: 8004
+      receive_port: 7904   # base: 7004
+
+  - name: hand_right
+    transmission:
+      send_port:    8905   # base: 8005
+      receive_port: 7905   # base: 7005

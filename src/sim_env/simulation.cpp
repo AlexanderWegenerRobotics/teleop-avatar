@@ -10,15 +10,28 @@
 #include <GLFW/glfw3.h>
 #include <yaml-cpp/yaml.h>
 
+#include "twin/config_overlay.hpp"
+
 
 // ---------------------------------------------------------------------------
 // Constructor / Destructor
 // ---------------------------------------------------------------------------
 
-Simulation::Simulation(const YAML::Node& config) {
+Simulation::Simulation(const YAML::Node& config, Role role) {
     YAML::Node sim_config    = SceneBuilder::loadMergedSimConfig(config["sim_config"].as<std::string>());
     YAML::Node robot_config  = YAML::LoadFile(config["robot_config"].as<std::string>());
     YAML::Node stream_config = YAML::LoadFile(config["streamer_config"].as<std::string>());
+
+    // Twin-role shm/port overlay (see twin/config_overlay.hpp) -- lets avatar
+    // and twin each construct their own Simulation locally from the same
+    // pipeline_config file without shm-name/port collisions. No-op for
+    // role == Avatar, and for role == Twin when the config doesn't define
+    // streamer_overlay (real cross-continent deployment).
+    if (role == Role::Twin && config["streamer_overlay"]) {
+        applyTwinStreamerOverlay(stream_config, config["streamer_overlay"].as<std::string>());
+        std::cout << "[SIM-INFO] Applied twin streamer overlay: "
+                  << config["streamer_overlay"].as<std::string>() << std::endl;
+    }
 
     BuiltScene scene = SceneBuilder::build(sim_config, robot_config);
 
@@ -547,6 +560,85 @@ DeviceState Simulation::getDeviceState(const std::string& deviceName) {
 
 void Simulation::setDeviceActive(const std::string& deviceName, bool state){
     active_devices_[deviceName] = state;
+}
+
+std::vector<double> Simulation::getDeviceCtrl(const std::string& deviceName) {
+    auto it = actuator_ids_.find(deviceName);
+    if (it == actuator_ids_.end()) return {};
+
+    std::lock_guard<std::mutex> lock(ctrl_mtx_);
+    std::vector<double> out;
+    out.reserve(it->second.size());
+    for (int aid : it->second)
+        out.push_back(ctrl_buffer_[aid]);
+    return out;
+}
+
+void Simulation::replaySeed(mjData* replay_data, const std::string& deviceName,
+                             const std::vector<double>& q, const std::vector<double>& dq) {
+    auto it = joint_ids_.find(deviceName);
+    if (it == joint_ids_.end() || !replay_data) return;
+    const auto& joints = it->second;
+    for (size_t i = 0; i < joints.size() && i < q.size(); ++i)
+        replay_data->qpos[model->jnt_qposadr[joints[i]]] = q[i];
+    for (size_t i = 0; i < joints.size() && i < dq.size(); ++i)
+        replay_data->qvel[model->jnt_dofadr[joints[i]]] = dq[i];
+    mj_forward(model, replay_data);
+}
+
+void Simulation::replaySetCtrl(mjData* replay_data, const std::string& deviceName,
+                                const std::vector<double>& ctrl) {
+    auto it = actuator_ids_.find(deviceName);
+    if (it == actuator_ids_.end() || !replay_data) return;
+    const auto& ids = it->second;
+    for (size_t i = 0; i < ids.size() && i < ctrl.size(); ++i)
+        replay_data->ctrl[ids[i]] = ctrl[i];
+}
+
+void Simulation::replayAdvance(mjData* replay_data) {
+    if (!replay_data) return;
+    mj_step(model, replay_data);
+}
+
+std::vector<double> Simulation::replayReadQ(mjData* replay_data, const std::string& deviceName) const {
+    auto it = joint_ids_.find(deviceName);
+    if (it == joint_ids_.end() || !replay_data) return {};
+    std::vector<double> out;
+    out.reserve(it->second.size());
+    for (int j : it->second) out.push_back(replay_data->qpos[model->jnt_qposadr[j]]);
+    return out;
+}
+
+std::vector<double> Simulation::replayReadDq(mjData* replay_data, const std::string& deviceName) const {
+    auto it = joint_ids_.find(deviceName);
+    if (it == joint_ids_.end() || !replay_data) return {};
+    std::vector<double> out;
+    out.reserve(it->second.size());
+    for (int j : it->second) out.push_back(replay_data->qvel[model->jnt_dofadr[j]]);
+    return out;
+}
+
+void Simulation::applyJointCorrection(const std::string& deviceName,
+                                       const std::vector<double>& dq_delta,
+                                       const std::vector<double>& ddq_delta) {
+    auto it = joint_ids_.find(deviceName);
+    if (it == joint_ids_.end() || it->second.empty()) return;
+
+    const auto& joints = it->second;
+
+    std::lock_guard<std::mutex> lock(data_mtx);
+    for (size_t i = 0; i < joints.size() && i < dq_delta.size(); ++i) {
+        int qadr = model->jnt_qposadr[joints[i]];
+        data->qpos[qadr] += dq_delta[i];
+    }
+    for (size_t i = 0; i < joints.size() && i < ddq_delta.size(); ++i) {
+        int vadr = model->jnt_dofadr[joints[i]];
+        data->qvel[vadr] += ddq_delta[i];
+    }
+    // Recompute dependent kinematic quantities (site/body poses, etc.) so the
+    // twin's display is consistent immediately -- this is a state write, not
+    // an integration step, so mj_forward (no mj_step) is correct here.
+    mj_forward(model, data);
 }
 
 void Simulation::setFramePose(const std::string& name, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat, double z_offset) {

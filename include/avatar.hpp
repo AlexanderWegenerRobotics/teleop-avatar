@@ -18,11 +18,14 @@
 #include "intention/intention_recognizer.hpp"
 #include "intention/scene_objects_msg.hpp"
 #include "pipeline/episode_msg.hpp"
+#include "twin/role.hpp"
+#include "twin/telemetry_forward.hpp"
+#include "twin/reconciler.hpp"
 
 class Avatar{
 
 public:
-    Avatar(const YAML::Node& config);
+    Avatar(const YAML::Node& config, Role role);
     ~Avatar();
 
     void start();
@@ -124,4 +127,21 @@ private:
     socket_t    scene_objects_sock_ = kInvalidSocket;
 
     void sendSceneObjects(const StateSnapshot& snap);
+
+    // ── Twin / reconciler (docs/twin_concept.md) ────────────────────────────
+    Role role_ = Role::Avatar;
+
+    // role == Avatar: forwards real joint telemetry y(t_s) to a paired twin's
+    // reconciler. Present-but-disabled (nullptr behavior via enabled()) when
+    // no twin_telemetry block is configured, so this is a no-op by default.
+    std::unique_ptr<TelemetryForwarder> twin_telemetry_;
+    void sendTwinTelemetry();
+
+    // role == Twin: predicts hardware state and reconciles it against
+    // buffered avatar telemetry. Only constructed when role == Twin AND the
+    // build has WITH_MUJOCO (Reconciler throws in its ctor otherwise --
+    // Avatar checks role first so this never fires from a mis-set role on a
+    // real-hardware/WITH_FRANKA build, since that build never sees role: twin
+    // in practice, but the check is defense-in-depth either way).
+    std::unique_ptr<Reconciler> reconciler_;
 };

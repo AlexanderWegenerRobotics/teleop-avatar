@@ -11,6 +11,17 @@ avatar:
     host:     "127.0.0.1"
     port:     7100          # must match pipeline_config.yaml episode_listener_port
 
+  # Joint-state telemetry (y(t_s), section 4 of docs/twin_concept.md) forwarded
+  # to the operator-side twin process's reconciler. Only meaningful when this
+  # process runs role: avatar and a paired role: twin process is running on
+  # the operator side. host/port must match the twin's reconciler_config.yaml
+  # listen_port. Disabled by default -- no twin, no send.
+  twin_telemetry:
+    enabled: false
+    host:    "10.112.24.5"   # operator-side (Munich) machine running role: twin
+    port:    7400            # must match reconciler_config.yaml listen_port
+    frequency: 100            # Hz, should roughly track reconciler_hz
+
   self_collision:
     enabled: false
     d_min: 0.10

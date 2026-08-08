@@ -843,6 +843,12 @@ Eigen::Isometry3d ArmControl::getRawTargetPose() const{
     return target_pose_raw_;
 }
 
+void ArmControl::getJointState(Vector7& q, Vector7& dq) const {
+    std::lock_guard<std::mutex> lock(state_mtx);
+    q  = Eigen::Map<const Vector7>(current_state.q.data());
+    dq = Eigen::Map<const Vector7>(current_state.dq.data());
+}
+
 void ArmControl::applySelfCollisionFilter(Eigen::Isometry3d& T_target) {
     if (!scp_ || !scp_->config().enabled) return;
 

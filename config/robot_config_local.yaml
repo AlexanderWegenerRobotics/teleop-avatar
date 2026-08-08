@@ -20,6 +20,17 @@ avatar:
     host:    "127.0.0.1"
     port:    7200
 
+  # Joint-state telemetry forwarded to a paired twin process's reconciler
+  # (see docs/twin_concept.md section 4). Only relevant when this process
+  # runs role: avatar; harmless no-op otherwise. Enabled by default here so
+  # local dev can run avatar + twin side by side on 127.0.0.1 -- disable if
+  # running avatar alone without a twin listening on this port.
+  twin_telemetry:
+    enabled: true
+    host:    "127.0.0.1"
+    port:    7400            # must match reconciler_config.yaml listen_port
+    frequency: 100
+
   self_collision:
     enabled: false
     d_min: 0.10
