@@ -1,23 +1,10 @@
-# Single config file, identical content on every machine except `role:`.
-# role: avatar  -> Abu Dhabi / real-hardware (or local-sim-as-avatar) machine
-# role: twin    -> Munich / operator-side predictive-twin machine
+
 role: avatar
 
-# NOTE: avatar_config and twin_config below both point at robot_config_local
-# for now, matching the previous single-config default. Running avatar and
-# twin as two local processes at once (e.g. for reconciler dev/testing)
-# needs non-colliding UDP ports -- twin_config.transmission_overlay below
-# covers that (see twin/config_overlay.hpp): it patches just the
-# send_port/receive_port fields in the SAME robot_config_local.yaml rather
-# than requiring a second copy of the file, so q0/gains/safety limits etc.
-# can never drift between the two roles. For real cross-continent
-# deployment, avatar_config should point at robot_config_avatar.yaml /
-# pipeline_config_avatar.yaml instead, and transmission_overlay is not
-# needed (avatar and twin are on separate machines).
 avatar_config:
-  sim_config: "../config/sim_config_franka.yaml"
-  robot_config: "../config/robot_config_local.yaml"
-  streamer_config: "../config/pipeline_config_local.yaml"
+  sim_config: "../config/sim_config_franka_desk.yaml"
+  robot_config: "../config/robot_config_desk_local.yaml"
+  streamer_config: "../config/pipeline_config_local_desk.yaml"
 
 twin_config:
   sim_config: "../config/sim_config_franka.yaml"
@@ -25,8 +12,9 @@ twin_config:
   streamer_config: "../config/pipeline_config_local.yaml"
   reconciler_config: "../config/reconciler_config.yaml"
   transmission_overlay: "../config/robot_config_twin_overlay_local.yaml"
-  # Same idea as transmission_overlay above, but for pipeline_config_local.yaml:
-  # patches shm names + stream/feedback/status ports + episode_listener_port so
-  # avatar and twin can each spawn their own Simulation + avatar_pipeline
-  # locally without shm/port collisions. See twin/config_overlay.hpp.
   streamer_overlay: "../config/pipeline_config_twin_overlay_local.yaml"
+
+avatar_config_temp:
+  sim_config: "../config/sim_config_franka.yaml"
+  robot_config: "../config/robot_config_local.yaml"
+  streamer_config: "../config/pipeline_config_local.yaml"

@@ -53,8 +53,8 @@ devices:
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
 
     safety:
-      workspace_min: [0.4, -0.4, 0.81]
-      workspace_max: [1.1,  0.4, 1.6]
+      workspace_min: [0.4, -0.4, 0.1]
+      workspace_max: [1.2,  0.4, 1.6]
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01

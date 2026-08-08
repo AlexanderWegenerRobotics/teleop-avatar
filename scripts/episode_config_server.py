@@ -27,6 +27,7 @@ randomization ranges without touching this script.
 """
 
 import argparse
+import csv
 import json
 import logging
 import math
@@ -217,16 +218,152 @@ def sample_episode(all_objects, bin_mapping, bin_positions, n_objects, spawn, rn
 
 
 # ---------------------------------------------------------------------------
+# Replay: serve a previously RECORDED episode's scene instead of a random one
+# ---------------------------------------------------------------------------
+#
+# Why: evaluating a trained policy against its own training data needs the two
+# runs to face the same scene. Everything the Avatar needs to rebuild a scene
+# exactly is already in the recording -- scene.csv carries per-object position,
+# spawn yaw and scale plus the full lighting block, and arm_*_meta.csv carries
+# the episode_config event with seed/mode/color_bin_mapping -- so replay is just
+# reading those back instead of sampling.
+#
+# Caveat that bit during implementation: scene.csv is written per SESSION, not
+# per episode, so the tail of the file can contain rows belonging to the next
+# episode (observed: 7008 rows for this episode's seed, then 1 row of the next).
+# Rows are therefore filtered to the seed named in the meta file's
+# episode_config event before the spawn state is read off the first one.
+
+
+def _read_episode_meta(folder: Path) -> dict:
+    """seed / mode / color_bin_mapping from the episode_config event.
+
+    Tries each arm's meta file: the event is written per-device, and an
+    interrupted recording can leave one side without it.
+    """
+    for name in ("arm_left_meta.csv", "arm_right_meta.csv", "scene_meta.csv"):
+        path = folder / name
+        if not path.exists():
+            continue
+        with open(path) as f:
+            for row in csv.DictReader(f, delimiter=";"):
+                if row.get("event") == "episode_config" and row.get("seed"):
+                    return {
+                        "seed": int(row["seed"]),
+                        "mode": int(row["mode"]) if row.get("mode") else 0,
+                        "color_bin_mapping": row.get("color_bin_mapping") or "{}",
+                    }
+    raise ValueError(f"{folder}: no episode_config event found in any *_meta.csv")
+
+
+def _spawn_row(folder: Path, seed: int) -> dict:
+    """First scene.csv row belonging to this episode (see the seed caveat above)."""
+    path = folder / "scene.csv"
+    if not path.exists():
+        raise ValueError(f"{folder}: no scene.csv")
+    with open(path) as f:
+        for row in csv.DictReader(f, delimiter=";"):
+            if row.get("seed") and int(row["seed"]) == seed:
+                return row
+    raise ValueError(f"{folder}: no scene.csv row with seed {seed}")
+
+
+def _lighting_from_row(row: dict) -> dict:
+    """Reconstructs the lighting block. Avatar seeds lighting from cfg.seed and
+    then overrides with whatever keys are present, so partial blocks are safe --
+    only emit the triples the recording actually has."""
+    def triple(prefix, keys):
+        vals = [row.get(f"{prefix}_{k}") for k in keys]
+        if any(v is None or v == "" for v in vals):
+            return None
+        return [float(v) for v in vals]
+
+    out = {}
+    for key, prefix, comps in (
+        ("main_pos", "light_main_pos", ("x", "y", "z")),
+        ("main_diffuse", "light_main_diffuse", ("r", "g", "b")),
+        ("main_specular", "light_main_specular", ("r", "g", "b")),
+        ("fill_diffuse", "light_fill_diffuse", ("r", "g", "b")),
+        ("headlight_diffuse", "light_headlight_diffuse", ("r", "g", "b")),
+        ("headlight_ambient", "light_headlight_ambient", ("r", "g", "b")),
+    ):
+        v = triple(prefix, comps)
+        if v is not None:
+            out[key] = v
+    return out
+
+
+def load_recorded_episode(folder: Path, model_paths: dict) -> dict:
+    """Rebuilds the exact episode config the Avatar was served when recording.
+
+    model_path isn't in scene.csv (it never changes per object), so it's looked
+    up from the merged sim config by object name; unknown names get "" and the
+    Avatar falls back to its own default for that body.
+    """
+    meta = _read_episode_meta(folder)
+    row = _spawn_row(folder, meta["seed"])
+
+    n_objects = int(float(row["n_objects"]))
+    objects = []
+    for i in range(n_objects):
+        name = row.get(f"obj{i}_name") or ""
+        if not name:
+            continue
+        objects.append({
+            "name": name,
+            "color": row.get(f"obj{i}_color", "unknown"),
+            "model_path": model_paths.get(name, ""),
+            "x": float(row[f"obj{i}_x"]),
+            "y": float(row[f"obj{i}_y"]),
+            "z": float(row[f"obj{i}_z"]),
+            # spawn_yaw, not the live quaternion: we want the pose the object
+            # was created with, not wherever it had rolled to by this row.
+            "yaw": float(row.get(f"obj{i}_spawn_yaw") or 0.0),
+            "scale": float(row.get(f"obj{i}_scale") or 1.0),
+        })
+
+    episode = {
+        "seed": meta["seed"],
+        "mode": meta["mode"],
+        "color_bin_mapping": meta["color_bin_mapping"],
+        "objects": objects,
+        "lighting": _lighting_from_row(row),
+    }
+    return episode
+
+
+def build_model_paths(sim_cfg: dict) -> dict:
+    return {o["name"]: o.get("model_path", "")
+            for o in sim_cfg.get("objects", []) if o.get("role") == "object"}
+
+
+# ---------------------------------------------------------------------------
 # Server
 # ---------------------------------------------------------------------------
 
-def run(sim_config_path, n_objects_override):
+def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=True):
     sim_cfg, spawn = resolve_merged_config(sim_config_path)
     all_objects    = build_object_defs(sim_cfg)
     bin_mapping    = build_bin_mapping(sim_cfg)
     bin_positions  = build_bin_positions(sim_cfg)
 
-    if not all_objects:
+    # --- replay mode: serve recorded scenes in order, one per request --------
+    replay_queue = []
+    if replay_folders:
+        model_paths = build_model_paths(sim_cfg)
+        for folder in replay_folders:
+            try:
+                ep = load_recorded_episode(Path(folder), model_paths)
+            except Exception as e:
+                log.error("Cannot replay %s: %s", folder, e)
+                sys.exit(1)
+            replay_queue.append((Path(folder).name, ep))
+            log.info("Loaded replay episode %s | seed=%d mode=%s %d objects",
+                     Path(folder).name, ep["seed"], ep["mode"], len(ep["objects"]))
+        log.info("REPLAY MODE: %d episode(s), %s. Randomization disabled.",
+                 len(replay_queue), "looping" if replay_loop else "then exit")
+
+    if not all_objects and not replay_queue:
         log.error("No pickable objects found — exiting.")
         sys.exit(1)
 
@@ -243,6 +380,7 @@ def run(sim_config_path, n_objects_override):
     sock.bind((LISTEN_HOST, LISTEN_PORT))
     sock.settimeout(1.0)
     log.info("Listening on %s:%d", LISTEN_HOST, LISTEN_PORT)
+    served = 0
 
     try:
         while True:
@@ -258,17 +396,26 @@ def run(sim_config_path, n_objects_override):
                     log.warning("Unknown message type: %s", msg.get("type"))
                     continue
 
-                seed    = random.randint(0, 2**31 - 1)
-                rng     = random.Random(seed)
-                episode = sample_episode(all_objects, bin_mapping, bin_positions, n_objects, spawn, rng)
-                episode["seed"] = seed
+                if replay_queue:
+                    if served >= len(replay_queue) and not replay_loop:
+                        log.info("All %d replay episodes served; exiting.", len(replay_queue))
+                        return
+                    label, episode = replay_queue[served % len(replay_queue)]
+                    served += 1
+                    log.info("REPLAY %d/%d -> episode %s",
+                             ((served - 1) % len(replay_queue)) + 1, len(replay_queue), label)
+                else:
+                    seed    = random.randint(0, 2**31 - 1)
+                    rng     = random.Random(seed)
+                    episode = sample_episode(all_objects, bin_mapping, bin_positions, n_objects, spawn, rng)
+                    episode["seed"] = seed
 
                 sock.sendto(msgpack.packb(episode), addr)
 
                 names = [o["name"] for o in episode["objects"]]
                 log.info(
                     "Episode sent | seed=%d mode=%s objects=%s",
-                    seed,
+                    episode["seed"],
                     "bimanual" if episode["mode"] else "unimanual",
                     names,
                 )
@@ -306,5 +453,30 @@ if __name__ == "__main__":
         help="Override number of objects to spawn per episode. "
              "Defaults to all objects defined in the task config.",
     )
+    parser.add_argument(
+        "--replay", nargs="+", metavar="EPISODE_DIR", default=None,
+        help="Replay recorded episodes instead of randomizing: serve each "
+             "folder's exact recorded scene (positions, yaw, scale, lighting, "
+             "seed, mode), one per request, in order. Point at the episode "
+             "folders under the data store, e.g. --replay .../avatar/014 "
+             ".../avatar/016. This is what makes a policy rollout directly "
+             "comparable to the demonstration it is being scored against.",
+    )
+    parser.add_argument(
+        "--replay-root", default=None,
+        help="Data store root; combine with --episodes instead of listing full paths.",
+    )
+    parser.add_argument(
+        "--episodes", nargs="+", default=None,
+        help="Episode ids to replay from --replay-root, e.g. --episodes 14 16 22",
+    )
+    parser.add_argument(
+        "--no-loop", action="store_true",
+        help="Exit after serving each replay episode once (default: loop forever).",
+    )
     args = parser.parse_args()
-    run(args.sim_config, args.n_objects)
+
+    replay = args.replay
+    if args.replay_root and args.episodes:
+        replay = [str(Path(args.replay_root) / str(e).zfill(3)) for e in args.episodes]
+    run(args.sim_config, args.n_objects, replay_folders=replay, replay_loop=not args.no_loop)

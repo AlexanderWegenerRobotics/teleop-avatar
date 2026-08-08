@@ -118,6 +118,16 @@ private:
     std::array<double, 6> upper_force_thresholds_{};
     std::array<double, 7> joint_impedance_{};
     std::array<double, 6> cartesian_impedance_{};
+
+    // Per-device joint position limits, read from robot_dev["q_min"/"q_max"]
+    // in set_simulation() -- the SAME config ArmControl itself plans/brakes
+    // against (device_config["q_min"/"q_max"]), so checkFrankaErrors' hard
+    // limit check agrees with what the arm's own IK thinks its range is,
+    // rather than an independent hardcoded value. Falls back to the FR3
+    // factory range if a config omits them (shouldn't happen in practice --
+    // ArmControl itself requires these keys).
+    std::array<double, 7> q_min_{-2.8973, -1.7628, -2.8973, -3.0718, -2.8973,  0.0175, -2.8973};
+    std::array<double, 7> q_max_{ 2.8973,  1.7628,  2.8973, -0.0698,  2.8973,  3.7525,  2.8973};
 };
 
 }  // namespace franka

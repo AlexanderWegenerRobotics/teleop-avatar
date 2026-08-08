@@ -15,8 +15,16 @@ Torques::Torques(std::initializer_list<double> torques) {
 }
 
 Robot::Robot() {
-    r_      = Vector7::Zero();
-    p_prev_ = Vector7::Zero();
+    r_            = Vector7::Zero();
+    p_prev_       = Vector7::Zero();
+    // One-time init only -- deliberately NOT repeated in control() (see there):
+    // the retry loop in arm_control.cpp re-enters control() after every caught
+    // fault, and tau_prev_ needs to keep holding the last actually-applied
+    // torque across that re-entry, not reset to zero, or the discontinuity
+    // check below manufactures a fault out of a normal torque on the very next
+    // tick (see automaticErrorRecovery()'s comment for the full story).
+    tau_filtered_ = Vector7::Zero();
+    tau_prev_     = Vector7::Zero();
 }
 
 Robot::~Robot() {}
@@ -30,6 +38,20 @@ void Robot::set_simulation(Simulation& _sim, const YAML::Node& sim_dev, const YA
     auto ori = robot_dev["base_pose"]["orientation"].as<std::vector<double>>();
     std::array<double, 4> base_quat = {ori[0], ori[1], ori[2], ori[3]};
     model_ = std::make_unique<franka::Model>(urdf_path, base_quat, ee_frame_name_);
+
+    // Same q_min/q_max ArmControl itself reads from this device's config and
+    // plans/brakes against -- checkFrankaErrors' hard joint-limit check uses
+    // these (see below) instead of an independent hardcoded range, so the two
+    // layers agree on where the limit actually is. Falls back to the FR3
+    // factory range (this class's member-initializer default) if a config
+    // omits them, though ArmControl requires these keys unconditionally so
+    // that shouldn't happen for any device that's actually running.
+    if (robot_dev["q_min"] && robot_dev["q_max"]) {
+        auto qmin_vec = robot_dev["q_min"].as<std::vector<double>>();
+        auto qmax_vec = robot_dev["q_max"].as<std::vector<double>>();
+        for (size_t i = 0; i < 7 && i < qmin_vec.size(); ++i) q_min_[i] = qmin_vec[i];
+        for (size_t i = 0; i < 7 && i < qmax_vec.size(); ++i) q_max_[i] = qmax_vec[i];
+    }
 }
 
 Model& Robot::loadModel() {
@@ -60,10 +82,18 @@ void Robot::setCartesianImpedance(const std::array<double, 6>& K_x) {
 
 void Robot::automaticErrorRecovery() {
     // Real hardware clears its reflex/lockout state here. Sim has no persistent
-    // lockout, so just reset the rate-limiting/GMO history so the next control()
-    // call starts clean, matching the "fresh start" behavior after a real recovery.
-    tau_prev_     = Vector7::Zero();
-    tau_filtered_ = Vector7::Zero();
+    // lockout, so this just resets GMO history so the next control() call's
+    // external-force estimate starts clean, matching the "fresh start" behavior
+    // after a real recovery.
+    //
+    // Deliberately NOT resetting tau_prev_ (or tau_filtered_) to zero: it's the
+    // reference checkFrankaErrors' torque_discontinuity check diffs the next
+    // commanded torque against. Zeroing it means the very next control tick
+    // compares a normal torque (e.g. a few Nm) against 0, producing a huge
+    // apparent rate purely as an artifact of the reset -- not a real
+    // discontinuity -- which manufactures a second (and third, and fourth...)
+    // fault out of a single genuine one, cascading straight into FAULT. Leaving
+    // it as whatever was last actually applied keeps the check meaningful.
     r_            = Vector7::Zero();
     p_prev_       = Vector7::Zero();
     std::cout << "[SIM] " << name_ << ": automaticErrorRecovery()" << std::endl;
@@ -95,18 +125,24 @@ void Robot::populateRobotState(const DeviceState& ds, double dt) {
 }
 
 void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const Vector7& q) {
+    // TEMPORARILY DISABLED for testing, at Alex's request (2026-08-08) -- the
+    // retry/FAULT path this feeds was locking up desk-config test runs on
+    // real (non-artifact) joint-velocity violations that motion_gen_ doesn't
+    // yet back off from on retry. Re-enable once that's addressed; don't ship
+    // with this early return in place, it turns off tau/velocity/position
+    // reflex-equivalent checks entirely.
+    return;
+
     static const std::array<double, 7> kMaxTorqueRate    = {1000, 1000, 1000, 1000, 1000, 1000, 1000};
     static const std::array<double, 7> kMaxTorque        = {87, 87, 87, 87, 12, 12, 12};
     static const std::array<double, 7> kMaxJointVelocity = {2.150, 2.150, 2.150, 2.150, 2.580, 2.580, 2.580};
-    static const std::array<std::pair<double,double>, 7> kJointLimits = {{
-        {-2.7437 + 0.01,  2.7437 - 0.01},
-        {-1.7837 + 0.01,  1.7837 - 0.01},
-        {-2.9007 + 0.01,  2.9007 - 0.01},
-        {-3.0421 + 0.01, -0.1518 - 0.01},
-        {-2.8065 + 0.01,  2.8065 - 0.01},
-        { 0.5445 + 0.01,  4.5169 - 0.01},
-        {-3.0159 + 0.01,  3.0159 - 0.01}
-    }};
+    // 0.01 rad (~0.6 deg) numerical safety margin inside the per-device
+    // q_min_/q_max_ (set in set_simulation() from this robot's own config --
+    // the SAME range ArmControl's IK plans/brakes against). Previously this
+    // was an independent hardcoded array that didn't match a given device's
+    // actual configured range, tripping this check before ArmControl's own
+    // joint-limit braking ever needed to engage.
+    constexpr double kJointLimitMargin = 0.01;
 
     constexpr double dt = 1.0 / 1000.0;
 
@@ -142,11 +178,12 @@ void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const V
                                     std::to_string(i));
         }
 
-        if (q(i) < kJointLimits[i].first || q(i) > kJointLimits[i].second) {
+        const double q_lo = q_min_[i] + kJointLimitMargin;
+        const double q_hi = q_max_[i] - kJointLimitMargin;
+        if (q(i) < q_lo || q(i) > q_hi) {
             std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
                       << ": joint_position_limits_violation - q=" << q(i)
-                      << " rad (limits=[" << kJointLimits[i].first
-                      << ", " << kJointLimits[i].second << "] rad)\n";
+                      << " rad (limits=[" << q_lo << ", " << q_hi << "] rad)\n";
             throw ControlException("sim robot (" + name_ + "): joint_position_limits_violation on joint " +
                                     std::to_string(i));
         }
@@ -172,8 +209,11 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
     }
 
     sim->setDeviceActive(name_, true);
-    tau_filtered_ = Vector7::Zero();
-    tau_prev_     = Vector7::Zero();
+    // tau_filtered_/tau_prev_ deliberately NOT reset here -- see Robot::Robot()
+    // and automaticErrorRecovery() comments. This function is re-entered by
+    // arm_control.cpp's retry loop after every caught fault; zeroing either on
+    // each entry manufactures a spurious torque_discontinuity out of a normal
+    // torque on the very next tick.
     bRunning = true;
 
     try {

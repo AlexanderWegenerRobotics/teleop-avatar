@@ -6,6 +6,7 @@
 #include <atomic>
 #include <csignal>
 #include <ctime>
+#include <cstring>   // strrchr, for resolving a crash address to module+RVA
 #include <fstream>
 
 #ifdef _WIN32
@@ -40,12 +41,66 @@ static void logCrash(const char* reason)
 }
 
 #ifdef _WIN32
+static const char* sehCodeName(DWORD code)
+{
+    switch (code) {
+        case EXCEPTION_ACCESS_VIOLATION:      return "ACCESS_VIOLATION (bad/null pointer deref)";
+        case EXCEPTION_INT_DIVIDE_BY_ZERO:    return "INT_DIVIDE_BY_ZERO";
+        case EXCEPTION_FLT_DIVIDE_BY_ZERO:    return "FLT_DIVIDE_BY_ZERO";
+        case EXCEPTION_STACK_OVERFLOW:        return "STACK_OVERFLOW";
+        case EXCEPTION_ILLEGAL_INSTRUCTION:   return "ILLEGAL_INSTRUCTION";
+        case EXCEPTION_INT_OVERFLOW:          return "INT_OVERFLOW";
+        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: return "ARRAY_BOUNDS_EXCEEDED";
+        case EXCEPTION_DATATYPE_MISALIGNMENT: return "DATATYPE_MISALIGNMENT";
+        case EXCEPTION_PRIV_INSTRUCTION:      return "PRIV_INSTRUCTION";
+        case EXCEPTION_IN_PAGE_ERROR:         return "IN_PAGE_ERROR";
+        default:                              return "unknown";
+    }
+}
+
 static LONG WINAPI sehHandler(EXCEPTION_POINTERS* ep)
 {
-    char buf[128];
-    snprintf(buf, sizeof(buf), "SEH exception code 0x%08lX at 0x%p",
-             ep->ExceptionRecord->ExceptionCode,
-             ep->ExceptionRecord->ExceptionAddress);
+    const DWORD code = ep->ExceptionRecord->ExceptionCode;
+    void* addr = ep->ExceptionRecord->ExceptionAddress;
+
+    // A bare absolute address is close to useless: ASLR rebases every module on
+    // every run, so the same faulting instruction logs a different address each
+    // time (which is why two crashes at the same DLL offset looked unrelated).
+    // Resolve it to module + RVA, which IS stable and is what you feed to a
+    // disassembler or `dumpbin`/addr2line against the matching build.
+    char module[MAX_PATH] = "<unknown>";
+    uintptr_t rva = 0;
+    HMODULE mod = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                           | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           static_cast<LPCSTR>(addr), &mod) && mod) {
+        char full[MAX_PATH];
+        if (GetModuleFileNameA(mod, full, MAX_PATH)) {
+            const char* base = strrchr(full, '\\');
+            snprintf(module, sizeof(module), "%s", base ? base + 1 : full);
+        }
+        rva = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(mod);
+    }
+
+    char detail[256] = "";
+    if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR) {
+        // ExceptionInformation[0]: 0 = read, 1 = write, 8 = DEP/execute.
+        // [1] is the address that was touched -- 0x0 (or a small offset from it)
+        // means an actual null dereference, anything else is a wild/stale pointer.
+        const ULONG_PTR op = ep->ExceptionRecord->ExceptionInformation[0];
+        const ULONG_PTR at = ep->ExceptionRecord->ExceptionInformation[1];
+        snprintf(detail, sizeof(detail), " | %s of 0x%llX%s",
+                 op == 0 ? "read" : op == 1 ? "write" : "execute",
+                 static_cast<unsigned long long>(at),
+                 at < 0x10000 ? "  <-- NULL-page access, this is a null/offset-from-null deref" : "");
+    }
+
+    char buf[640];
+    snprintf(buf, sizeof(buf),
+             "SEH 0x%08lX %s at %s+0x%llX (abs 0x%p, thread %lu)%s",
+             code, sehCodeName(code), module,
+             static_cast<unsigned long long>(rva), addr,
+             GetCurrentThreadId(), detail);
     logCrash(buf);
     // Let Windows produce a crash dump / default dialog.
     return EXCEPTION_CONTINUE_SEARCH;

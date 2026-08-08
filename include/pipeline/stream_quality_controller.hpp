@@ -58,7 +58,16 @@ struct StreamQualityConfig {
 
     float jitter_threshold_critical_ms = 50.0f;
 
-    int degrade_count = 3;
+    // How many *consecutive* bad/good feedback reports are needed before
+    // actually changing state (debounce against transient bursts, e.g. a
+    // brief stall causing a run of late/reordered packets that momentarily
+    // look like loss). At the ~500ms report interval this project's configs
+    // use, degrade_count=10 means ~5s of sustained bad loss, not a ~1.5s
+    // blip -- was 3 (~1.5s), which was flipping to DEGRADED (and dropping
+    // bitrate/fps/FEC in response) on brief, self-resolving spikes that
+    // never actually looked bad on the video itself. Tune alongside your
+    // actual report interval if that changes.
+    int degrade_count = 10;
     int recover_count = 5;
 
     int stale_timeout_ms       = 2000;
