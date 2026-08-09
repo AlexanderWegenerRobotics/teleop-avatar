@@ -23,8 +23,8 @@ std::array<double, N> toArray(const std::vector<double>& v) {
 
 ArmControl::ArmControl(const YAML::Node& device_config, const std::string& session_id)
 #ifdef WITH_FRANKA
-    : robot(std::make_unique<franka::Robot>(device_config["franka_ip"].as<std::string>()))
-    , gripper(std::make_unique<franka::Gripper>(device_config["franka_ip"].as<std::string>()))
+    : robot(std::make_unique<franka::Robot>(device_config["franka_ip"].as<std::string>("192.168.3.100"), franka::RealtimeConfig::kIgnore))
+    //, gripper(std::make_unique<franka::Gripper>(device_config["franka_ip"].as<std::string>("192.168.3.100")))
 #else
     : robot(std::make_unique<franka::Robot>())
     , gripper(std::make_unique<franka::Gripper>())
@@ -41,6 +41,16 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     , recovery_(device_config["name"].as<std::string>())
 {
     name_ = device_config["name"].as<std::string>();
+
+    #ifdef WITH_FRANKA
+        try {
+            gripper = std::make_unique<franka::Gripper>(device_config["franka_ip"].as<std::string>());
+        } catch (const franka::Exception& e) {
+            std::cout << "[WARN] " << name_ << ": gripper connection failed (" << e.what()
+                    << ") - continuing without gripper control." << std::endl;
+            gripper.reset();
+        }
+    #endif
     
     auto pos  = device_config["base_pose"]["position"].as<std::vector<double>>();
     auto ori  = device_config["base_pose"]["orientation"].as<std::vector<double>>();
@@ -425,7 +435,7 @@ void ArmControl::runStateHandler(){
         grasp_allowed_.store(grasp_allowed);
         applyGripper(grasp_allowed && desired_gripper_closed_.load());
 
-        const double width = gripper->readOnce().width;
+        const double width = gripper ? gripper->readOnce().width : 0.0;
         gripper_width_.store(width);
         updateGraspConfirmation(width);
 
@@ -960,6 +970,7 @@ void ArmControl::reOrigin() {
 }
 
 void ArmControl::applyGripper(bool close) {
+    if (!gripper) { gripper_close_applied_ = close; return; }
     if (close == gripper_close_applied_) return;
 #ifdef WITH_FRANKA
     if (gripper_busy_.exchange(true)) return;

@@ -18,11 +18,16 @@ avatar:
     alpha: 3.0
     beta: 0.1
 
+  twin_telemetry:
+    enabled: true
+    host: "10.112.24.173"
+    port: 7400
+
 devices:
   - name: arm
     type: arm
     enabled: True
-    franka_ip: "172.16.0.2"
+    franka_ip: "192.168.3.100"
     transmission:
       remote_ip: "10.112.24.173"
       send_port: 8001

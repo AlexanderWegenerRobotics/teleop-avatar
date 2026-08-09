@@ -169,6 +169,7 @@ int main(int argc, char** argv) {
         Avatar avatar(resolved.node, resolved.role);
 
 #ifdef WITH_FRANKA
+        std::cout << "Trying to run with franka" << std::endl;
         std::thread avatar_thread([&]() {
             try { avatar.start(); }
             catch (const std::exception& e) { logCrash((std::string("avatar thread: ") + e.what()).c_str()); g_shutdown_requested.store(true); }
