@@ -1,0 +1,12 @@
+# Task: empty
+spawn:
+  x_range: [0.45, 0.78]
+  y_range: [-0.30, 0.30]
+  z: 0.725
+  min_object_dist: 0.12
+  min_bin_dist: 0.20
+  yaw_range: [0.0, 6.2832]   # full rotation (boxes have 4-fold symmetry)
+  scale_range: [0.90, 1.10]
+
+objects:
+  

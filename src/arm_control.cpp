@@ -281,7 +281,7 @@ void ArmControl::runStateHandler(){
     constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 200));
     constexpr double dt_state = 1.0 / 500.0;
     auto next_control_time = std::chrono::high_resolution_clock::now();
-    SysState prev_state = state_;
+    SysState prev_state = SysState::OFFLINE;
     Eigen::VectorXd q_current = Eigen::VectorXd::Zero(7);
     bool has_cmd = false;
     bool has_cmd_abs = false;
