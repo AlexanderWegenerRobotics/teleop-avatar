@@ -664,8 +664,8 @@ void ArmControl::runControlHandler(){
                     std::chrono::high_resolution_clock::now() - startTime_).count();
                 Vector7 q_target = Vector7::Zero();
                 Matrix4 T_target = Matrix4::Identity();
-
-                if(state_ == SysState::HOMING || state_ == SysState::RECOVERING){
+                if(state_ == SysState::HOMING || state_ == SysState::RECOVERING ||
+                   (state_ == SysState::IDLE && idle_hold_valid_.load(std::memory_order_acquire))){
                     q_target = motion_gen_.getCurrentJoint();
                 }
                 else if(state_ == SysState::ENGAGED && control_mode_ == ControlMode::JOINT_IK){
