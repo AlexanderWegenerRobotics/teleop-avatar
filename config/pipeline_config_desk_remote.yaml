@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Simulation-side keys
+# ─────────────────────────────────────────────────────────────────────────────
+enabled:        true
+stereo:         false
+stream_fps:     20
+stream_width:   1280
+stream_height:  960
+
+# Which MuJoCo cameras to render and write to shared memory.
+stream_cameras:
+  - camera:   "desk_cam"
+    shm_name: "avatar_cam"
+    eye:      "mono"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline process (avatar_pipeline binary)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# UDP port on which this process listens for episode_start / episode_end
+episode_listener_port: 7100
+
+cameras:
+  - name:         "desk_cam"
+    eye:          "mono"
+    source_type:  "mujoco"
+    shm_name:     "avatar_cam"
+    fps:           20
+    source_width:  1280
+    source_height: 960
+    realsense_serial: ""
+
+    stream:
+      enabled:            true
+      host:               "10.112.24.173"
+      port:               5004
+      feedback_port:      5005
+      status_port:        5007
+      status_interval_ms: 500
+      bitrate_kbps:       4000
+      fec_percentage:     10
+      width:              1280
+      height:             960
+
+    log:
+      enabled:    true
+      output_dir: "logs"
+      width:      640
+      height:     480

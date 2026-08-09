@@ -1,0 +1,80 @@
+avatar:
+  log_dir: "../logs"
+  transmission:
+    remote_ip: "10.112.24.173"
+    send_port: 8000
+    receive_port: 7000
+    frequency: 20
+
+  # Episode signals forwarded to the avatar_pipeline process
+  pipeline_logger:
+    enabled:  true
+    host:     "127.0.0.1"
+    port:     7100          # must match pipeline_config.yaml episode_listener_port
+
+  self_collision:
+    enabled: false
+    d_min: 0.10
+    alpha: 3.0
+    beta: 0.1
+
+devices:
+  - name: arm
+    type: arm
+    enabled: True
+    franka_ip: "172.16.0.2"
+    transmission:
+      remote_ip: "10.112.24.173"
+      send_port: 8001
+      receive_port: 7001
+      frequency: 200
+
+    base_pose:
+      position: [0.2, 0, 0.703]
+      orientation: [1, 0, 0, 0]
+    controller_axis_map:
+      - [1, 0, 0]
+      - [0, 1, 0]
+      - [0, 0, 1]
+    q0: [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+    max_torque: [87, 87, 87, 87, 12, 12, 12]
+    max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
+    q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
+    q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+
+    control:
+      kp_joint: [600, 600, 600, 600, 250, 150, 50]
+      kd_joint: [50,  50,  50,  50,  30,  25,  15]
+      kp_cart: [1000, 1000, 1000, 250, 250, 250]
+      kd_cart: [50, 50, 50, 15, 15, 15]
+      kp_null: [20, 20, 20, 20, 8, 8, 8]
+      kd_null: [2, 2, 2, 2, 1, 1, 1]
+      kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
+      kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
+
+    safety:
+      workspace_min: [0.4, -0.4, 0.1]
+      workspace_max: [1.2,  0.4, 1.6]
+      table_height_world: 0.6754
+      ee_fingertip_length: 0.127
+      table_safety_margin: 0.01
+      max_command_velocity: 1.0
+      max_command_angular_velocity: 4.0
+      max_tilt_angle: 1.74533
+      joint_limit_buffer: 0.25
+      joint_limit_torque_frac: 0.40
+
+    control_mode: cartesian_impedance   # or: joint_ik | cartesian_impedance
+    ik:
+      kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
+      kp_o:       6.0                         # task ori gain (1/s)
+      v_lin_max:  0.8                        # m/s  (matches interpolator max_linear_vel)
+      v_ang_max:  0.8                        # rad/s
+      lambda:     0.01                       # LM damping
+      mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
+      kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
+      qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]  # FR3 joint vel limits, ~8% buffer below hard limits
+      t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
+      a_max:      15.0                       # rad/s^2 per-joint accel cap
+      gamma:      0.05                       # rad, joint-limit safety buffer
+      wtask:      [1, 1, 1, 1, 1, 1]         # task weights [posx3, orix3]
