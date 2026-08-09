@@ -45,6 +45,12 @@ devices:
     control:
       kp_joint: [600, 600, 600, 600, 250, 150, 50]
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
+      # IDLE hold gains - reduced stiffness for hardware bringup (~40% of
+      # kp_joint, damping scaled by sqrt to keep the damping ratio). Target is
+      # latched at the pose held on IDLE entry, so initial torque is zero.
+      # Omit both keys to fall back to the same scaling computed in code.
+      kp_idle:  [240, 240, 240, 240, 100,  60,  20]
+      kd_idle:  [32,  32,  32,  32,  19,  16,   9]
       kp_cart: [1000, 1000, 1000, 250, 250, 250]
       kd_cart: [50, 50, 50, 15, 15, 15]
       kp_null: [20, 20, 20, 20, 8, 8, 8]

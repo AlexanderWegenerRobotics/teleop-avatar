@@ -8,7 +8,7 @@ avatar_config_temp:
 
 twin_config:
   sim_config: "../config/sim_config_twin_franka_desk.yaml"
-  robot_config: "../config/robot_config_desk_local.yaml"
+  robot_config: "../config/robot_config_desk_remote.yaml"
   streamer_config: "../config/pipeline_config_local_desk.yaml"
   reconciler_config: "../config/reconciler_config.yaml"
   transmission_overlay: "../config/robot_config_twin_overlay_desk.yaml"

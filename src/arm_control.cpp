@@ -95,6 +95,23 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     tau_rate_max_ = yamlToVector<7>(device_config["max_torque_rate"]) / 1000.0;
     kp_joint_ = yamlToVector<7>(device_config["control"]["kp_joint"]);
     kd_joint_ = yamlToVector<7>(device_config["control"]["kd_joint"]);
+
+    // IDLE hold gains -- explicit config if present, otherwise a scaled-down
+    // fraction of the tracking gains. Deliberately soft: the IDLE target is
+    // latched at the *current* pose, so initial error (and therefore initial
+    // torque) is zero, and steady-state error is only tau_residual/kp -- well
+    // under a degree even at reduced stiffness.
+    constexpr double kIdleStiffFrac = 0.40;
+    constexpr double kIdleDampFrac  = 0.63;   // ~sqrt(0.40), keeps damping ratio
+    if (device_config["control"]["kp_idle"])
+        kp_idle_ = yamlToVector<7>(device_config["control"]["kp_idle"]);
+    else
+        kp_idle_ = kp_joint_ * kIdleStiffFrac;
+    if (device_config["control"]["kd_idle"])
+        kd_idle_ = yamlToVector<7>(device_config["control"]["kd_idle"]);
+    else
+        kd_idle_ = kd_joint_ * kIdleDampFrac;
+
     kp_cart_ = yamlToVector<6>(device_config["control"]["kp_cart"]);
     kd_cart_ = yamlToVector<6>(device_config["control"]["kd_cart"]);
     kp_null_ = yamlToVector<7>(device_config["control"]["kp_null"]);
@@ -300,6 +317,25 @@ void ArmControl::runStateHandler(){
                 q_current = Eigen::Map<const Vector7>(current_state.q.data());
             }
             motion_gen_.planJoint(q_current, q0_, ProfileType::MINJERK);
+        }
+
+        // ── IDLE entry: latch the current configuration as the hold target ────
+        // Without this the arm is commanded zero torque, i.e. gravity-compensated
+        // float. That is neutral equilibrium -- no restoring term anywhere -- so
+        // any model residual or leftover velocity integrates into unbounded drift
+        // rather than being corrected.
+        else if (state_ == SysState::IDLE && prev_state != SysState::IDLE) {
+            {
+                std::lock_guard<std::mutex> lock(state_mtx);
+                q_current = Eigen::Map<const Vector7>(current_state.q.data());
+            }
+            // Zero-length plan: getCurrentJoint() parks at q_current, so the
+            // impedance target is FIXED rather than tracking the live pose.
+            // Re-reading the live pose every tick would recreate neutral equilibrium
+            // and drift exactly as before.
+            motion_gen_.planJoint(q_current, q_current, ProfileType::MINJERK);
+            idle_hold_valid_.store(true, std::memory_order_release);
+            std::cout << "[INFO]: " << name_ << " idle hold latched." << std::endl;
         }
 
         // ── ENGAGED entry: seed IK to current robot state ─────────────────────
@@ -562,6 +598,12 @@ void ArmControl::updateStateMachine(SysState cmd_state){
         default:
             break;
     }
+    // Invalidate the IDLE hold the instant we transition INTO idle, so the 1 kHz
+    // control loop cannot hold against a stale motion_gen_ target (e.g. q0 left
+    // over from HOMING) in the window before runStateHandler latches a new one.
+    if (state_ != prev && state_ == SysState::IDLE) {
+        idle_hold_valid_.store(false, std::memory_order_release);
+    }
     if (state_ != prev && transmission_) {
         transmission_->setState(state_);
     }
@@ -585,6 +627,14 @@ void ArmControl::runControlHandler(){
                 case SysState::RECOVERING:
                     // Joint impedance tracking planJoint trajectory
                     ctrl_torque = jointImpedanceControl(robot_state);
+                    break;
+
+                case SysState::IDLE:
+                    // Hold the configuration latched on IDLE entry. Gated on
+                    // idle_hold_valid_ so we never impedance-track an empty or
+                    // stale motion_gen_ buffer (see arm_control.hpp).
+                    if (idle_hold_valid_.load(std::memory_order_acquire))
+                        ctrl_torque = jointImpedanceControl(robot_state);
                     break;
 
                 case SysState::AWAITING:
@@ -734,7 +784,12 @@ Vector7 ArmControl::jointImpedanceControl(const franka::RobotState& rs) {
     auto coriolis_array = model->coriolis(rs);
     Vector7 tau_coriolis = Eigen::Map<Vector7>(coriolis_array.data());
 
-    Vector7 tau = kp_joint_.cwiseProduct(e) + kd_joint_.cwiseProduct(de) + tau_coriolis;
+    // IDLE holds with reduced stiffness; every other state uses tracking gains.
+    const bool idle_hold  = (state_ == SysState::IDLE);
+    const Vector7& kp_sel = idle_hold ? kp_idle_  : kp_joint_;
+    const Vector7& kd_sel = idle_hold ? kd_idle_  : kd_joint_;
+
+    Vector7 tau = kp_sel.cwiseProduct(e) + kd_sel.cwiseProduct(de) + tau_coriolis;
 
     return tau;
 }

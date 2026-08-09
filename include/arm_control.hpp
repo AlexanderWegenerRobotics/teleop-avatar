@@ -136,6 +136,14 @@ private:
 
 private:
     Vector7 kp_joint_, kd_joint_, kp_joint_limit_, kd_joint_limit_;
+    // Reduced-stiffness gains used only by the IDLE hold. Softer than kp_joint_
+    // so that a bad latch fails gently during hardware bringup.
+    Vector7 kp_idle_, kd_idle_;
+    // False until the IDLE hold target has actually been latched from a real
+    // robot state. Guards jointImpedanceControl against running with an empty or
+    // stale motion_gen_ joint buffer -- getCurrentJoint() returns ZERO when the
+    // buffer is empty, which would command a full-speed move to q = 0.
+    std::atomic<bool> idle_hold_valid_{false};
     Eigen::Matrix<double, 6, 1> kp_cart_, kd_cart_;
     Vector7 kp_null_, kd_null_;
 
