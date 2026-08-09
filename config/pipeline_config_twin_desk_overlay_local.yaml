@@ -1,0 +1,30 @@
+# Twin-role overlay for pipeline_config_local_desk.yaml (see
+# twin/config_overlay.hpp and config.yaml's twin_config.streamer_overlay) --
+# desk scenario's single-camera counterpart to pipeline_config_twin_overlay_local.yaml.
+#
+# Same idea as the bimanual overlay: lets an avatar process and a twin process
+# run locally at once against the SAME pipeline_config_local_desk.yaml without
+# shm-name/port collisions. Only shm names, the stream/feedback/status ports,
+# and episode_listener_port are listed here; everything else (bitrate, fps,
+# log settings, ...) is left untouched from the base file.
+#
+# episode_listener_port: same reasoning as the bimanual overlay -- avatar's
+# base (7100) + 900 would be 8000, which collides with
+# avatar.transmission.send_port. Using 8100 instead, matching the
+# avatar.pipeline_logger.port override in robot_config_twin_overlay_local.yaml
+# (shared across scenarios, not desk-specific).
+episode_listener_port: 8100   # base: 7100
+
+# Matched against stream_cameras[].camera (Simulation's shm-writer list).
+stream_cameras:
+  - camera:   "desk_cam"
+    shm_name: "avatar_cam_twin"   # base: avatar_cam
+
+# Matched against cameras[].name (avatar_pipeline's shm-reader + streamer list).
+cameras:
+  - name:     "desk_cam"
+    shm_name: "avatar_cam_twin"   # base: avatar_cam
+    stream:
+      port:          5904   # base: 5004
+      feedback_port: 5905   # base: 5005
+      status_port:   5907   # base: 5007

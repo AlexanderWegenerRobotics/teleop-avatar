@@ -25,21 +25,28 @@ objects:
 
   - name: background_front
     type: static
-    model_path: "../models/mujoco/props/background.xml"
+    model_path: "../models/mujoco/props/background_plain.xml"
+    pose:
+      position: [2.0, 0, 0]
+      orientation: [1, 0, 0, 0]
+
+  - name: background_back
+    type: static
+    model_path: "../models/mujoco/props/background_plain.xml"
     pose:
       position: [-2.0, 0, 0]
       orientation: [1, 0, 0, 0]
 
   - name: background_left
     type: static
-    model_path: "../models/mujoco/props/background.xml"
+    model_path: "../models/mujoco/props/background_plain.xml"
     pose:
       position: [0, 1.5, 0]
       orientation: [0.7071, 0, 0, 0.7071]
 
   - name: background_right
     type: static
-    model_path: "../models/mujoco/props/background.xml"
+    model_path: "../models/mujoco/props/background_plain.xml"
     pose:
       position: [0, -1.5, 0]
       orientation: [0.7071, 0, 0, 0.7071]

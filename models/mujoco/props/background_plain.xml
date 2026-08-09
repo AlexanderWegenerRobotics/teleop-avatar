@@ -2,12 +2,12 @@
   <compiler angle="radian" autolimits="true"/>
 
   <asset>
-    <material name="box_mat" rgba="0.2 0.2 0.2 1" specular="0.4" shininess="0.2"/>
+    <material name="box_mat" rgba="0.8 0.8 0.8 1" specular="0.4" shininess="0.2"/>
   </asset>
 
   <worldbody>
-    <body name="box" pos="0 0 1">
-      <geom name="box_geom" type="box" size="0.02 2 1"
+    <body name="box" pos="0 0 4">
+      <geom name="box_geom" type="box" size="0.02 2 4"
             mass="0.1" material="box_mat" condim="6"
             friction="0.3 0.005 0.001"
             solimp="0.95 0.99 0.001" solref="0.02 1.0"/>

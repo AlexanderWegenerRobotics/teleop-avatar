@@ -1,0 +1,12 @@
+avatar:
+  transmission:
+    send_port:    8900   # base: avatar.transmission.send_port    (8000)
+    receive_port: 7900   # base: avatar.transmission.receive_port (7000)
+  pipeline_logger:
+    port: 8100            # base: avatar.pipeline_logger.port (7100)
+
+devices:
+  - name: arm
+    transmission:
+      send_port:    8901   # base: 8001
+      receive_port: 7901   # base: 7001
