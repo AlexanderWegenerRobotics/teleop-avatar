@@ -7,11 +7,16 @@
 #include <csignal>
 #include <ctime>
 #include <cstring>   // strrchr, for resolving a crash address to module+RVA
+#include <cstdio>    // setvbuf
 #include <fstream>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <execinfo.h>  // backtrace/backtrace_symbols_fd (glibc, Linux)
+#include <unistd.h>    // write
+#include <fcntl.h>     // open
 #endif
 
 #ifndef WITH_FRANKA
@@ -24,11 +29,9 @@
 
 static std::atomic<bool> g_shutdown_requested{false};
 
-// ---------- crash / unhandled-exception helpers ----------
 
 static void logCrash(const char* reason)
 {
-    // Print to stderr (visible in terminal) and also append to a sidecar file.
     std::time_t t = std::time(nullptr);
     char ts[32];
     std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", std::localtime(&t));
@@ -63,11 +66,6 @@ static LONG WINAPI sehHandler(EXCEPTION_POINTERS* ep)
     const DWORD code = ep->ExceptionRecord->ExceptionCode;
     void* addr = ep->ExceptionRecord->ExceptionAddress;
 
-    // A bare absolute address is close to useless: ASLR rebases every module on
-    // every run, so the same faulting instruction logs a different address each
-    // time (which is why two crashes at the same DLL offset looked unrelated).
-    // Resolve it to module + RVA, which IS stable and is what you feed to a
-    // disassembler or `dumpbin`/addr2line against the matching build.
     char module[MAX_PATH] = "<unknown>";
     uintptr_t rva = 0;
     HMODULE mod = nullptr;
@@ -84,9 +82,6 @@ static LONG WINAPI sehHandler(EXCEPTION_POINTERS* ep)
 
     char detail[256] = "";
     if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR) {
-        // ExceptionInformation[0]: 0 = read, 1 = write, 8 = DEP/execute.
-        // [1] is the address that was touched -- 0x0 (or a small offset from it)
-        // means an actual null dereference, anything else is a wild/stale pointer.
         const ULONG_PTR op = ep->ExceptionRecord->ExceptionInformation[0];
         const ULONG_PTR at = ep->ExceptionRecord->ExceptionInformation[1];
         snprintf(detail, sizeof(detail), " | %s of 0x%llX%s",
@@ -110,11 +105,28 @@ static BOOL WINAPI ctrlHandler(DWORD) {
     return TRUE;
 }
 #else
+static void logBacktrace() {
+    void* frames[64];
+    int n = backtrace(frames, 64);
+
+    static const char header[] = "[CRASH] backtrace:\n";
+    write(STDERR_FILENO, header, sizeof(header) - 1);
+    backtrace_symbols_fd(frames, n, STDERR_FILENO);
+
+    int fd = open("../avatar_crash.log", O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (fd >= 0) {
+        write(fd, header, sizeof(header) - 1);
+        backtrace_symbols_fd(frames, n, fd);
+        close(fd);
+    }
+}
+
 static void sigHandler(int sig) {
     if (sig == SIGINT || sig == SIGTERM)
         g_shutdown_requested.store(true);
     else {
         logCrash(sig == SIGSEGV ? "SIGSEGV" : sig == SIGABRT ? "SIGABRT" : "fatal signal");
+        logBacktrace();
         std::_Exit(1);
     }
 }
@@ -133,6 +145,8 @@ static void terminateHandler()
 }
 
 int main(int argc, char** argv) {
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+
     std::set_terminate(terminateHandler);
 
 #ifdef _WIN32

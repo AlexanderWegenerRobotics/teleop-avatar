@@ -41,7 +41,7 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
     #ifdef WITH_V4L2
     } else if (config_.source_type == "v4l2") {
         source_ = std::make_unique<V4L2Source>(
-            config_.shm_name,
+            config_.v4l2_device,
             config_.source_width,
             config_.source_height,
             config_.fps);

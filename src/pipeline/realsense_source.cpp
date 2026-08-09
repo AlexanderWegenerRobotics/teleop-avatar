@@ -55,9 +55,10 @@ void RealSenseSource::run() {
     // Pull color frames from pipeline and forward via callback.
     while (bRunning_) {
         rs2::frameset frames;
-        if (!pipe_.try_wait_for_frames(&frames, 100))
+        if (!pipe_.try_wait_for_frames(&frames, 100)){ 
             std::cout << "Timeout in realsense camera" << std::endl;
             continue;
+        }
 
         rs2::video_frame color = frames.get_color_frame();
         if (!color) continue;

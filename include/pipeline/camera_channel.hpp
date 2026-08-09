@@ -13,11 +13,12 @@ struct CameraChannelConfig {
     std::string name;
 
     // ── Source ────────────────────────────────────────────────────────────
-    std::string source_type     = "mujoco";  // "mujoco" | "realsense"
+    std::string source_type     = "mujoco";  // "mujoco" | "realsense" | "v4l2"
     std::string shm_name;                    // mujoco only
     std::string realsense_serial;            // realsense only (empty = first device)
+    std::string v4l2_device     = "/dev/video0";  // v4l2 only
     int         fps             = 30;
-    int         source_width    = 640;       // realsense only (mujoco reads from shm)
+    int         source_width    = 640;       // realsense/v4l2 only (mujoco reads from shm)
     int         source_height   = 480;
 
     // ── Stereo-combined mode ──────────────────────────────────────────────

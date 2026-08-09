@@ -24,6 +24,6 @@ twin_config_temp:
   streamer_overlay: "../config/pipeline_config_twin_overlay_local.yaml"
 
 avatar_config:
-  sim_config: "../config/sim_config_franka.yaml"
-  robot_config: "../config/robot_config_local.yaml"
-  streamer_config: "../config/pipeline_config_local.yaml"
+  sim_config: "../config/sim_config_franka_desk.yaml"
+  robot_config: "../config/robot_config_desk_remote.yaml"
+  streamer_config: "../config/pipeline_config_desk_remote.yaml"

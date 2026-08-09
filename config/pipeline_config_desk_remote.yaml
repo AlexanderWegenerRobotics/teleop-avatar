@@ -23,7 +23,8 @@ episode_listener_port: 7100
 cameras:
   - name:         "desk_cam"
     eye:          "mono"
-    source_type:  "mujoco"
+    source_type:  "v4l2"
+    v4l2_device: "/dev/videoN"
     shm_name:     "avatar_cam"
     fps:           20
     source_width:  1280
