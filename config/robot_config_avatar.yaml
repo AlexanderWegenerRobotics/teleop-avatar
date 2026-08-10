@@ -79,6 +79,17 @@ devices:
       kd_null: [2, 2, 2, 2, 1, 1, 1]
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
+      # Fraction of max_torque_rate the limiter may actually spend. 0.9 leaves only
+      # 10% headroom against the FCI 1000 Nm/s discontinuity limit; lower it if the
+      # host shows control_command_success_rate < 1.
+      torque_rate_margin: 0.9
+
+    # CPU cores for this arm's 1 kHz control thread and 200 Hz state thread.
+    # Omit to keep the built-in defaults (arm_left 0/1, arm_right 2/3). On Linux
+    # avoid core 0 (IRQs); on P/E-core hosts put control_core on a P-core.
+    # rt:
+    #   control_core: 2
+    #   state_core: 3
 
     safety:
       workspace_min: [0.4, -0.4, 0.81]

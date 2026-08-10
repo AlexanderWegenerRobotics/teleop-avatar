@@ -5,6 +5,7 @@
 #include "sim_env/gripper.hpp"
 #include "sim_env/model.hpp"
 #include "rt_thread.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -93,6 +94,15 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     q_max_ = yamlToVector<7>(device_config["q_max"]);
     tau_max_ = yamlToVector<7>(device_config["max_torque"]);
     tau_rate_max_ = yamlToVector<7>(device_config["max_torque_rate"]) / 1000.0;
+
+    // Headroom on the torque-rate limiter. max_torque_rate stays whatever the
+    // config says (it is the physical envelope); this is how much of it we let
+    // ourselves spend, so the safety margin can be tuned against the jitter of a
+    // given host without touching the envelope itself.
+    if (device_config["control"]["torque_rate_margin"])
+        torque_rate_margin_ = device_config["control"]["torque_rate_margin"].as<double>();
+    torque_rate_margin_ = std::clamp(torque_rate_margin_, 0.05, 1.0);
+
     kp_joint_ = yamlToVector<7>(device_config["control"]["kp_joint"]);
     kd_joint_ = yamlToVector<7>(device_config["control"]["kd_joint"]);
 
@@ -235,6 +245,18 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
             grasp_confirm_time_s_ = gripper_cfg["grasp_confirm_time_s"].as<double>();
     }
 
+    // ── Thread placement ────────────────────────────────────────────────────
+    // Defaults reproduce the previous hard-coded mapping (arm_left -> 0/1,
+    // arm_right -> 2/3). Overridable because the right cores are a property of
+    // the machine, not of the arm: on a P/E-core host you want the 1 kHz loop on
+    // a P-core, and on any Linux box you want it off core 0.
+    rt_control_core_ = (name_ == "arm_right") ? 2 : 0;
+    rt_state_core_   = (name_ == "arm_right") ? 3 : 1;
+    if (device_config["rt"]) {
+        if (device_config["rt"]["control_core"]) rt_control_core_ = device_config["rt"]["control_core"].as<int>();
+        if (device_config["rt"]["state_core"])   rt_state_core_   = device_config["rt"]["state_core"].as<int>();
+    }
+
     logger_ = std::make_unique<DataLogger<ArmLogEntry>>("../log/" + name_ + "_log.csv", armLogHeader, armLogRow, session_id);
 }
 
@@ -243,6 +265,10 @@ ArmControl::~ArmControl(){
 }
 
 void ArmControl::start(){
+    // We run libfranka with RealtimeConfig::kIgnore, which turns "cannot get RT
+    // priority" from an exception into silence. Say it out loud at startup instead.
+    warn_if_no_realtime(name_);
+
     bRunning = true;
     state_ = SysState::IDLE;
     cmd_state_ = SysState::IDLE;
@@ -256,10 +282,10 @@ void ArmControl::start(){
     Eigen::Map<const Vector7> q_init(current_state.q.data());
     motion_gen_.planJoint(q_init, q_init, ProfileType::TRAPEZOIDAL);
     control_thread = std::thread(&ArmControl::runControlHandler, this);
-    set_realtime(control_thread, name_ == "arm_right" ? 2 : 0);
+    set_realtime(control_thread, rt_control_core_);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     state_thread = std::thread(&ArmControl::runStateHandler, this);
-    set_realtime(state_thread, name_ == "arm_right" ? 3 : 1);
+    set_realtime(state_thread, rt_state_core_);
     if (transmission_) transmission_->start();
     if (transmission_absolute_) transmission_absolute_->start();
     logger_->start();
@@ -493,7 +519,12 @@ void ArmControl::updateRecovery() {
             recovery_.pushBack(req);
             return;
         }
-        recovery_target_q_ = req.target_q;
+        // Under state_mtx because runControlHandler's rearmFromMeasuredState reads
+        // it from the control thread when restarting a faulted loop.
+        {
+            std::lock_guard<std::mutex> lock(state_mtx);
+            recovery_target_q_ = req.target_q;
+        }
         motion_gen_.planJoint(q_current, req.target_q, ProfileType::MINJERK);
         recovery_.setMode(RecoveryMode::MOVING_TO_SAFE);
         state_ = SysState::RECOVERING;
@@ -612,6 +643,10 @@ void ArmControl::updateStateMachine(SysState cmd_state){
 void ArmControl::runControlHandler(){
     Vector7 tau_prev_ = Vector7::Zero();
 
+    // Hoisted out of the callback: one multiply we do not need to repeat 1000x/s,
+    // and it makes the effective limit visible in one place.
+    const Vector7 tau_rate_step = tau_rate_max_ * torque_rate_margin_;
+
     std::function<franka::Torques(const franka::RobotState&, franka::Duration)>
         control_callback = [&](const franka::RobotState& robot_state, franka::Duration) -> franka::Torques {
             
@@ -653,8 +688,6 @@ void ArmControl::runControlHandler(){
                     break;
             }
 
-            constexpr double kRateMargin = 0.9;
-            const Vector7 tau_rate_step = tau_rate_max_ * kRateMargin;
             ctrl_torque = tau_prev_ + (ctrl_torque - tau_prev_).cwiseMax(-tau_rate_step).cwiseMin(tau_rate_step);
             ctrl_torque = ctrl_torque.cwiseMax(-tau_max_).cwiseMin(tau_max_);
             tau_prev_ = ctrl_torque;
@@ -690,6 +723,10 @@ void ArmControl::runControlHandler(){
                 Eigen::Map<Vector7>(entry.q_cmd.data()) = q_target;
                 std::copy(robot_state.dq.begin(),                   robot_state.dq.end(),                   entry.dq.begin());
                 std::copy(robot_state.tau_J.begin(),                robot_state.tau_J.end(),                entry.tau_J.begin());
+                // Post rate-limit, post-saturation: exactly the vector handed to
+                // franka::Torques below. diff() this per tick and compare against
+                // max_torque_rate to see a discontinuity instead of guessing at one.
+                Eigen::Map<Vector7>(entry.tau_cmd.data()) = ctrl_torque;
                 std::copy(robot_state.tau_ext_hat_filtered.begin(), robot_state.tau_ext_hat_filtered.end(), entry.tau_ext.begin());
                 std::copy(robot_state.O_T_EE.begin(),               robot_state.O_T_EE.end(),               entry.O_T_EE.begin());
                 Eigen::Map<Matrix4>(entry.O_T_EE_cmd.data()) = T_target;
@@ -713,7 +750,70 @@ void ArmControl::runControlHandler(){
         };
 
     constexpr int kMaxConsecutiveFaults = 3;
-    int fault_count = 0;
+    constexpr auto kFaultStreakWindow   = std::chrono::seconds(5);
+    int  fault_count      = 0;
+    bool first_attempt    = true;
+    bool have_prior_fault = false;
+    std::chrono::steady_clock::time_point last_fault_time{};
+
+    // ── Re-arm against the robot's MEASURED state before handing control back ──
+    //
+    // Two things change under us whenever robot->control() returns: the robot's
+    // internal tau_J_d drops to zero, and the arm has usually moved (reflex stop,
+    // then automaticErrorRecovery).
+    //
+    // Restarting without accounting for that is what turned a single reflex into
+    // a fault loop. tau_prev_ lives outside this retry loop, so the first command
+    // of the new control loop was tau_prev_ +/- one rate-limiter step -- i.e. it
+    // jumped from 0 straight back to whatever torque was being commanded when the
+    // reflex fired. At 15 Nm that is a 15000 Nm/s step on tick one, well past the
+    // 1000 Nm/s FCI limit, so it tripped controller_torque_discontinuity before a
+    // single command landed. That is the control_command_success_rate: 0 signature
+    // on retries #2+.
+    //
+    // Zeroing tau_prev_ makes the existing rate limiter double as a soft-start
+    // (~0.9 Nm/tick, so ~17 ms to climb back to 15 Nm), and re-planning from the
+    // measured pose stops the impedance error from being large to begin with.
+    auto rearmFromMeasuredState = [this, &tau_prev_]() {
+        tau_prev_.setZero();
+
+        Vector7 q, recovery_goal;
+        Eigen::Isometry3d T_ee;
+        {
+            std::lock_guard<std::mutex> lock(state_mtx);
+            q             = Eigen::Map<const Vector7>(current_state.q.data());
+            T_ee          = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
+            recovery_goal = recovery_target_q_;
+        }
+        // No usable robot state yet -- leave the existing plan alone rather than
+        // latching onto zeros (that would command a full-speed move to q = 0).
+        if (!q.allFinite() || q.norm() < 1e-9) return;
+
+        switch (state_.load()) {
+            case SysState::HOMING:
+                // Still going to q0, just re-planned from where the arm actually is.
+                motion_gen_.planJoint(q, q0_, ProfileType::MINJERK);
+                break;
+            case SysState::RECOVERING:
+                motion_gen_.planJoint(q, recovery_goal, ProfileType::MINJERK);
+                break;
+            case SysState::IDLE:
+                motion_gen_.planJoint(q, q, ProfileType::MINJERK);
+                idle_hold_valid_.store(true, std::memory_order_release);
+                break;
+            default:
+                // AWAITING / ENGAGED / PAUSED: hold the measured pose. The operator
+                // has to re-engage the stream anyway, and starting from zero error
+                // is the whole point of this function.
+                if (control_mode_ == ControlMode::JOINT_IK) {
+                    motion_gen_.seedJointReference(q);
+                    motion_gen_.setCartesianGoal(T_ee);
+                } else {
+                    motion_gen_.planCartesian(T_ee, T_ee);
+                }
+                break;
+        }
+    };
 
     // Enter FAULT and block the control thread (not exit it) until an operator
     // clears it. The existing arm_reset / reset_all commands already drive
@@ -734,10 +834,24 @@ void ArmControl::runControlHandler(){
     };
 
     while (bRunning) {
+        // Only on a restart: on the very first entry start() has already seeded
+        // motion_gen_ and tau_prev_ is zero by construction.
+        if (!first_attempt) rearmFromMeasuredState();
+        first_attempt = false;
+
         try {
             robot->control(control_callback);
             break;  // clean stop: control_callback set motion_finished from ArmControl::stop()
         } catch (const franka::ControlException& e) {
+            const auto now = std::chrono::steady_clock::now();
+            // "Consecutive" should mean consecutive. If the loop ran clean for a
+            // while before this fault, start a fresh streak instead of carrying
+            // stale counts from an unrelated incident half an hour ago.
+            if (have_prior_fault && (now - last_fault_time) > kFaultStreakWindow)
+                fault_count = 0;
+            last_fault_time  = now;
+            have_prior_fault = true;
+
             ++fault_count;
             std::cout << "[WARN] " << name_ << ": franka::ControlException (#" << fault_count
                       << "/" << kMaxConsecutiveFaults << "): " << e.what() << std::endl;
@@ -747,9 +861,11 @@ void ArmControl::runControlHandler(){
                 std::cout << "[WARN] " << name_ << ": automaticErrorRecovery() failed: "
                           << recovery_err.what() << std::endl;
             }
-            if (fault_count > kMaxConsecutiveFaults) {
+            // Was '>', which is why the log showed a fourth attempt numbered "#4/3".
+            if (fault_count >= kMaxConsecutiveFaults) {
                 enterFaultAndWaitForReset();
-                fault_count = 0;
+                fault_count      = 0;
+                have_prior_fault = false;
             }
         } catch (const franka::Exception& e) {
             // Non-control franka errors (e.g. connection-level) aren't something a
@@ -757,7 +873,8 @@ void ArmControl::runControlHandler(){
             // rather than spinning or terminating the process.
             std::cout << "[ERROR] " << name_ << ": franka::Exception: " << e.what() << std::endl;
             enterFaultAndWaitForReset();
-            fault_count = 0;
+            fault_count      = 0;
+            have_prior_fault = false;
         }
     }
 }

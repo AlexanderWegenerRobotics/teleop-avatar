@@ -367,7 +367,10 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
         for arm, (hdr, data, ts) in arms.items():
             sel = nearest_idx(ts, grid)
             g = obs.create_group(arm)
-            for field, n in (("q_", 7), ("dq_", 7), ("tau_J_", 7), ("tau_ext_", 7), ("O_T_EE_", 16), ("F_ext_", 6)):
+            # tau_cmd_ is optional: episodes logged before it was added simply
+            # won't have the columns, and col_group returns None for those.
+            for field, n in (("q_", 7), ("dq_", 7), ("tau_J_", 7), ("tau_cmd_", 7),
+                             ("tau_ext_", 7), ("O_T_EE_", 16), ("F_ext_", 6)):
                 grp = col_group(hdr, data, field, n)
                 if grp is not None:
                     g.create_dataset(field.rstrip("_"), data=grp[sel])

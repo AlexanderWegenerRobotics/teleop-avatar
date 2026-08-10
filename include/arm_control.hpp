@@ -109,6 +109,16 @@ private:
     Vector7 q0_, q_min_, q_max_;
     Vector7 tau_max_;
     Vector7 tau_rate_max_;
+    // Fraction of max_torque_rate the limiter is allowed to actually use. This is
+    // headroom against host jitter, not a physical constant: at 1.0 we command
+    // exactly the FCI limit and any timing wobble reads as a violation. Tunable
+    // per deployment via control.torque_rate_margin rather than baked in.
+    double  torque_rate_margin_{0.9};
+    // CPU cores for this arm's two threads (see rt_thread.hpp). Defaults preserve
+    // the previous hard-coded layout; overridable via the rt: block because core 0
+    // is where most Linux hosts land their IRQs.
+    int     rt_control_core_{0};
+    int     rt_state_core_{1};
     mutable std::mutex state_mtx;
     franka::RobotState current_state;
     std::unique_ptr<franka::Model> franka_owned_model_;

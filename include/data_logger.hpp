@@ -19,6 +19,12 @@ struct ArmLogEntry {
     std::array<double, 7>  q_cmd;
     std::array<double, 7>  dq;
     std::array<double, 7>  tau_J;
+    // Torque actually handed to franka::Torques this tick, i.e. post rate-limit
+    // and post-saturation. tau_J is what the joints measured; this is what we
+    // asked for. Without it you cannot check d(tau_cmd)/dt against the FCI
+    // 1000 Nm/s discontinuity limit -- which is precisely the quantity the
+    // controller_torque_discontinuity reflex trips on.
+    std::array<double, 7>  tau_cmd;
     std::array<double, 7>  tau_ext;
     std::array<double, 16> O_T_EE;
     std::array<double, 16> O_T_EE_cmd;
@@ -233,6 +239,7 @@ inline std::string armLogHeader() {
     for (int i = 0; i < 7;  ++i) h += "q_cmd_"      + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "dq_"         + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "tau_J_"      + std::to_string(i) + ";";
+    for (int i = 0; i < 7;  ++i) h += "tau_cmd_"    + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "tau_ext_"    + std::to_string(i) + ";";
     for (int i = 0; i < 16; ++i) h += "O_T_EE_"           + std::to_string(i) + ";";
     for (int i = 0; i < 16; ++i) h += "O_T_EE_cmd_"       + std::to_string(i) + ";";
@@ -252,6 +259,7 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     for (auto v : e.q_cmd)      r += std::to_string(v) + ";";
     for (auto v : e.dq)         r += std::to_string(v) + ";";
     for (auto v : e.tau_J)      r += std::to_string(v) + ";";
+    for (auto v : e.tau_cmd)    r += std::to_string(v) + ";";
     for (auto v : e.tau_ext)    r += std::to_string(v) + ";";
     for (auto v : e.O_T_EE)           r += std::to_string(v) + ";";
     for (auto v : e.O_T_EE_cmd)       r += std::to_string(v) + ";";
