@@ -37,6 +37,33 @@ struct ArmLogEntry {
     SysState               state;
 };
 
+// One row per state-thread tick (~200 Hz), written by runStateHandler.
+//
+// This exists because ArmLogEntry cannot record the states that matter most.
+// arm.csv is written from inside the franka::Robot::control() callback, so the
+// moment control() throws -- ControlException, automaticErrorRecovery(), the
+// blocking wait in enterFaultAndWaitForReset() -- the writer is gone and the
+// log simply stops. FAULT and RECOVERING are therefore unrepresentable in
+// arm.csv by construction.
+//
+// On 2026-08-09 the avatar's arm.csv ended mid-ENGAGED at t=405.672 s with no
+// indication of why, while the process stayed alive and kept publishing for
+// another 12 s. This trace runs on the independent state thread and keeps
+// going across exactly those events, so the next fault has a record.
+//
+// Deliberately narrow: state, liveness and the freshness stamp. Anything
+// needing 1 kHz fidelity belongs in arm.csv.
+struct ArmStateTraceEntry {
+    double   time;                  // seconds since logger start
+    uint64_t wall_clock_ns;         // state-thread tick time
+    uint64_t control_sample_ns;     // when the CONTROL thread last read the robot
+    double   control_age_ms;        // wall_clock_ns - control_sample_ns; grows if control stalls
+    uint32_t control_loop_entries;  // times control() has been (re-)entered; increments on every fault
+    uint32_t fault_count;           // consecutive-fault streak counter
+    SysState state;
+    uint8_t  recovering;
+};
+
 struct HeadLogEntry {
     double                time;          // seconds since logger start (relative)
     uint64_t              wall_clock_ns; // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
@@ -270,6 +297,65 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     r += std::to_string(e.gripper_cmd) + ";";
     r += std::to_string(e.grasp_state) + ";";
     r += std::to_string(static_cast<uint8_t>(e.state)) + "\n";
+    return r;
+}
+
+// One row per twin control tick while a Reconciler exists.
+//
+// Reconciler::Stats has always computed exactly the quantities needed to judge
+// whether the twin is a usable predictor -- innovation norm, the measured
+// forward/backward delays, the current regime, the hard-resync count, packets
+// received -- and getStats() had no callers anywhere in the codebase, so all
+// of it was discarded every tick.
+//
+// After the 2026-08-09 run these had to be reconstructed offline from
+// twin/arm.csv and avatar/arm.csv, which recovers the innovation but NOT the
+// replay through the scratch mjData and NOT the corrections actually applied.
+// Logging them directly turns that reconstruction into a cross-check.
+struct ReconcilerLogEntry {
+    double   time;
+    uint64_t wall_clock_ns;
+    double   innovation_norm_rad;   // ||e|| = ||y - x_hat(t_s - d_f)||
+    double   measured_d_f_s;        // forward delay the reconciler actually observed
+    double   measured_d_b_s;
+    uint8_t  regime;                // 0 = Soft, 1 = Hard
+    uint64_t hard_resync_count;     // cumulative
+    uint64_t packets_received;      // cumulative; flat => telemetry has stopped
+};
+
+inline std::string reconcilerLogHeader() {
+    return "time;wall_clock_ns;innovation_norm_rad;measured_d_f_s;measured_d_b_s;"
+           "regime;hard_resync_count;packets_received\n";
+}
+
+inline std::string reconcilerLogRow(const ReconcilerLogEntry& e) {
+    std::string r;
+    r += std::to_string(e.time) + ";";
+    r += std::to_string(e.wall_clock_ns) + ";";
+    r += std::to_string(e.innovation_norm_rad) + ";";
+    r += std::to_string(e.measured_d_f_s) + ";";
+    r += std::to_string(e.measured_d_b_s) + ";";
+    r += std::to_string(static_cast<int>(e.regime)) + ";";
+    r += std::to_string(e.hard_resync_count) + ";";
+    r += std::to_string(e.packets_received) + "\n";
+    return r;
+}
+
+inline std::string armStateTraceHeader() {
+    return "time;wall_clock_ns;control_sample_ns;control_age_ms;"
+           "control_loop_entries;fault_count;state;recovering\n";
+}
+
+inline std::string armStateTraceRow(const ArmStateTraceEntry& e) {
+    std::string r;
+    r += std::to_string(e.time) + ";";
+    r += std::to_string(e.wall_clock_ns) + ";";
+    r += std::to_string(e.control_sample_ns) + ";";
+    r += std::to_string(e.control_age_ms) + ";";
+    r += std::to_string(e.control_loop_entries) + ";";
+    r += std::to_string(e.fault_count) + ";";
+    r += std::to_string(static_cast<uint8_t>(e.state)) + ";";
+    r += std::to_string(static_cast<int>(e.recovering)) + "\n";
     return r;
 }
 

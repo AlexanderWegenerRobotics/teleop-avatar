@@ -125,13 +125,25 @@ void Robot::populateRobotState(const DeviceState& ds, double dt) {
 }
 
 void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const Vector7& q) {
-    // TEMPORARILY DISABLED for testing, at Alex's request (2026-08-08) -- the
-    // retry/FAULT path this feeds was locking up desk-config test runs on
-    // real (non-artifact) joint-velocity violations that motion_gen_ doesn't
-    // yet back off from on retry. Re-enable once that's addressed; don't ship
-    // with this early return in place, it turns off tau/velocity/position
-    // reflex-equivalent checks entirely.
-    return;
+    // RE-ENABLED 2026-08-20. Was disabled on 2026-08-08 because the retry/FAULT
+    // path it feeds locked up desk-config runs on joint-velocity violations
+    // that motion_gen_ did not back off from on retry.
+    //
+    // The retry path has since been fixed (b7f63c8: rearmFromMeasuredState()
+    // re-plans from the measured pose and zeroes tau_prev_, so a restart no
+    // longer steps straight back to the pre-fault torque), which removes the
+    // cascade that made this unusable.
+    //
+    // Leaving it off has a cost that only became clear after the 2026-08-09
+    // desk test: with these checks bypassed the twin CANNOT fault, so it
+    // silently continues through conditions that stop the real arm. During
+    // that run the avatar faulted at t=404.7 s while the twin ran on to
+    // t=422.7 s, and no statement about the twin's safety behaviour was
+    // supportable. A digital twin that cannot fail the way the plant fails is
+    // not a safety model.
+    //
+    // If this needs disabling again, gate it behind a config flag that is
+    // logged, so the analysis can see it was off.
 
     static const std::array<double, 7> kMaxTorqueRate    = {1000, 1000, 1000, 1000, 1000, 1000, 1000};
     static const std::array<double, 7> kMaxTorque        = {87, 87, 87, 87, 12, 12, 12};
@@ -256,7 +268,39 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
                 robot_state_.tau_J_d = tau_out;
                 sim->setCtrl(name_, std::vector<double>(tau_out.begin(), tau_out.end()));
                 next_control_time += control_period;
-                std::this_thread::sleep_until(next_control_time);
+
+                // Hybrid sleep + spin, instead of sleep_until(deadline).
+                //
+                // This loop asks for 1 kHz and delivered 479 Hz on 2026-08-09:
+                // a median dt of 2.001 ms, i.e. exactly twice the requested
+                // period. It is not compute-bound -- dt was identical in IDLE
+                // (2.001 ms) and ENGAGED (2.001 ms), so the loop body is not
+                // the constraint. It is the OS timer: sleep_until wakes on the
+                // next scheduler tick, so a sub-millisecond deadline is
+                // rounded up to the following one and every period doubles.
+                //
+                // The real robot does not have this problem because libfranka's
+                // control() is clocked by the FCI's own 1 ms tick. The
+                // consequence was a twin running at half the avatar's rate with
+                // three times the jitter, which is not a fair basis for
+                // comparing the two.
+                //
+                // Sleep until slightly before the deadline, then busy-wait the
+                // remainder. kSpinMargin must exceed the platform's timer
+                // granularity (~1 ms on Windows without timeBeginPeriod).
+                constexpr auto kSpinMargin = std::chrono::microseconds(1200);
+                const auto sleep_until_tp = next_control_time - kSpinMargin;
+                if (std::chrono::high_resolution_clock::now() < sleep_until_tp)
+                    std::this_thread::sleep_until(sleep_until_tp);
+                while (std::chrono::high_resolution_clock::now() < next_control_time)
+                    std::this_thread::yield();
+
+                // If we have fallen far behind (debugger, host contention),
+                // resynchronise rather than sprinting to catch up -- a burst of
+                // zero-dt ticks corrupts every rate statistic downstream.
+                const auto now_tp = std::chrono::high_resolution_clock::now();
+                if (now_tp - next_control_time > std::chrono::milliseconds(50))
+                    next_control_time = now_tp;
             }
         }
     } catch (...) {

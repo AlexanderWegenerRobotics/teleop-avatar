@@ -67,6 +67,28 @@ using Vector2   = Eigen::Matrix<double, 2, 1>;
 struct MsgHeader {
     uint32_t sequence;
     uint64_t timestamp_ns;
+    // Wall-clock instant at which the DATA in this message was sampled, as
+    // opposed to timestamp_ns, which is stamped when the packet is handed to
+    // the socket.
+    //
+    // The two are normally within a millisecond of each other and the
+    // distinction looks academic. It is not. Arm state is published from the
+    // 200 Hz state thread while the robot is read by the 1 kHz control
+    // thread. If the control thread stops -- franka::ControlException,
+    // automaticErrorRecovery(), a blocking FAULT wait -- the state thread
+    // happily keeps transmitting the last pose it saw, with a fresh
+    // timestamp_ns and an incrementing sequence every time. Every
+    // transport-level metric on the receiving side then reports a healthy
+    // link, because there IS a healthy link; it is carrying stale data.
+    //
+    // This happened on 2026-08-09: the avatar's control loop died at
+    // t=404.7 s and the operator kept commanding it for another 2.5 s with
+    // data_msg_rate_hz pinned at 200.1 and data_latency_ms at 50.4.
+    //
+    // Consumers should compute staleness as (now - sample_time_ns) and alarm
+    // on it. Zero means the sender predates this field; treat as unknown
+    // rather than as "very stale".
+    uint64_t sample_time_ns;
     SysState state;
     FaultCode fault_code;
     DeviceId device_id;

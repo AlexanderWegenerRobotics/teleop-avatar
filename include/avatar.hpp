@@ -144,4 +144,9 @@ private:
     // real-hardware/WITH_FRANKA build, since that build never sees role: twin
     // in practice, but the check is defense-in-depth either way).
     std::unique_ptr<Reconciler> reconciler_;
+    // Drains Reconciler::getStats() once per tick. Created alongside the
+    // reconciler and only when one exists (role: twin). Without this the
+    // stats are computed and thrown away every cycle -- see
+    // ReconcilerLogEntry in data_logger.hpp.
+    std::unique_ptr<DataLogger<ReconcilerLogEntry>> reconciler_logger_;
 };

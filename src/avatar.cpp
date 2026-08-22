@@ -374,6 +374,8 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         YAML::Node reconciler_yaml = YAML::LoadFile(config["reconciler_config"].as<std::string>());
         ReconcilerConfig rcfg = ReconcilerConfig::load(reconciler_yaml);
         reconciler_ = std::make_unique<Reconciler>(rcfg, sim_.get());
+        reconciler_logger_ = std::make_unique<DataLogger<ReconcilerLogEntry>>(
+            "../log/reconciler_log.csv", reconcilerLogHeader, reconcilerLogRow, session_id_);
         std::cout << "[AVATAR-INFO]: Reconciler constructed (role: twin)" << std::endl;
     }
 #else
@@ -394,6 +396,7 @@ Avatar::~Avatar() {
 void Avatar::start(){
     if (cmd_channel_) cmd_channel_->start();
     if (reconciler_) reconciler_->start();
+    if (reconciler_logger_) { reconciler_logger_->start(); reconciler_logger_->enable(true); }
     for(const auto& head : head_instances){
         head->start();
     }
@@ -505,6 +508,25 @@ void Avatar::start(){
                 uint64_t t_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count());
                 reconciler_->pushTwinState(t_ns, q, dq, ctrl);
+
+                // Drain the stats the reconciler has been computing all along.
+                // packets_received going flat is the tell that avatar telemetry
+                // has stopped -- the reconciler then predicts open-loop with no
+                // correction and, until this was logged, no way to say so.
+                if (reconciler_logger_) {
+                    Reconciler::Stats st = reconciler_->getStats();
+                    ReconcilerLogEntry rl{};
+                    rl.time                = std::chrono::duration<double>(
+                        std::chrono::high_resolution_clock::now() - loop_start_time).count();
+                    rl.wall_clock_ns       = t_ns;
+                    rl.innovation_norm_rad = st.last_innovation_norm_rad;
+                    rl.measured_d_f_s      = st.measured_d_f_s;
+                    rl.measured_d_b_s      = st.measured_d_b_s;
+                    rl.regime              = static_cast<uint8_t>(st.last_regime);
+                    rl.hard_resync_count   = st.hard_resync_count;
+                    rl.packets_received    = st.packets_received;
+                    reconciler_logger_->write(rl);
+                }
             }
 
             if (intention_buffer_) {
@@ -638,6 +660,7 @@ void Avatar::start(){
 void Avatar::stop(){
     bRunning = false;
     if (reconciler_) reconciler_->stop();
+    if (reconciler_logger_) reconciler_logger_->stop();
     if (intention_recognizer_) intention_recognizer_->stop();
     if (scene_logger_) {
         scene_logger_->enable(false);

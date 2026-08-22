@@ -258,6 +258,8 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     }
 
     logger_ = std::make_unique<DataLogger<ArmLogEntry>>("../log/" + name_ + "_log.csv", armLogHeader, armLogRow, session_id);
+    state_trace_ = std::make_unique<DataLogger<ArmStateTraceEntry>>(
+        "../log/" + name_ + "_state_trace.csv", armStateTraceHeader, armStateTraceRow, session_id);
 }
 
 ArmControl::~ArmControl(){
@@ -290,11 +292,13 @@ void ArmControl::start(){
     if (transmission_absolute_) transmission_absolute_->start();
     logger_->start();
     logger_->enable(true);
+    if (state_trace_) { state_trace_->start(); state_trace_->enable(true); }
     startTime_ = std::chrono::high_resolution_clock::now();
 }
 
 void ArmControl::stop(){
     if (logger_) logger_->stop();
+    if (state_trace_) state_trace_->stop();
     bRunning = false;
     state_ = SysState::OFFLINE;
     if (control_thread.joinable()) control_thread.join();
@@ -458,9 +462,14 @@ void ArmControl::runStateHandler(){
 
         if (transmission_) {
             franka::RobotState rs;
+            uint64_t rs_sample_ns;
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
                 rs = current_state;
+                // Read under the same lock as the state itself, so the stamp
+                // always belongs to the snapshot we just took rather than to a
+                // newer one that landed in between.
+                rs_sample_ns = state_sample_ns_.load(std::memory_order_relaxed);
             }
             Eigen::Isometry3d T_ee(Eigen::Map<const Eigen::Matrix4d>(rs.O_T_EE.data()));
 
@@ -490,6 +499,11 @@ void ArmControl::runStateHandler(){
             state_msg.recovering    = (state_ == SysState::RECOVERING) ? 1 : 0;
             state_msg.gripper_width = static_cast<float>(gripper_width_.load());
             state_msg.grasp_state   = grasp_state_.load();
+            // When the CONTROL thread last read the robot. doSend() fills in
+            // sequence/timestamp_ns at send time; this is the one field that
+            // stops advancing if the control loop dies, which is the whole
+            // point of it (see MsgHeader in common.hpp).
+            state_msg.header.sample_time_ns = rs_sample_ns;
             transmission_->setSendData(state_msg);
         }
 
@@ -500,6 +514,31 @@ void ArmControl::runStateHandler(){
         const double width = gripper ? gripper->readOnce().width : 0.0;
         gripper_width_.store(width);
         updateGraspConfirmation(width);
+
+        // ── state trace ───────────────────────────────────────────────────────
+        // Written here rather than in the control callback so it keeps going
+        // through faults, automaticErrorRecovery() and the blocking FAULT wait
+        // -- the three situations where arm.csv goes silent and where knowing
+        // what happened matters most.
+        if (state_trace_) {
+            const uint64_t now_ns    = timestamp_ns();
+            const uint64_t sample_ns = state_sample_ns_.load(std::memory_order_relaxed);
+            ArmStateTraceEntry tr{};
+            tr.time = std::chrono::duration<double>(
+                std::chrono::high_resolution_clock::now() - startTime_).count();
+            tr.wall_clock_ns        = now_ns;
+            tr.control_sample_ns    = sample_ns;
+            // Grows without bound while the control thread is not running. This
+            // is the single column to plot when asking "was the robot alive?".
+            tr.control_age_ms       = (sample_ns == 0 || now_ns < sample_ns)
+                                        ? -1.0
+                                        : static_cast<double>(now_ns - sample_ns) / 1e6;
+            tr.control_loop_entries = control_loop_entries_.load(std::memory_order_relaxed);
+            tr.fault_count          = fault_streak_.load(std::memory_order_relaxed);
+            tr.state                = state_;
+            tr.recovering           = (state_ == SysState::RECOVERING) ? 1 : 0;
+            state_trace_->write(tr);
+        }
 
         prev_state = state_;
         next_control_time += control_period;
@@ -654,6 +693,11 @@ void ArmControl::runControlHandler(){
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
                 current_state = robot_state;
+                // Freshness stamp for outgoing telemetry. Written here and
+                // nowhere else: this is the only place the robot is actually
+                // read, so if this loop stops advancing, so does the stamp,
+                // and every consumer can see it.
+                state_sample_ns_.store(timestamp_ns(), std::memory_order_relaxed);
             }
             Vector7 ctrl_torque = Vector7::Zero();
 
@@ -840,6 +884,11 @@ void ArmControl::runControlHandler(){
         first_attempt = false;
 
         try {
+            // Counted so the state trace can distinguish "ran clean" from
+            // "faulted and silently retried". A bump here with no matching gap
+            // in arm.csv means a fault was absorbed without the operator ever
+            // being told.
+            control_loop_entries_.fetch_add(1, std::memory_order_relaxed);
             robot->control(control_callback);
             break;  // clean stop: control_callback set motion_finished from ArmControl::stop()
         } catch (const franka::ControlException& e) {
@@ -853,8 +902,28 @@ void ArmControl::runControlHandler(){
             have_prior_fault = true;
 
             ++fault_count;
+            fault_streak_.store(static_cast<uint32_t>(fault_count), std::memory_order_relaxed);
             std::cout << "[WARN] " << name_ << ": franka::ControlException (#" << fault_count
                       << "/" << kMaxConsecutiveFaults << "): " << e.what() << std::endl;
+
+            // Tell the operator NOW, on the first fault, not only once the
+            // streak threshold is crossed.
+            //
+            // Previously the only fault ever transmitted came from
+            // enterFaultAndWaitForReset(), i.e. after kMaxConsecutiveFaults.
+            // automaticErrorRecovery() on real hardware takes several hundred
+            // milliseconds, so a single fault meant roughly a second of a
+            // motionless robot with the interface showing a fully healthy
+            // link and an ENGAGED remote state. On 2026-08-09 the first fault
+            // was at t=404.717 s and the arm never moved again, yet the
+            // operator kept commanding until 408.139 s.
+            //
+            // RECOVERING (not FAULT) is deliberate: this is transient and
+            // self-clearing, and it must not latch the interface into the
+            // operator-reset path that FAULT triggers. It restores itself
+            // below once control() is successfully re-entered.
+            if (transmission_) transmission_->setState(SysState::RECOVERING, FaultCode::INTERNAL_ERROR);
+
             try {
                 robot->automaticErrorRecovery();
             } catch (const franka::Exception& recovery_err) {
@@ -865,7 +934,13 @@ void ArmControl::runControlHandler(){
             if (fault_count >= kMaxConsecutiveFaults) {
                 enterFaultAndWaitForReset();
                 fault_count      = 0;
+                fault_streak_.store(0, std::memory_order_relaxed);
                 have_prior_fault = false;
+            } else {
+                // Recovered within the streak budget: clear the transient
+                // RECOVERING published above so the interface stops warning,
+                // then fall through and re-enter control().
+                if (transmission_) transmission_->setState(state_);
             }
         } catch (const franka::Exception& e) {
             // Non-control franka errors (e.g. connection-level) aren't something a

@@ -79,6 +79,15 @@ private:
     // nothing sending on the existing port/struct is affected.
     std::unique_ptr<ArmStream> transmission_absolute_;
     std::unique_ptr<DataLogger<ArmLogEntry>> logger_;
+    // Written from the STATE thread, so it survives everything that kills the
+    // control thread. See ArmStateTraceEntry in data_logger.hpp for why
+    // arm.csv alone is not sufficient.
+    std::unique_ptr<DataLogger<ArmStateTraceEntry>> state_trace_;
+    // Bumped every time robot->control() is entered. A jump in this column
+    // with no corresponding gap in arm.csv means a fault was caught and
+    // retried silently; the pair of them tells the whole story.
+    std::atomic<uint32_t> control_loop_entries_{0};
+    std::atomic<uint32_t> fault_streak_{0};
     std::chrono::high_resolution_clock::time_point startTime_;
     ArmRecovery recovery_;
     
@@ -121,6 +130,18 @@ private:
     int     rt_state_core_{1};
     mutable std::mutex state_mtx;
     franka::RobotState current_state;
+    // Wall clock at which runControlHandler last wrote current_state. Written
+    // ONLY by the control thread, under state_mtx, and copied verbatim into
+    // outgoing ArmStateMsg headers as sample_time_ns.
+    //
+    // The 200 Hz state thread publishes telemetry independently of the 1 kHz
+    // control thread. If the control thread stops -- fault, recovery, or the
+    // blocking wait in enterFaultAndWaitForReset -- publishing continues with
+    // fresh send timestamps and increasing sequence numbers, so nothing
+    // downstream can tell that the payload has stopped changing. This stamp
+    // is the one field that goes stale, and it is what the operator interface
+    // alarms on. See MsgHeader in common.hpp.
+    std::atomic<uint64_t> state_sample_ns_{0};
     std::unique_ptr<franka::Model> franka_owned_model_;
     Eigen::Isometry3d T_origin_;
     std::unique_ptr<SelfCollisionProtection> scp_;
