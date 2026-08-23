@@ -1,265 +1,215 @@
 # Teleoperation Avatar
 
-Robot-side C++ backend for the bimanual teleoperation system. Receives operator commands from the [VR interface](https://github.com/AlexanderWegenerRobotics/teleop-vr-interface), runs per-device state machines and control loops, and streams live video back over RTP/H.264. Supports both a MuJoCo simulation backend and real Franka hardware — selected at compile time.
+Robot-side C++ backend for the bimanual teleoperation system. It receives operator commands from the [VR interface](https://github.com/AlexanderWegenerRobotics/teleop-vr-interface), runs a per-device state machine and control loop for each arm, head and gripper, streams stereo video back over RTP/H.264, and records synchronised episodes for policy training. The same binary drives a MuJoCo simulation or a real Franka arm — the backend is a build flag, and a second instance of it runs locally as a predictive twin.
 
-> **Status: active development** — simulation backend is fully functional; real-hardware integration is ongoing.
+![The avatar's own head camera during a sorting run: both arms picking parcels into colour-matched bins](docs/gifs/head_cam_sorting.gif)
+
+<sub>The avatar's head camera during a data-collection run — the same frames that get timestamped, encoded and streamed to the operator.</sub>
+
+> **Status: active development.** Simulation and hardware backends both run; the system has been operated cross-continentally and used for demonstration collection.
 
 ---
 
 ## What this does
 
-The avatar runs as two independent processes launched together via `launch.sh`: the **control process** (`avatar`) and the **video streamer** (`avatar_streamer`). These are intentionally decoupled — the streamer writes frames from shared memory regardless of what the control loop is doing, and the control loop runs regardless of stream health.
+Two processes launch together and are deliberately decoupled: the **control process** (`avatar`) and the **video/data pipeline** (`avatar_pipeline`). The pipeline reads frames from shared memory regardless of what the control loop is doing, and the control loop runs regardless of stream health.
 
-The control process instantiates the scene from config, starts a per-device control thread for each arm, head, and gripper, and runs an avatar-level state machine that coordinates across all devices. Each arm runs its own 200 Hz state machine for safety and falls back gracefully if a fault is detected — the keep-running design means a faulted device is detached and the remaining devices continue operating. MuJoCo runs at 1 kHz matching the real Panda arm; the avatar master and state machines run at 200 Hz (planned bump to 500 Hz). Arms switch between joint position control and Cartesian impedance control depending on state; forward kinematics are computed via Pinocchio.
+The control process builds the scene from config, starts a control thread per device, and runs an avatar-level state machine above the per-device ones. Each arm runs a 200 Hz state machine over a 1 kHz control loop, switching between joint-position and Cartesian impedance control depending on state. MuJoCo steps at 1 kHz to match the real Panda; forward kinematics come from Pinocchio. A device that faults is detached and the rest keep running — a fault is a state, not an exception.
 
-The streamer picks up frames written into shared memory (either from the MuJoCo renderer or a RealSense camera), embeds a 64-bit wall-clock timestamp and frame ID for end-to-end latency measurement, and sends them via GStreamer over RTP/H.264. A stream health monitor runs in parallel and drives an adaptive quality controller that degrades bitrate, FPS, and FEC level to keep streaming alive under poor network conditions. Both machines connect over ZeroTier VPN and sync clocks via NTP for accurate latency computation.
+The pipeline process renders or captures the configured cameras into shared memory, packs the stereo pair into one frame, embeds a 64-bit wall-clock timestamp in an extra image row, and streams over RTP/H.264 with FEC. Because both machines are NTP-disciplined, the receiver measures true one-way delay at decode time rather than assuming half a round trip. A quality controller adapts bitrate, frame rate and FEC from receiver feedback so the link degrades instead of stalling.
 
 ---
 
-## System diagram
+## Architecture
 
 ![Avatar architecture](docs/system_overview_avatar.png)
 
----
+### Control
 
-## Backend modes
+Each arm runs Cartesian impedance in a 1 kHz torque loop — a stiffness/damping wrench on the pose error mapped through the Jacobian transpose, with posture regulated in the nullspace so the elbow can settle without moving the hand. A second mode tracks a joint reference through resolved-rate IK instead. Between the operator's pose command and the controller sits a motion generator with per-joint velocity and acceleration caps and a braking horizon that decelerates a joint before its limit rather than clipping at it; homing and recovery run on smooth profiles rather than step commands.
 
-The backend is selected at CMake configure time:
+The pan-tilt head follows the headset under joint impedance with torque rate limiting, driven either in MuJoCo or through the hardware driver. Grippers report width and a confirmed grasp state back to the operator, using a tolerance and hold time set in config.
 
-| Flag | Effect |
-|------|--------|
-| `BUILD_WITH_MUJOCO=ON` *(default)* | MuJoCo simulation — no hardware required |
-| `BUILD_WITH_FRANKA=ON` | Real Franka arm via libfranka — disables MuJoCo |
+### Two arms in one workspace
 
-The MuJoCo backend mirrors the libfranka state space exactly (joint positions, velocities, external torques, Cartesian pose) so switching to real hardware requires no changes in the control or networking code.
+A control-barrier-function filter sits between the commanded Cartesian velocity and the executed one, with a margin that grows with closing speed. When a command would breach it, the filter solves a one-constraint QP in closed form; radial motion is penalised more than tangential, so the correction slides an arm around its neighbour instead of stopping it dead. Each arm optionally runs a constant-velocity Kalman filter on the other's end-effector so the margin tracks where the other arm is going, and widens when that estimate is least certain.
 
----
+### One codebase, two backends
 
-## Scene configuration
+The MuJoCo backend mirrors the libfranka state space exactly — joint positions, velocities, external torques, Cartesian pose — so the control and networking code does not know which one it is talking to. Scenes, devices, gains and workspace limits are YAML, assembled into a model at startup, so adding an arm is a config change rather than a rebuild.
 
-The scene is fully defined in YAML — no recompile needed to change the robot layout, add objects, or adjust control gains. The top-level `config/config.yaml` points to three sub-configs:
-
-**`config/robot_config.yaml`** — devices and networking
-
-```yaml
-devices:
-  - name: arm_left
-    type: arm
-    enabled: true
-    transmission:
-      remote_ip: "10.x.x.x"
-      send_port: 8001
-      receive_port: 7001
-      frequency: 200
-    base_pose:
-      position: [0, 0.4, 0.8]
-      orientation: [0.5, -0.5, 0.5, -0.5]
-    q0: [-0.3, -1.1, 0.3, -2.0, 0.5, 2.9, -0.9]
-    control:
-      kp_cart: [1000, 1000, 1000, 80, 80, 80]
-      kd_cart: [70, 70, 70, 10, 10, 10]
-      motion_scale: 2.0
-    safety:
-      workspace_min: [0.20, -0.55, 0.05]
-      workspace_max: [0.85,  0.55, 0.75]
-```
-
-Adding a second arm or a head is a matter of appending another `devices` entry. Any device can be individually disabled with `enabled: false`.
-
-**`config/sim_config.yaml`** — MuJoCo scene and object placement
-
-```yaml
-simulation:
-  timestep: 0.001          # 1 kHz
-  control_frequency: 1000
-
-objects:
-  - name: box_1
-    type: dynamic
-    model_path: "../models/mujoco/props/box_red.xml"
-    pose:
-      position: [0.8, 0.0, 0.6]
-      orientation: [1, 0, 0, 0]
-```
-
-Static, dynamic, visual, and mocap object types are supported. Objects are assembled into a single MuJoCo scene at startup by `scene_builder` — no manual XML editing required.
-
-**`config/streamer_config.yaml`** — video pipeline
-
-```yaml
-source_type: "mujoco"    # or "realsense"
-bitrate_kbps: 2000
-fec_percentage: 10
-fps: 30
-stream_width: 1280
-stream_height: 960
-port: 5004
-feedback_port: 5005
-```
+Alongside the operator channel, each arm exposes a second command port carrying absolute world-frame poses with no VR origin semantics, so an autonomous controller can drive the same loop through the same message struct the operator uses.
 
 ---
 
-## Repository structure
+## The predictive twin
 
-```
-teleop-avatar/
-├── src/
-│   ├── main.cpp                        # Entry point: loads config, starts Avatar
-│   ├── avatar.cpp                      # Master state machine + device coordination
-│   ├── arm_control.cpp                 # Per-arm control loop (200 Hz SM, 1 kHz torque)
-│   ├── head_control.cpp                # Pan-tilt control
-│   ├── interpolator.cpp                # Command interpolation
-│   ├── network/
-│   │   ├── udp_transport.cpp           # Raw UDP send / receive
-│   │   └── udp_reliable.cpp            # ACK + retransmit for high-level commands
-│   ├── sim_env/
-│   │   ├── simulation.cpp              # MuJoCo thread (1 kHz)
-│   │   ├── scene_builder.cpp           # Assembles scene XML from config at startup
-│   │   ├── robot.cpp                   # libfranka-compatible robot interface
-│   │   ├── gripper.cpp                 # Gripper actuation
-│   │   ├── model.cpp                   # Pinocchio FK wrapper
-│   │   └── tum_head_driver.cpp         # Custom pan-tilt hardware driver
-│   └── streamer/
-│       ├── streamer_main.cpp           # Streamer entry point
-│       ├── video_streamer.cpp          # GStreamer H.264 RTP pipeline
-│       ├── stream_quality_controller.cpp # Adaptive bitrate / FPS / FEC
-│       ├── camera_source.cpp           # MuJoCo shared-memory frame source
-│       └── realsense_source.cpp        # RealSense camera frame source
-├── include/                            # Headers (mirrors src/ layout)
-├── config/
-│   ├── config.yaml                     # Top-level: points to sub-configs
-│   ├── robot_config.yaml               # Devices, control gains, UDP ports
-│   ├── sim_config.yaml                 # MuJoCo scene, cameras, objects
-│   └── streamer_config.yaml            # Video pipeline parameters
-├── models/
-│   ├── mujoco/
-│   │   ├── robots/franka_fr3/          # FR3 torque-control MJCF (MuJoCo Menagerie)
-│   │   ├── robots/franka_panda/        # Panda MJCF
-│   │   ├── robots/pan_tilt_dummy/      # Custom pan-tilt model
-│   │   └── props/                      # Table, wall, boxes, target frames
-│   └── urdf/franka_fr3/               # URDF for Pinocchio FK
-├── cmake/
-│   ├── options.cmake                   # BUILD_WITH_FRANKA / BUILD_WITH_MUJOCO flags
-│   └── dependencies.cmake
-├── analysis/
-│   ├── notebooks/
-│   │   ├── inspect_episode.ipynb       # Per-episode log viewer
-│   │   └── read_logging.ipynb          # Full session log reader
-│   └── utils/common.py
-├── tests/
-│   ├── arm_tester.py                   # Send test commands to a running avatar
-│   ├── test_stream_quality.py          # Stream health / quality controller tests
-│   └── test_transmission.py            # UDP channel tests
-├── docs/
-│   └── system_overview_avatar.png      # Architecture diagram
-├── launch.sh                           # Start avatar + avatar_streamer together
-└── CMakeLists.txt
-```
+Across a long link the video feed is the slowest thing the operator sees, and every input is judged against a picture of the past. The fix is not a faster picture — it is to stop making the operator wait for it.
+
+![The same command stream driving a local simulated arm and the real hardware](docs/gifs/twin_vs_avatar.gif)
+
+<sub>Left: the twin, a local instance running on a simulated plant. Right: the hardware. Separate camera viewpoints, same command stream.</sub>
+
+Because the backends are interchangeable, a second instance of this identical stack runs locally on a simulated plant. **One binary, two roles** — `role:` in `config.yaml` selects `avatar` or `twin`, which governs which config subtree loads and whether a reconciler is constructed. The twin sees every command the moment the operator issues it; the hardware sees it one forward delay later.
+
+Prediction drifts, so the twin is corrected against delayed hardware telemetry. The avatar forwards joint state at 100 Hz; the twin's **reconciler** replays its own buffered state and applied control forward through a private headless `mjData` to the same instant, and pulls the prediction toward the corrected estimate through a filtered gain rather than snapping it:
+
+| Regime | Innovation ‖q_twin − q_avatar‖ | Behaviour |
+|---|---|---|
+| Soft | below ~2° | correction dissolves into the servo, no visible jump |
+| Hard | above ~10° | hard resync and a UI cue — the model broke (contact, e-stop, joint limit) |
+
+A staleness guard drops corrections older than 50 ms, so a stalled reconciler thread degrades to open-loop prediction instead of applying ancient corrections.
 
 ---
 
-## Build
+## Data collection
 
-### 1. Clone
+Episodes are the unit of collection, and both processes agree on their boundaries: the control process emits episode start/end over UDP, and the pipeline opens and closes per-camera recordings in sync. An episode config server can randomise object spawns per episode and hand the full scene configuration back, so a collection session varies without hand-editing YAML.
+
+Each episode folder under `logs/NNN/` holds per-device telemetry (`arm_left.csv`, `arm_right.csv`, `head.csv`, `scene.csv`, each with a `_meta` sidecar carrying episode configuration and outcome), plus one raw H.264 elementary stream per camera with a per-frame timestamp sidecar.
+
+Video and telemetry run at different, uneven rates, so conversion aligns them by wall clock onto a fixed-rate master timeline:
+
+| Script | Purpose |
+|---|---|
+| `episode_to_hdf5.py` | Build one synchronised training HDF5 from an episode folder |
+| `validate_episode.py` | Pre-collection gate: assert acceptance criteria on a converted episode |
+| `inspect_episode.py` | Quick HDF5 inspector |
+| `episode_video_to_mp4.py` | Remux an episode's H.264 to MP4; can split stereo and crop timestamp markers |
+| `analyze_latency.py` | Capture-to-encode latency from the timestamp sidecars |
+| `episode_config_server.py` | Randomised per-episode object spawns over msgpack/UDP |
+
+Notebooks for reading and plotting sessions live in `analysis/`.
+
+---
+
+## Measured
+
+From one desk-hardware session, operator and avatar on separate machines:
+
+![Latency budget across measured stages](docs/media/latency_budget.png)
+
+| | |
+|---|---|
+| Command channel | 50 ms, steady at 200 Hz |
+| Video path, reported | 91 ms median |
+| Camera → headset, frame transit | 106 ms median |
+| Video jitter | 0.08 ms median |
+| Packet loss | effectively zero over the session |
+
+The first three bars are direct measurements against a common NTP-disciplined clock. The fourth — command to robot pose responding — is a cross-correlation estimate and should be read as an order of magnitude, not a figure. This is one session on a desk setup, not a benchmark.
+
+---
+
+## Building
+
+### Prerequisites
+
+MuJoCo, Pinocchio, Eigen3, yaml-cpp, msgpack-cxx and Poco are required. GStreamer is needed for the pipeline binary, libfranka only for hardware builds, and the Intel RealSense SDK only if you want a camera source other than MuJoCo.
+
+### Options
+
+| Flag | Default | Effect |
+|---|---|---|
+| `BUILD_WITH_MUJOCO` | `ON` | MuJoCo simulation backend — no hardware required |
+| `BUILD_WITH_FRANKA` | `OFF` | Real Franka arm via libfranka |
+| `BUILD_STREAMER` | `ON` (`OFF` on Windows) | Build the `avatar_pipeline` binary |
+| `BUILD_WITH_REALSENSE` | `OFF` | RealSense camera source |
+| `BUILD_WITH_TESTS` | `ON` | Test targets |
+
+### Configure and build
 
 ```bash
-git clone https://github.com/AlexanderWegenerRobotics/teleop-simulator.git
-cd teleop-simulator
-mkdir build && cd build
-```
+git clone https://github.com/AlexanderWegenerRobotics/teleop-avatar.git
+cd teleop-avatar && mkdir build && cd build
 
-### 2. Configure
+# simulation only — no hardware needed
+cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF \
+         -DMUJOCO_ROOT=/path/to/mujoco -DCMAKE_PREFIX_PATH=/opt/openrobots
 
-**Simulation only (no hardware required):**
-```bash
-cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DMUJOCO_ROOT=/path/to/mujoco
-cmake .. -G "Visual Studio 17 2022" -DCMAKE_PREFIX_PATH="$env:CONDA_PREFIX\Library" -DCMAKE_TOOLCHAIN_FILE="" -DBUILD_WITH_MUJOCO=ON -DBUILD_STREAMER=ON -DBUILD_WITH_FRANKA=OFF
-
-cmake .. \
-  -DBUILD_STREAMER=ON \
-  -DBUILD_WITH_REALSENSE=ON \
-  -DBUILD_WITH_FRANKA=OFF \
-  -DMUJOCO_ROOT=/home/robot/Documents/awegener/tools/mujoco \
-  -DCMAKE_PREFIX_PATH="/opt/openrobots"
-```
-
-**Real Franka hardware:**
-```bash
+# real Franka hardware
 cmake .. -DBUILD_WITH_MUJOCO=OFF -DBUILD_WITH_FRANKA=ON
+
+cmake --build . --config Release -j
 ```
 
-### 3. Build
-
-```bash
-cmake --build . --config Release
-make -j$(nproc)
-
-```
-
-This produces two binaries: `build/avatar` and `build/avatar_streamer`.
+This produces `avatar` and, unless the pipeline is disabled, `avatar_pipeline`.
 
 ---
 
 ## Running
 
 ```bash
-./launch.sh
+./launch.sh              # role from config.yaml
+./launch.sh --twin       # force twin role
+./launch.sh --avatar     # force avatar role
 ```
 
-This starts `avatar` and `avatar_streamer` as background processes and shuts both down cleanly on Ctrl+C. To run them individually for debugging:
+`launch.sh` finds the binaries, starts both, and shuts both down cleanly on Ctrl+C. To run them separately for debugging, launch `./avatar` and `./avatar_pipeline` from the build directory — both accept the same role flag.
 
-```bash
-./build/avatar &
-./build/avatar_streamer
-```
+With `BUILD_WITH_MUJOCO=ON` and no VR interface running, the avatar starts, builds the scene and idles waiting for commands, so the scene, control loops and logging can all be exercised without a robot or a headset.
+
+### Networking and clock sync
+
+Avatar and operator connect over ZeroTier; addresses and ports live in the robot and pipeline configs. One-way latency measurement is only meaningful with synchronised clocks — run NTP (or chrony) on both machines and verify sync before trusting any latency number.
 
 ---
 
-## Networking & clock sync
+## Configuration
 
-Both the avatar computer and the operator computer connect over ZeroTier VPN. IPs and ports are set in `config/robot_config.yaml` and `config/streamer_config.yaml`.
+`config/config.yaml` is a small index: a `role:` key plus one subtree per role naming the files that role should load.
 
-For accurate one-way latency measurement, clocks must be synchronized via NTP. On macOS:
+```yaml
+role: avatar
 
-```bash
-sudo mkdir -p /var/run/chrony
-sudo /opt/homebrew/sbin/chronyd -f /opt/homebrew/etc/chrony.conf
-chronyc tracking   # verify sync
+avatar_config:
+  sim_config:      "../config/sim_config_franka_desk.yaml"
+  robot_config:    "../config/robot_config_desk_remote.yaml"
+  streamer_config: "../config/pipeline_config_desk_remote.yaml"
+```
+
+| File | Governs |
+|---|---|
+| `robot_config_*` | Devices, transmission ports, control gains, workspace limits, self-collision, twin telemetry, grasp confirmation |
+| `sim_config_*` | MuJoCo scene: timestep, cameras, static/dynamic/visual/mocap objects |
+| `pipeline_config_*` | Stereo mode, stream resolution and rate, camera channels, quality ladder, episode listener port |
+| `reconciler_config` | Twin only: correction time constant, innovation thresholds, buffer horizon, staleness guard |
+| `*_overlay` | Twin only: sparse overrides applied on top of the avatar's transmission and pipeline configs |
+
+Scenario variants sit beside each other (`_avatar`, `_local`, `_desk_local`, `_desk_remote`, `_twin_*`), and switching scenario is an edit to the index rather than a diff across every file. Task definitions live in `config/tasks/`. Every config file carries inline comments on the non-obvious values — those comments are the reference, not this table.
+
+---
+
+## Repository layout
+
+```
+src/ , include/          C++ sources; include/ mirrors src/
+  sim_env/               MuJoCo backend, scene builder, robot/gripper/head drivers
+  network/               UDP transport, per-device streams, reliable ACK channel
+  pipeline/              Camera sources, shared memory, streaming, quality control,
+                         episode control, video logging
+  twin/                  Role selection, ring buffer, reconciler, mailbox, telemetry
+  intention/             Operator-intent sampling and per-episode annotation logs
+config/                  Scenario configs and task definitions
+models/                  MuJoCo MJCF (Franka FR3/Panda, pan-tilt, Allegro, props) and URDF
+scripts/                 Episode conversion, validation, inspection, latency analysis
+analysis/                Notebooks and plotting utilities
+tests/                   Command injection, stream quality, transport tests
+launch.sh                Start both processes together
 ```
 
 ---
 
 ## Logging
 
-Each session writes per-device CSV logs to `log/`:
-
-| File | Contents |
-|------|----------|
-| `arm_left_log.csv` | Joint positions, velocities, external torques, EE pose, control mode, state — at control rate |
-| `arm_right_log.csv` | Same for right arm |
-| `head_log.csv` | Pan/tilt commands and state |
-| `*_log_meta.csv` | Episode boundaries with pick/place config and outcome |
-
-Analysis notebooks for reading and visualizing these logs are in `analysis/notebooks/`.
+Alongside per-episode folders, a running session writes continuous per-device CSVs to `log/`: joint positions, velocities, external torques, end-effector pose, control mode and state at control rate, with `_meta` files marking episode boundaries and outcomes.
 
 ---
 
-## Dependencies
+## License
 
-| Dependency | Purpose |
-|------------|---------|
-| MuJoCo | Physics simulation (1 kHz) |
-| libfranka | Real Franka arm interface (optional) |
-| Pinocchio | Forward kinematics |
-| GStreamer | H.264 RTP video pipeline |
-| Intel RealSense SDK | Camera source (optional) |
-| Eigen3 | Linear algebra |
-| yaml-cpp | Config parsing |
-| msgpack-cxx | Command channel serialisation |
-| Poco | Networking utilities |
-| ZeroTier | VPN between avatar and interface computer |
-
----
+Apache License 2.0 — see [LICENSE](LICENSE).
 
 ## Contact
 
