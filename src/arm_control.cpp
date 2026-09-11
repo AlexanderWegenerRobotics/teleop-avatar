@@ -393,6 +393,21 @@ void ArmControl::runStateHandler(){
                 bool absolute = has_cmd_abs;
                 const ArmCommandMsg& src = absolute ? cmd_abs : cmd;
 
+                // Record which command we are about to ACT on, for the echo in
+                // the outgoing ArmStateMsg. Deliberately set here rather than
+                // where the packet is received: a command that arrived but was
+                // dropped (not ENGAGED, superseded within the same tick) never
+                // moved the robot, and echoing it would understate the latency
+                // the operator actually experiences.
+                //
+                // Only the relative/operator stream is echoed. The absolute
+                // stream comes from an autonomous policy, not from the VR
+                // interface, so there is no send timestamp on the operator side
+                // to difference against.
+                if (!absolute) {
+                    applied_cmd_seq_.store(src.header.sequence, std::memory_order_relaxed);
+                }
+
                 Eigen::Isometry3d T_cmd = Eigen::Isometry3d::Identity();
                 Eigen::Vector3d pos(src.position[0], src.position[1], src.position[2]);
                 Eigen::Quaterniond q(src.quaternion[0], src.quaternion[1], src.quaternion[2], src.quaternion[3]);
@@ -504,6 +519,9 @@ void ArmControl::runStateHandler(){
             // stops advancing if the control loop dies, which is the whole
             // point of it (see MsgHeader in common.hpp).
             state_msg.header.sample_time_ns = rs_sample_ns;
+            // Echo the last operator command we acted on, so the interface can
+            // difference it against its own send timestamp (see common.hpp).
+            state_msg.applied_cmd_sequence = applied_cmd_seq_.load(std::memory_order_relaxed);
             transmission_->setSendData(state_msg);
         }
 

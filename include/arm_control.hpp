@@ -142,6 +142,12 @@ private:
     // is the one field that goes stale, and it is what the operator interface
     // alarms on. See MsgHeader in common.hpp.
     std::atomic<uint64_t> state_sample_ns_{0};
+    // header.sequence of the last operator command actually acted on, echoed
+    // in outgoing ArmStateMsg so the interface can measure round-trip latency
+    // on a single clock. Written by the state thread, read by the same thread;
+    // atomic only because the value crosses into the transmission snapshot.
+    // 0 until the first command is consumed.
+    std::atomic<uint32_t> applied_cmd_seq_{0};
     std::unique_ptr<franka::Model> franka_owned_model_;
     Eigen::Isometry3d T_origin_;
     std::unique_ptr<SelfCollisionProtection> scp_;

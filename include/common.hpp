@@ -110,6 +110,21 @@ struct ArmStateMsg {
     uint8_t recovering;
     float gripper_width;
     GraspState grasp_state;
+    // header.sequence of the most recent ArmCommandMsg this arm actually
+    // CONSUMED (not merely received). Echoed back so the operator side can
+    // measure round-trip latency against its own clock.
+    //
+    // Every other latency figure in this system is a difference between
+    // timestamps taken on two different machines, so it carries the hosts'
+    // clock offset as an unknown additive error -- and that offset is the same
+    // order of magnitude as the latency being measured. Echoing the sequence
+    // lets the interface compute
+    //     rtt = receive_time - send_time(applied_cmd_sequence)
+    // entirely on one clock, where the offset cancels exactly.
+    //
+    // 0 = no command consumed yet (e.g. not ENGAGED). Treat as unknown rather
+    // than as zero latency.
+    uint32_t applied_cmd_sequence;
 };
  
 struct HeadCommandMsg {
