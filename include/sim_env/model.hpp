@@ -31,7 +31,11 @@ struct GMOInputs {
 
 class Model {
 public:
-    Model(const std::string& urdf_path, const std::array<double, 4>& base_quat, const std::string& ee_frame_name);
+    // joint_damping / joint_coulomb / rotor_inertia must mirror the MJCF's
+    // damping / frictionloss / armature for this arm: anything the plant applies
+    // and the model omits lands in tau_ext.
+    Model(const std::string& urdf_path, const std::array<double, 4>& base_quat, const std::string& ee_frame_name,
+          const Vector7& joint_damping, const Vector7& joint_coulomb, const Vector7& rotor_inertia);
     ~Model();
 
     Model(const Model&) = delete;
@@ -54,6 +58,8 @@ private:
     pinocchio::Model pin_model_;
     pinocchio::Data  pin_data_;
     std::string ee_frame_name_;
+    Vector7 joint_damping_;   // Nm.s/rad, viscous
+    Vector7 joint_coulomb_;   // Nm, dry friction magnitude
     mutable std::mutex pin_mutex_;
 };
 

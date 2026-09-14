@@ -12,8 +12,9 @@
 
 using namespace franka;
 
-Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_quat, const std::string& ee_frame_name)
-    : ee_frame_name_(ee_frame_name)
+Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_quat, const std::string& ee_frame_name,
+             const Vector7& joint_damping, const Vector7& joint_coulomb, const Vector7& rotor_inertia)
+    : ee_frame_name_(ee_frame_name), joint_damping_(joint_damping), joint_coulomb_(joint_coulomb)
 {
     pinocchio::Model full_model;
     pinocchio::urdf::buildModel(urdf_path, full_model);
@@ -41,6 +42,12 @@ Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_qua
     q.normalize();
     Eigen::Vector3d g_base = q.toRotationMatrix().transpose() * Eigen::Vector3d(0, 0, -9.81);
     pin_model_.gravity.linear(g_base);
+
+    // Rotor inertia: crba adds this to M's diagonal, so p = M*dq and the Coriolis
+    // matrix match the plant instead of ignoring the drives' reflected inertia.
+    if (pin_model_.nv == 7)
+        pin_model_.armature = rotor_inertia;
+
     pin_data_ = pinocchio::Data(pin_model_);
 }
 
@@ -124,7 +131,13 @@ std::array<double, 6> Model::cartesianWrench(const std::array<double, 7>& q,
                                 pin_model_.getFrameId(ee_frame_name_),
                                 pinocchio::LOCAL_WORLD_ALIGNED, J);
 
-    Eigen::Matrix<double, 6, 1> F_ext = (J * J.transpose()).ldlt().solve(J * tau_ext_eig);
+    // Damped least squares: near a singularity J*J^T is ill-conditioned and an
+    // undamped solve turns model noise into a large spurious wrench.
+    constexpr double kLambdaSq = 1e-3;
+    Eigen::Matrix<double, 6, 6> A = J * J.transpose();
+    A.diagonal().array() += kLambdaSq;
+
+    Eigen::Matrix<double, 6, 1> F_ext = A.ldlt().solve(J * tau_ext_eig);
 
     std::array<double, 6> result;
     Eigen::Map<Eigen::Matrix<double, 6, 1>>(result.data()) = F_ext;
@@ -138,10 +151,22 @@ GMOInputs Model::computeGMOInputs(const std::array<double, 7>& q, const std::arr
     std::lock_guard<std::mutex> lock(pin_mutex_);
     pinocchio::crba(pin_model_, pin_data_, q_eig);
     pin_data_.M.triangularView<Eigen::StrictlyLower>() = pin_data_.M.triangularView<Eigen::StrictlyUpper>().transpose();
+    const Vector7 p = pin_data_.M * dq_eig;
 
     pinocchio::computeCoriolisMatrix(pin_model_, pin_data_, q_eig, dq_eig);
     pinocchio::computeGeneralizedGravity(pin_model_, pin_data_, q_eig);
 
-    return { pin_data_.M * dq_eig, pin_data_.C * dq_eig + pin_data_.g };
+    // Dissipative joint torque. Saturated ramp rather than sign(): MuJoCo solves
+    // frictionloss as a constraint that takes any value up to the limit at rest,
+    // so a hard switch chatters where the plant is smooth.
+    constexpr double kStictionVel = 0.01;  // rad/s
+    const Vector7 ramp  = (dq_eig / kStictionVel).cwiseMax(-1.0).cwiseMin(1.0);
+    const Vector7 tau_f = joint_damping_.cwiseProduct(dq_eig) + joint_coulomb_.cwiseProduct(ramp);
+
+    // Momentum observer: dp/dt = tau + C^T*dq - g - tau_f + tau_ext, so the term
+    // the residual subtracts is g - C^T*dq + tau_f. Note C^T, not -C: they differ
+    // by (C + C^T)*dq = dM/dt*dq, which otherwise shows up as fake external force
+    // whenever the arm moves.
+    return { p, pin_data_.g - pin_data_.C.transpose() * dq_eig + tau_f };
 }
 

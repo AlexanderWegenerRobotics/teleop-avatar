@@ -17,12 +17,6 @@ Torques::Torques(std::initializer_list<double> torques) {
 Robot::Robot() {
     r_            = Vector7::Zero();
     p_prev_       = Vector7::Zero();
-    // One-time init only -- deliberately NOT repeated in control() (see there):
-    // the retry loop in arm_control.cpp re-enters control() after every caught
-    // fault, and tau_prev_ needs to keep holding the last actually-applied
-    // torque across that re-entry, not reset to zero, or the discontinuity
-    // check below manufactures a fault out of a normal torque on the very next
-    // tick (see automaticErrorRecovery()'s comment for the full story).
     tau_filtered_ = Vector7::Zero();
     tau_prev_     = Vector7::Zero();
 }
@@ -37,15 +31,28 @@ void Robot::set_simulation(Simulation& _sim, const YAML::Node& sim_dev, const YA
     std::string urdf_path = sim_dev["urdf_path"].as<std::string>();
     auto ori = robot_dev["base_pose"]["orientation"].as<std::vector<double>>();
     std::array<double, 4> base_quat = {ori[0], ori[1], ori[2], ori[3]};
-    model_ = std::make_unique<franka::Model>(urdf_path, base_quat, ee_frame_name_);
 
-    // Same q_min/q_max ArmControl itself reads from this device's config and
-    // plans/brakes against -- checkFrankaErrors' hard joint-limit check uses
-    // these (see below) instead of an independent hardcoded range, so the two
-    // layers agree on where the limit actually is. Falls back to the FR3
-    // factory range (this class's member-initializer default) if a config
-    // omits them, though ArmControl requires these keys unconditionally so
-    // that shouldn't happen for any device that's actually running.
+    // Defaults are the mujoco_menagerie FR3 values in fr3_torque.xml. Override
+    // per device in sim_config when the MJCF (or an identified arm) differs --
+    // these must track the plant or the GMO reports friction as tau_ext.
+    auto read7 = [&sim_dev](const char* key, const Vector7& fallback) {
+        Vector7 v = fallback;
+        if (sim_dev[key]) {
+            auto raw = sim_dev[key].as<std::vector<double>>();
+            for (size_t i = 0; i < 7 && i < raw.size(); ++i) v[static_cast<int>(i)] = raw[i];
+        }
+        return v;
+    };
+    const Vector7 joint_damping = read7("joint_damping",
+        (Vector7() << 0.21, 0.21, 0.21, 0.21, 0.21, 0.21, 0.21).finished());
+    const Vector7 joint_coulomb = read7("joint_friction",
+        (Vector7() << 1.137, 1.137, 1.137, 1.137, 0.763, 0.44, 0.248).finished());
+    const Vector7 rotor_inertia = read7("rotor_inertia",
+        (Vector7() << 0.195, 0.195, 0.195, 0.195, 0.074, 0.074, 0.074).finished());
+
+    model_ = std::make_unique<franka::Model>(urdf_path, base_quat, ee_frame_name_,
+                                             joint_damping, joint_coulomb, rotor_inertia);
+
     if (robot_dev["q_min"] && robot_dev["q_max"]) {
         auto qmin_vec = robot_dev["q_min"].as<std::vector<double>>();
         auto qmax_vec = robot_dev["q_max"].as<std::vector<double>>();
@@ -81,19 +88,6 @@ void Robot::setCartesianImpedance(const std::array<double, 6>& K_x) {
 }
 
 void Robot::automaticErrorRecovery() {
-    // Real hardware clears its reflex/lockout state here. Sim has no persistent
-    // lockout, so this just resets GMO history so the next control() call's
-    // external-force estimate starts clean, matching the "fresh start" behavior
-    // after a real recovery.
-    //
-    // Deliberately NOT resetting tau_prev_ (or tau_filtered_) to zero: it's the
-    // reference checkFrankaErrors' torque_discontinuity check diffs the next
-    // commanded torque against. Zeroing it means the very next control tick
-    // compares a normal torque (e.g. a few Nm) against 0, producing a huge
-    // apparent rate purely as an artifact of the reset -- not a real
-    // discontinuity -- which manufactures a second (and third, and fourth...)
-    // fault out of a single genuine one, cascading straight into FAULT. Leaving
-    // it as whatever was last actually applied keeps the check meaningful.
     r_            = Vector7::Zero();
     p_prev_       = Vector7::Zero();
     std::cout << "[SIM] " << name_ << ": automaticErrorRecovery()" << std::endl;
