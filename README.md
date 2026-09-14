@@ -125,8 +125,7 @@ git clone https://github.com/AlexanderWegenerRobotics/teleop-avatar.git
 cd teleop-avatar && mkdir build && cd build
 
 # simulation only — no hardware needed
-cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF \
-         -DMUJOCO_ROOT=/path/to/mujoco -DCMAKE_PREFIX_PATH=/opt/openrobots
+cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DMUJOCO_ROOT=/path/to/mujoco -DCMAKE_PREFIX_PATH=/opt/openrobots
 
 # real Franka hardware
 cmake .. -DBUILD_WITH_MUJOCO=OFF -DBUILD_WITH_FRANKA=ON
