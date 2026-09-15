@@ -8,8 +8,34 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/cmake/options.local.cmake")
     include(${CMAKE_SOURCE_DIR}/cmake/options.local.cmake)
 endif()
 
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Debug)
+# Default to an OPTIMISED build, not Debug.
+#
+# This is a 1 kHz torque-control loop whose inner loop is Eigen and Pinocchio --
+# both header-only and both entirely dependent on inlining. Measured on one
+# cartesianImpedanceControl tick's Eigen half alone (7x7 LDLT with 7 RHS, the
+# 6x6 solve, the nullspace projector): 200 us at -g versus 1.8 us at
+# -O3 -DNDEBUG. 111x. Pinocchio's crba/computeCoriolisMatrix/Jacobians are more
+# templated still.
+#
+# With the old Debug default the control loop body cost ~1.7 ms, so it delivered
+# 579 Hz against a 1 kHz target -- and because the deadline was missed every
+# tick, every latency measured on such a build was inflated with no warning that
+# anything was wrong. This only ever bit single-config generators (Makefiles,
+# Ninja): on Windows the multi-config generators ignore CMAKE_BUILD_TYPE and
+# pick at build time, which is why the same tree behaved correctly there.
+#
+# RelWithDebInfo rather than Release: -O2 -g -DNDEBUG is within a few percent of
+# -O3 here and keeps usable stack traces for a system that has to be debugged
+# when it faults on hardware.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
+  message(STATUS "CMAKE_BUILD_TYPE not set -- defaulting to RelWithDebInfo")
+endif()
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  message(WARNING
+    "Building Debug: Eigen/Pinocchio run unoptimised with assertions on, which "
+    "costs roughly 100x in the control loop and WILL miss the 1 kHz deadline. "
+    "Fine for stepping through logic, useless for any timing or latency work.")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
