@@ -14,6 +14,12 @@
 namespace {
 constexpr double kGripperMaxWidth = 0.08;
 
+// Bounds on the measured command interval used by validateTargetPose. Low guards
+// against a zero/negative interval; high caps the jump allowed after a gap in the
+// command stream (0.05 s x max_command_velocity = 50 mm at 1.0 m/s).
+constexpr double kMinCmdDt = 0.0005;
+constexpr double kMaxCmdDt = 0.05;
+
 template<size_t N>
 std::array<double, N> toArray(const std::vector<double>& v) {
     std::array<double, N> a{};
@@ -36,8 +42,21 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         .control_freq   = 1000,
         .comm_freq      = device_config["transmission"]["frequency"].as<int>(),
         .n_dof          = 7,
-        .max_linear_vel = 0.5,
-        .max_angular_vel = 0.8
+        // The interpolator's speed caps MUST match the safety limiter applied in
+        // validateTargetPose, never be tighter than it. They were hardcoded at
+        // 0.5 m/s and 0.8 rad/s while safety allowed 1.0 m/s and 4.0 rad/s --
+        // 2x tighter in translation, 5x in rotation. planCartesian replans from
+        // the current interpolated waypoint each command, so above the cap the
+        // reference simply cannot move fast enough and lag accumulates without
+        // bound until the operator slows down. It is a cliff, not a gradient:
+        // below the cap the cost is ~4.5 ms (half of min_steps), at it the
+        // reference saturates. logs/079 and logs/080 show the reference angular
+        // rate pinned at p95 = 0.86 rad/s against the old 0.8 cap for much of
+        // the episode -- rotation was saturated during ordinary use. Reading
+        // both from the same config keys the limiter uses keeps them from
+        // drifting apart again.
+        .max_linear_vel  = device_config["safety"]["max_command_velocity"].as<double>(),
+        .max_angular_vel = device_config["safety"]["max_command_angular_velocity"].as<double>()
     })
     , recovery_(device_config["name"].as<std::string>())
 {
@@ -255,6 +274,12 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     if (device_config["rt"]) {
         if (device_config["rt"]["control_core"]) rt_control_core_ = device_config["rt"]["control_core"].as<int>();
         if (device_config["rt"]["state_core"])   rt_state_core_   = device_config["rt"]["state_core"].as<int>();
+        if (device_config["rt"]["state_rate_hz"]) state_rate_hz_ = device_config["rt"]["state_rate_hz"].as<double>();
+    }
+    if (state_rate_hz_ < 1.0) {
+        std::cout << "[WARN] " << name_ << ": rt.state_rate_hz = " << state_rate_hz_
+                  << " is not usable, falling back to 200." << std::endl;
+        state_rate_hz_ = 200.0;
     }
 
     logger_ = std::make_unique<DataLogger<ArmLogEntry>>("../log/" + name_ + "_log.csv", armLogHeader, armLogRow, session_id);
@@ -288,6 +313,11 @@ void ArmControl::start(){
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     state_thread = std::thread(&ArmControl::runStateHandler, this);
     set_realtime(state_thread, rt_state_core_);
+    // Wake the state thread the moment a command lands rather than letting it
+    // sit until the next periodic tick. Must be set before start() -- the
+    // callback is read unlocked on the receive thread.
+    if (transmission_) transmission_->setOnReceive([this]{ notifyCommandArrived(); });
+    if (transmission_absolute_) transmission_absolute_->setOnReceive([this]{ notifyCommandArrived(); });
     if (transmission_) transmission_->start();
     if (transmission_absolute_) transmission_absolute_->start();
     logger_->start();
@@ -301,6 +331,9 @@ void ArmControl::stop(){
     if (state_trace_) state_trace_->stop();
     bRunning = false;
     state_ = SysState::OFFLINE;
+    // Release runStateHandler if it is parked in waitForCommandOrDeadline;
+    // without this the join below waits out one full period.
+    notifyCommandArrived();
     if (control_thread.joinable()) control_thread.join();
     if (state_thread.joinable()) state_thread.join();
     if (transmission_) transmission_->stop();
@@ -308,9 +341,19 @@ void ArmControl::stop(){
 }
 
 void ArmControl::runStateHandler(){
-    constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 200));
-    constexpr double dt_state = 1.0 / 500.0;
-    auto next_control_time = std::chrono::high_resolution_clock::now();
+    // Loop period and the dt handed to stepIk now come from one number.
+    // They used to be independently hardcoded -- a 200 Hz period sitting next to
+    // dt_state = 1/500 -- so stepIk integrated q_ref += u*dt with a dt 2.5x too
+    // small: the IK reference advanced at 40% of the commanded joint velocity
+    // and the a_max*dt acceleration bound was 2.5x tighter than configured.
+    // JOINT_IK was running 2.5x slower than it was tuned for. Dead code while
+    // control_mode is cartesian_impedance, but silent and confusing the moment
+    // the IK path is revisited.
+    const auto control_period =
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(1.0 / state_rate_hz_));
+    const double dt_state = 1.0 / state_rate_hz_;
+    auto next_control_time = std::chrono::steady_clock::now();
     SysState prev_state = SysState::OFFLINE;
     Eigen::VectorXd q_current = Eigen::VectorXd::Zero(7);
     bool has_cmd = false;
@@ -330,6 +373,21 @@ void ArmControl::runStateHandler(){
             cmd_abs = transmission_absolute_->getRecvData();
             has_cmd_abs = true;
             desired_gripper_closed_.store(cmd_abs.gripper > 0.5f);
+        }
+
+        // ── Early wake ───────────────────────────────────────────────────────
+        // A command landed before the periodic deadline. Push it straight
+        // through to the target and go back to waiting instead of holding it
+        // until the next tick. Only the command -> target path runs here: the
+        // state machine, telemetry publish, gripper read and state trace stay on
+        // the periodic tick, so none of their rates follow the command rate when
+        // comms move to 500 Hz. prev_state is deliberately not touched, so a
+        // fast iteration can never swallow a state-entry block.
+        if (std::chrono::steady_clock::now() < next_control_time) {
+            if (state_ == SysState::ENGAGED && (has_cmd || has_cmd_abs))
+                applyOperatorCommand(cmd, cmd_abs, has_cmd, has_cmd_abs, prev_cmd_quat_);
+            waitForCommandOrDeadline(next_control_time);
+            continue;
         }
 
         updateRecovery();
@@ -385,58 +443,7 @@ void ArmControl::runStateHandler(){
         // ── ENGAGED tick ──────────────────────────────────────────────────────
         else if (state_ == SysState::ENGAGED) {
             if (has_cmd || has_cmd_abs) {
-                // Absolute (autonomous policy) takes priority if both arrived
-                // this tick -- shouldn't happen in practice, since
-                // SystemArbitrator/policy mode gating means only one sender
-                // is ever actually active, but this keeps it deterministic
-                // rather than order-of-arrival dependent.
-                bool absolute = has_cmd_abs;
-                const ArmCommandMsg& src = absolute ? cmd_abs : cmd;
-
-                // Record which command we are about to ACT on, for the echo in
-                // the outgoing ArmStateMsg. Deliberately set here rather than
-                // where the packet is received: a command that arrived but was
-                // dropped (not ENGAGED, superseded within the same tick) never
-                // moved the robot, and echoing it would understate the latency
-                // the operator actually experiences.
-                //
-                // Only the relative/operator stream is echoed. The absolute
-                // stream comes from an autonomous policy, not from the VR
-                // interface, so there is no send timestamp on the operator side
-                // to difference against.
-                if (!absolute) {
-                    applied_cmd_seq_.store(src.header.sequence, std::memory_order_relaxed);
-                }
-
-                Eigen::Isometry3d T_cmd = Eigen::Isometry3d::Identity();
-                Eigen::Vector3d pos(src.position[0], src.position[1], src.position[2]);
-                Eigen::Quaterniond q(src.quaternion[0], src.quaternion[1], src.quaternion[2], src.quaternion[3]);
-                q.normalize();
-                if (q.dot(prev_cmd_quat_) < 0.0) q.coeffs() *= -1.0;
-                prev_cmd_quat_ = q;
-                T_cmd.translation() = pos;
-                T_cmd.linear() = q.toRotationMatrix();
-
-                // Absolute: world-frame target, no origin/controller-remap
-                // involved (worldAbsoluteToBase). Otherwise: existing
-                // delta-from-origin VR semantics (transformCommandToBase),
-                // unchanged.
-                Eigen::Isometry3d T_target = absolute ? worldAbsoluteToBase(T_cmd) : transformCommandToBase(T_cmd);
-                target_pose_raw_ = T_base_ * T_target;
-                applySelfCollisionFilter(T_target);
-                validateTargetPose(T_target);
-
-                if (control_mode_ == ControlMode::JOINT_IK) {
-                    // IK goal update — goal is frozen when commands stop
-                    motion_gen_.setCartesianGoal(T_target);
-                } else {
-                    // CARTESIAN_IMPEDANCE: plan interpolated trajectory as before
-                    motion_gen_.planCartesian(motion_gen_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
-                }
-
-                target_pose_ = T_base_ * T_target;
-                has_cmd = false;
-                has_cmd_abs = false;
+                applyOperatorCommand(cmd, cmd_abs, has_cmd, has_cmd_abs, prev_cmd_quat_);
 
             } else if (control_mode_ == ControlMode::CARTESIAN_IMPEDANCE) {
                 Eigen::Isometry3d T_current_target = motion_gen_.getCurrentCartesian();
@@ -560,8 +567,93 @@ void ArmControl::runStateHandler(){
 
         prev_state = state_;
         next_control_time += control_period;
-        std::this_thread::sleep_until(next_control_time);
+        // Fell far behind (host contention, a long gripper call): resynchronise
+        // rather than sprint through a burst of catch-up ticks. Same rationale
+        // as Robot::control.
+        const auto now_tp = std::chrono::steady_clock::now();
+        if (now_tp - next_control_time > std::chrono::milliseconds(50))
+            next_control_time = now_tp;
+        waitForCommandOrDeadline(next_control_time);
     }
+}
+
+// Sleep to the periodic deadline, or return the instant a command arrives.
+// Replaces sleep_until(next_control_time): the command path used to sit behind
+// two independent polls in series -- UdpStream polling a non-blocking socket at
+// send_rate_hz, then this thread polling hasNew() -- for 0-10 ms of pure
+// waiting on a packet that had already arrived.
+void ArmControl::waitForCommandOrDeadline(
+        const std::chrono::steady_clock::time_point& deadline) {
+    std::unique_lock<std::mutex> lock(cmd_wake_mtx_);
+    cmd_wake_cv_.wait_until(lock, deadline, [this] {
+        return cmd_wake_flag_ || !bRunning.load(std::memory_order_relaxed);
+    });
+    cmd_wake_flag_ = false;
+}
+
+void ArmControl::notifyCommandArrived() {
+    {
+        std::lock_guard<std::mutex> lock(cmd_wake_mtx_);
+        cmd_wake_flag_ = true;
+    }
+    cmd_wake_cv_.notify_one();
+}
+
+// Body lifted verbatim out of the ENGAGED tick so the early-wake path and the
+// periodic path apply a command identically. Called only from the state thread,
+// so target_pose_/target_pose_raw_ and prev_cmd_quat_ keep their single-writer
+// invariant.
+void ArmControl::applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommandMsg& cmd_abs,
+                                      bool& has_cmd, bool& has_cmd_abs,
+                                      Eigen::Quaterniond& prev_cmd_quat_) {
+    // Absolute (autonomous policy) takes priority if both arrived this tick --
+    // shouldn't happen in practice, since SystemArbitrator/policy mode gating
+    // means only one sender is ever actually active, but this keeps it
+    // deterministic rather than order-of-arrival dependent.
+    bool absolute = has_cmd_abs;
+    const ArmCommandMsg& src = absolute ? cmd_abs : cmd;
+
+    // Record which command we are about to ACT on, for the echo in the outgoing
+    // ArmStateMsg. Deliberately set here rather than where the packet is
+    // received: a command that arrived but was dropped (not ENGAGED, superseded
+    // within the same tick) never moved the robot, and echoing it would
+    // understate the latency the operator actually experiences.
+    //
+    // Only the relative/operator stream is echoed. The absolute stream comes
+    // from an autonomous policy, not from the VR interface, so there is no send
+    // timestamp on the operator side to difference against.
+    if (!absolute) {
+        applied_cmd_seq_.store(src.header.sequence, std::memory_order_relaxed);
+    }
+
+    Eigen::Isometry3d T_cmd = Eigen::Isometry3d::Identity();
+    Eigen::Vector3d pos(src.position[0], src.position[1], src.position[2]);
+    Eigen::Quaterniond q(src.quaternion[0], src.quaternion[1], src.quaternion[2], src.quaternion[3]);
+    q.normalize();
+    if (q.dot(prev_cmd_quat_) < 0.0) q.coeffs() *= -1.0;
+    prev_cmd_quat_ = q;
+    T_cmd.translation() = pos;
+    T_cmd.linear() = q.toRotationMatrix();
+
+    // Absolute: world-frame target, no origin/controller-remap involved
+    // (worldAbsoluteToBase). Otherwise: existing delta-from-origin VR semantics
+    // (transformCommandToBase), unchanged.
+    Eigen::Isometry3d T_target = absolute ? worldAbsoluteToBase(T_cmd) : transformCommandToBase(T_cmd);
+    target_pose_raw_ = T_base_ * T_target;
+    applySelfCollisionFilter(T_target);
+    validateTargetPose(T_target);
+
+    if (control_mode_ == ControlMode::JOINT_IK) {
+        // IK goal update -- goal is frozen when commands stop
+        motion_gen_.setCartesianGoal(T_target);
+    } else {
+        // CARTESIAN_IMPEDANCE: plan interpolated trajectory as before
+        motion_gen_.planCartesian(motion_gen_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
+    }
+
+    target_pose_ = T_base_ * T_target;
+    has_cmd = false;
+    has_cmd_abs = false;
 }
 
 void ArmControl::updateRecovery() {
@@ -1022,8 +1114,25 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Quaterniond q_target(T_ee_target.rotation());
     Eigen::Quaterniond q_current(T_ee.rotation());
     if (q_target.dot(q_current) < 0.0) q_target.coeffs() *= -1.0;
-    Eigen::Quaterniond q_error = q_target * q_current.inverse();
-    Eigen::Vector3d ori_error(q_error.x(), q_error.y(), q_error.z());
+    // Full rotation vector (axis * angle), not vec(q_err).
+    //
+    // vec(q_err) = n*sin(theta/2) ~ n*theta/2 for small theta -- HALF the
+    // rotation vector -- while the damping term below uses the true angular
+    // velocity from J*dq. The two halves of the impedance were in different
+    // units, so the effective rotational stiffness was kp_cart/2 and the
+    // steady-state lag was 2*kd/kp = 120 ms, not the 60 ms the raw ratio
+    // suggests. Measured orientation lag in logs/079 and logs/080 was 158 and
+    // 168 ms, the worst axis in the system by a wide margin.
+    //
+    // vec() also saturates at theta = 180 deg and reverses past it, so restoring
+    // torque collapses exactly where it is needed most; axis*angle does not.
+    //
+    // The rotational kp_cart entries are HALVED in config alongside this change,
+    // so closed-loop behaviour is unchanged on day one. This commit makes the
+    // gain mean what it says; raising it is a separate, deliberate step.
+    Eigen::Quaterniond q_error = (q_target * q_current.inverse()).normalized();
+    Eigen::AngleAxisd  aa_error(q_error);
+    Eigen::Vector3d    ori_error = aa_error.axis() * aa_error.angle();
 
     Eigen::Matrix<double, 6, 1> error;
     error << pos_error, ori_error;
@@ -1191,10 +1300,32 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
         return;
     }
 
+    // Elapsed time since the last accepted command, MEASURED rather than assumed
+    // from transmission.frequency.
+    //
+    // This used cmd_dt_ = 1/transmission.frequency while the function itself runs
+    // once per state-thread tick. Those are the same quantity only when the two
+    // rates match. Raising comms 200 -> 500 Hz shrank cmd_dt_ to 2 ms while the
+    // tick stayed at 5 ms, so the bound became 2 mm per 5 ms = 0.4 m/s against a
+    // configured 1.0 m/s: the guard silently got 2.5x more aggressive purely from
+    // a comms change, which is the opposite of what raising the command rate is
+    // for. Measuring the interval makes this a true velocity limit at any command
+    // rate, and robust to dropped packets and jitter.
+    const auto cmd_now = std::chrono::steady_clock::now();
+    double cmd_dt = cmd_dt_;   // nominal, for the very first command
+    if (has_prev_valid_target_) {
+        cmd_dt = std::chrono::duration<double>(cmd_now - prev_valid_target_time_).count();
+        // Clamp low against a zero or negative interval (clock jitter, two
+        // commands inside one tick), and high so a long gap -- re-engage, a
+        // stalled sender, an operator who stopped moving -- cannot hand out an
+        // effectively unbounded jump.
+        cmd_dt = std::clamp(cmd_dt, kMinCmdDt, kMaxCmdDt);
+    }
+
     if (has_prev_valid_target_) {
         Eigen::Vector3d dp = p_target - prev_valid_target_pos_;
         double jump_norm   = dp.norm();
-        double max_step    = max_command_velocity_ * cmd_dt_;
+        double max_step    = max_command_velocity_ * cmd_dt;
 
         if (jump_norm > max_step && jump_norm > 1e-9)
             p_target = prev_valid_target_pos_ + (max_step / jump_norm) * dp;
@@ -1203,7 +1334,7 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
             q_target.coeffs() *= -1.0;
 
         double angle     = prev_valid_target_rot_.angularDistance(q_target);
-        double max_angle = max_command_angular_velocity_ * cmd_dt_;
+        double max_angle = max_command_angular_velocity_ * cmd_dt;
 
         if (angle > max_angle && angle > 1e-9)
             q_target = prev_valid_target_rot_.slerp(max_angle / angle, q_target);
@@ -1229,9 +1360,10 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 
     T_target.translation() = p_target;
     T_target.linear()      = q_target.toRotationMatrix();
-    prev_valid_target_pos_ = p_target;
-    prev_valid_target_rot_ = q_target;
-    has_prev_valid_target_ = true;
+    prev_valid_target_pos_  = p_target;
+    prev_valid_target_rot_  = q_target;
+    prev_valid_target_time_ = cmd_now;
+    has_prev_valid_target_  = true;
 }
 
 void ArmControl::reOrigin() {

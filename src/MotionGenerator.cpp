@@ -10,7 +10,12 @@
 
 MotionGenerator::MotionGenerator(const InterpolatorConfig& config)
     : config_(config)
-    , min_steps_(config.control_freq / config.comm_freq)
+    // Floor of 1. Integer division makes this 0 as soon as comm_freq exceeds
+    // control_freq, and then a zero-distance command yields n_steps = 0, an
+    // empty waypoint vector, and getCurrentCartesian() falling back to
+    // Isometry3d::Identity() -- i.e. an impedance target at the robot base.
+    // Harmless at 200 Hz, latent the moment the command rate is raised.
+    , min_steps_(std::max(1, config.control_freq / config.comm_freq))
     , space_(InterpolationSpace::JOINT)
     , joint_idx_(0)
     , cartesian_idx_(0)
@@ -248,8 +253,13 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
     Eigen::Quaterniond q_d(X_goal_.rotation());
     Eigen::Quaterniond q_cur(x.rotation());
     if (q_d.dot(q_cur) < 0.0) q_d.coeffs() *= -1.0;
-    Eigen::Quaterniond q_err = q_d * q_cur.inverse();
-    Eigen::Vector3d    e_o(q_err.x(), q_err.y(), q_err.z());
+    // Full rotation vector, matching cartesianImpedanceControl -- see the long
+    // comment there. vec(q_err) is half the rotation vector and saturates past
+    // 180 deg. ik.kp_o is halved in config alongside this so the commanded task
+    // angular velocity is unchanged.
+    Eigen::Quaterniond q_err = (q_d * q_cur.inverse()).normalized();
+    Eigen::AngleAxisd  aa_err(q_err);
+    Eigen::Vector3d    e_o = aa_err.axis() * aa_err.angle();
 
     // Proportional task velocity, capped — gives a smooth, moderate command the
     // acceleration limit can track (a full Newton step / dt is bang-bang and stalls).

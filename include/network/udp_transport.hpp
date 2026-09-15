@@ -25,6 +25,12 @@ public:
     int sendTo(const void* data, int size, const Poco::Net::SocketAddress& dest);
     int receiveFrom(void* buffer, int max_size, Poco::Net::SocketAddress& sender);
 
+    // Block until a datagram is readable or timeout_us elapses. The socket stays
+    // non-blocking, so receiveFrom() keeps its drain-until-empty semantics; this
+    // only replaces the caller's fixed-rate polling with a wait that returns the
+    // moment a packet lands.
+    bool waitReadable(int timeout_us);
+
     bool hasRemote() const { return has_remote_; }
     const Poco::Net::SocketAddress& remoteAddress() const { return remote_addr_; }
 

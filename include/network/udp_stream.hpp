@@ -5,7 +5,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <functional>
 #include <type_traits>
+#include <utility>
 
 #include "udp_transport.hpp"
 #include "common.hpp"
@@ -38,14 +40,22 @@ public:
     UdpStream(const UdpStream&) = delete;
     UdpStream& operator=(const UdpStream&) = delete;
 
+    // Invoked on the receive thread the instant a packet is accepted, before
+    // any consumer polls hasNew(). Set it before start(); it is read without a
+    // lock and is not meant to change while running. Keep the callback short --
+    // it runs on the receive thread and delays the next drain.
+    void setOnReceive(std::function<void()> cb) { on_receive_ = std::move(cb); }
+
     void start() {
         running_ = true;
-        thread_ = std::thread(&UdpStream::run, this);
+        send_thread_ = std::thread(&UdpStream::runSend, this);
+        if (config_.recv_enabled) recv_thread_ = std::thread(&UdpStream::runRecv, this);
     }
 
     void stop() {
         running_ = false;
-        if (thread_.joinable()) thread_.join();
+        if (send_thread_.joinable()) send_thread_.join();
+        if (recv_thread_.joinable()) recv_thread_.join();
     }
 
     void setSendData(const TSend& msg) {
@@ -76,15 +86,27 @@ public:
     uint32_t droppedPackets() const { return dropped_count_; }
 
 private:
-    void run() {
+    // Send and receive used to share one thread paced at send_rate_hz, which put
+    // a 0-5 ms polling delay (at 200 Hz) in front of every inbound command on a
+    // socket that was already non-blocking. They are now independent: send stays
+    // periodic, receive blocks on the socket and fires on_receive_ as soon as a
+    // packet is accepted. The poll timeout below only bounds how quickly the
+    // thread notices a stop() request -- a packet wakes it immediately.
+    void runSend() {
         auto period = std::chrono::microseconds(1000000 / config_.send_rate_hz);
         auto next = std::chrono::steady_clock::now();
 
         while (running_) {
-            receive();
             doSend();
             next += period;
             std::this_thread::sleep_until(next);
+        }
+    }
+
+    void runRecv() {
+        while (running_) {
+            if (!transport_.waitReadable(kRecvPollTimeoutUs)) continue;
+            if (receive() && on_receive_) on_receive_();
         }
     }
 
@@ -97,9 +119,11 @@ private:
         transport_.sendTo(&send_msg_, sizeof(TSend));
     }
 
-    void receive() {
+    // Returns true if at least one packet was accepted into recv_msg_.
+    bool receive() {
         Poco::Net::SocketAddress sender;
         uint8_t buffer[sizeof(TRecv) + 64];
+        bool accepted = false;
 
         while (true) {
             int n = transport_.receiveFrom(buffer, sizeof(buffer), sender);
@@ -120,16 +144,24 @@ private:
                     has_new_ = true;
                     last_recv_seq_ = seq;
                     last_recv_time_ = std::chrono::steady_clock::now();
+                    accepted = true;
                 }
             }
         }
+        return accepted;
     }
 
     UdpStreamConfig config_;
     UdpTransport      transport_;
 
-    std::thread       thread_;
+    std::thread       send_thread_;
+    std::thread       recv_thread_;
     std::atomic<bool> running_{false};
+
+    std::function<void()> on_receive_;
+
+    // Shutdown responsiveness only; packet arrival wakes the poll immediately.
+    static constexpr int kRecvPollTimeoutUs = 2000;
 
     std::mutex        send_mtx_;
     TSend             send_msg_;

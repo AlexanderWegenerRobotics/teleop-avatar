@@ -1,5 +1,6 @@
 #include "network/udp_transport.hpp"
 #include <Poco/Exception.h>
+#include <Poco/Timespan.h>
 
 UdpTransport::UdpTransport(const TransportConfig& config) {
     Poco::Net::SocketAddress bind_addr(config.bind_address, config.bind_port);
@@ -32,6 +33,15 @@ int UdpTransport::sendTo(const void* data, int size, const Poco::Net::SocketAddr
         return socket_.sendTo(data, size, dest);
     } catch (const Poco::Exception&) {
         return -1;
+    }
+}
+
+bool UdpTransport::waitReadable(int timeout_us) {
+    try {
+        return socket_.poll(Poco::Timespan(0, timeout_us),
+                            Poco::Net::Socket::SELECT_READ);
+    } catch (const Poco::Exception&) {
+        return false;
     }
 }
 

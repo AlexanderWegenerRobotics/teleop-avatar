@@ -4,6 +4,8 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
+#include <chrono>
 #include <iostream>
 
 #include <yaml-cpp/yaml.h>
@@ -94,6 +96,18 @@ private:
 private:
     void runControlHandler();
     void runStateHandler();
+    // Command -> target pose, extracted from the ENGAGED tick so the state
+    // thread can also run it on an early wake (see waitForCommandOrDeadline)
+    // without dragging the rest of the tick -- state machine, telemetry,
+    // gripper, trace -- up to the command rate.
+    void applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommandMsg& cmd_abs,
+                              bool& has_cmd, bool& has_cmd_abs,
+                              Eigen::Quaterniond& prev_cmd_quat);
+    // Sleep until the periodic deadline, or return early the moment a command
+    // lands. Called with the deadline the state thread is pacing to.
+    void waitForCommandOrDeadline(const std::chrono::steady_clock::time_point& deadline);
+    // Fired from the UdpStream receive threads. Keep it allocation-free.
+    void notifyCommandArrived();
     Vector7 jointImpedanceControl(const franka::RobotState& rs);
     Vector7 cartesianImpedanceControl(const franka::RobotState& rs);
     void updateStateMachine(SysState cmd_state);
@@ -171,6 +185,18 @@ private:
 
     ControlMode control_mode_ = ControlMode::CARTESIAN_IMPEDANCE;
 
+    // ── State-thread rate ────────────────────────────────────────────────────
+    // One source of truth for the loop period AND the dt handed to stepIk. Those
+    // were independently hardcoded (200 Hz period, dt = 1/500), so the IK
+    // reference integrated at 40% of the commanded velocity. Overridable via
+    // rt.state_rate_hz.
+    double state_rate_hz_{200.0};
+
+    // ── Early-wake plumbing ──────────────────────────────────────────────────
+    std::mutex              cmd_wake_mtx_;
+    std::condition_variable cmd_wake_cv_;
+    bool                    cmd_wake_flag_{false};
+
 private:
     Vector7 kp_joint_, kd_joint_, kp_joint_limit_, kd_joint_limit_;
     // Reduced-stiffness gains used only by the IDLE hold. Softer than kp_joint_
@@ -199,4 +225,8 @@ private:
     bool has_prev_valid_target_{false};
     Eigen::Vector3d prev_valid_target_pos_ = Eigen::Vector3d::Zero();
     Eigen::Quaterniond prev_valid_target_rot_ = Eigen::Quaterniond::Identity();
+    // When the last command was accepted, so validateTargetPose can bound the
+    // step by MEASURED elapsed time instead of the nominal command period. See
+    // the comment there for why cmd_dt_ alone was wrong.
+    std::chrono::steady_clock::time_point prev_valid_target_time_{};
 };
