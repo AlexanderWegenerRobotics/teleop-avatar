@@ -15,6 +15,12 @@
 struct ArmLogEntry {
     double                 time;          // seconds since logger start (relative)
     uint64_t               wall_clock_ns; // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
+    // mjData::time -- SIMULATED seconds. time/wall_clock_ns are both wall clocks
+    // and the sim does not run at real time, so q/dq are only mutually
+    // consistent against THIS column. Resample episodes on sim_time; use the
+    // wall clocks to line up operator commands, which arrive on wall time.
+    // 0 on hardware builds, which have no sim clock.
+    double                 sim_time;
     std::array<double, 7>  q;
     std::array<double, 7>  q_cmd;
     std::array<double, 7>  dq;
@@ -64,6 +70,10 @@ struct ArmStateTraceEntry {
     uint8_t  recovering;
 };
 
+// NOTE: no sim_time column here, unlike ArmLogEntry -- HeadControl reads state
+// through the Driver abstraction, which has no sim clock (and a real-hardware
+// implementation). To put head and arm rows on one grid, build the wall->sim
+// mapping from an arm CSV (which carries both clocks) and apply it here.
 struct HeadLogEntry {
     double                time;          // seconds since logger start (relative)
     uint64_t              wall_clock_ns; // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
@@ -261,7 +271,7 @@ private:
 
 
 inline std::string armLogHeader() {
-    std::string h = "time;wall_clock_ns;";
+    std::string h = "time;wall_clock_ns;sim_time;";
     for (int i = 0; i < 7;  ++i) h += "q_"          + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "q_cmd_"      + std::to_string(i) + ";";
     for (int i = 0; i < 7;  ++i) h += "dq_"         + std::to_string(i) + ";";
@@ -281,7 +291,8 @@ inline std::string armLogHeader() {
 }
 
 inline std::string armLogRow(const ArmLogEntry& e) {
-    std::string r = std::to_string(e.time) + ";" + std::to_string(e.wall_clock_ns) + ";";
+    std::string r = std::to_string(e.time) + ";" + std::to_string(e.wall_clock_ns) + ";"
+                  + std::to_string(e.sim_time) + ";";
     for (auto v : e.q)          r += std::to_string(v) + ";";
     for (auto v : e.q_cmd)      r += std::to_string(v) + ";";
     for (auto v : e.dq)         r += std::to_string(v) + ";";

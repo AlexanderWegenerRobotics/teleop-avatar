@@ -369,8 +369,15 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
             g = obs.create_group(arm)
             # tau_cmd_ is optional: episodes logged before it was added simply
             # won't have the columns, and col_group returns None for those.
+            # O_T_EE_world_ / O_T_EE_cmd_world_ (T_base_ * O_T_EE, see data_logger.hpp)
+            # are copied straight through rather than backfilled afterwards: the
+            # world frame is what teleop-policy trains on and what the absolute
+            # command channel expects, so a fresh conversion is usable as-is.
+            # Optional like tau_cmd_ -- absent on episodes logged before the
+            # simulator wrote them, which is why schema_version is unchanged.
             for field, n in (("q_", 7), ("dq_", 7), ("tau_J_", 7), ("tau_cmd_", 7),
-                             ("tau_ext_", 7), ("O_T_EE_", 16), ("F_ext_", 6)):
+                             ("tau_ext_", 7), ("O_T_EE_", 16), ("O_T_EE_world_", 16),
+                             ("F_ext_", 6)):
                 grp = col_group(hdr, data, field, n)
                 if grp is not None:
                     g.create_dataset(field.rstrip("_"), data=grp[sel])
@@ -382,7 +389,7 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
                 g.create_dataset("state", data=st[sel].astype(np.int64))
 
             ag = act.create_group(arm)
-            for field, n in (("q_cmd_", 7), ("O_T_EE_cmd_", 16)):
+            for field, n in (("q_cmd_", 7), ("O_T_EE_cmd_", 16), ("O_T_EE_cmd_world_", 16)):
                 grp = col_group(hdr, data, field, n)
                 if grp is not None:
                     ag.create_dataset(field.rstrip("_"), data=grp[sel])

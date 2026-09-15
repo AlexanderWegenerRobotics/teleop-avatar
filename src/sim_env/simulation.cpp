@@ -44,8 +44,22 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
     if (!model)
         throw std::runtime_error(std::string("mj_loadXML failed: ") + err);
 
-    if (sim_config["simulation"] && sim_config["simulation"]["timestep"])
+    // The scene XMLs declare timestep="0.005" and MuJoCo's own default is 0.002,
+    // so a sim_config missing this key silently runs at 200 Hz or 500 Hz while
+    // everything downstream assumes 1 kHz. Always report the effective value,
+    // and say loudly when it came from the XML rather than the config.
+    const double xml_timestep = model->opt.timestep;
+    const bool   from_config  = sim_config["simulation"] && sim_config["simulation"]["timestep"];
+    if (from_config)
         model->opt.timestep = sim_config["simulation"]["timestep"].as<double>();
+
+    std::cout << "[SIM-INFO] timestep " << model->opt.timestep * 1e3 << " ms ("
+              << 1.0 / model->opt.timestep << " Hz), from "
+              << (from_config ? "sim_config" : "scene XML") << std::endl;
+    if (!from_config)
+        std::cout << "[SIM-WARN] sim_config has no simulation.timestep -- inherited "
+                  << xml_timestep * 1e3 << " ms from the scene XML. Set it explicitly."
+                  << std::endl;
 
     // Reduce the near-clip plane so wrist cameras don't see through objects at
     // close range. Default znear=0.01 is relative to scene extent (~2m → 2cm clip);
@@ -154,7 +168,25 @@ bool Simulation::isRunning() const {
 
 void Simulation::run_model() {
     bModelIsRunning = true;
+
+    using clock = std::chrono::steady_clock;
+    const auto step_period = std::chrono::duration_cast<clock::duration>(
+        std::chrono::duration<double>(model->opt.timestep));
+
+    // Sleep lands on a scheduler quantum (1 ms on Windows even with
+    // timeBeginPeriod(1)), so sleeping the full remainder overshoots every step
+    // -- that is what made this loop run at 0.50x real time. Sleep to just
+    // before the deadline, then spin the last fraction.
+    const auto spin_margin = std::min(
+        std::chrono::duration_cast<clock::duration>(std::chrono::microseconds(400)),
+        step_period / 2);
+
+    auto loop_start  = clock::now();
+    auto next        = loop_start + step_period;
+    auto last_report = loop_start;
+
     while (bModelIsRunning) {
+        const auto step_t0 = clock::now();
         {
             std::lock_guard<std::mutex> lock(data_mtx);
             {
@@ -176,10 +208,66 @@ void Simulation::run_model() {
             mj_step(model, data);
             swapSnapshots();
         }
-        std::this_thread::sleep_for(
-            std::chrono::microseconds(
-                static_cast<int>(model->opt.timestep * 1e6)));
+        const double step_ns =
+            std::chrono::duration<double, std::nano>(clock::now() - step_t0).count();
+
+        sim_steps_.fetch_add(1, std::memory_order_relaxed);
+        step_ns_sum_.store(step_ns_sum_.load(std::memory_order_relaxed) + step_ns,
+                           std::memory_order_relaxed);
+        if (step_ns > step_ns_max_.load(std::memory_order_relaxed))
+            step_ns_max_.store(step_ns, std::memory_order_relaxed);
+
+        // Exact stepping: one mj_step per period, never several to "catch up".
+        // Multi-stepping would hold real time but hand the plant an N-timestep
+        // zero-order hold on the torque, distorting the control loop under
+        // exactly the load where it matters. If we cannot make the deadline the
+        // sim slips and says so; the episode stays usable because every row
+        // carries mjData::time alongside the wall clock.
+        auto now = clock::now();
+        if (now < next - spin_margin)
+            std::this_thread::sleep_until(next - spin_margin);
+        while (clock::now() < next) { /* spin the last few hundred us */ }
+
+        next += step_period;
+        now = clock::now();
+        if (now > next) {                      // overran: cannot recover this time
+            deadline_misses_.fetch_add(1, std::memory_order_relaxed);
+            next = now + step_period;          // resync rather than spiral
+        }
+
+        wall_seconds_.store(std::chrono::duration<double>(now - loop_start).count(),
+                            std::memory_order_relaxed);
+
+        // Periodic visibility. This loop ran at 0.50x real time unnoticed for
+        // months because nothing ever compared the two clocks out loud.
+        if (now - last_report >= std::chrono::seconds(10)) {
+            const SimTimingStats st = getTimingStats();
+            std::cout << "[SIM-TIMING] rtf " << st.rtf << "  steps " << st.steps
+                      << "  mj_step " << st.step_ms_mean << " ms mean / "
+                      << st.step_ms_max << " ms max  deadline misses "
+                      << st.deadline_misses << std::endl;
+            if (st.rtf < 0.95)
+                std::cout << "[SIM-WARN] running at " << st.rtf
+                          << "x real time -- episodes stay valid (resample on sim_time), "
+                          << "but operator feel and any wall-clock latency number are distorted."
+                          << std::endl;
+            last_report = now;
+        }
     }
+}
+
+SimTimingStats Simulation::getTimingStats() const {
+    SimTimingStats s;
+    s.steps           = sim_steps_.load(std::memory_order_relaxed);
+    s.deadline_misses = deadline_misses_.load(std::memory_order_relaxed);
+    s.wall_seconds    = wall_seconds_.load(std::memory_order_relaxed);
+    s.sim_seconds     = static_cast<double>(s.steps) * (model ? model->opt.timestep : 0.0);
+    s.rtf             = s.wall_seconds > 0.0 ? s.sim_seconds / s.wall_seconds : 0.0;
+    s.step_ms_mean    = s.steps ? step_ns_sum_.load(std::memory_order_relaxed)
+                                      / static_cast<double>(s.steps) * 1e-6
+                                : 0.0;
+    s.step_ms_max     = step_ns_max_.load(std::memory_order_relaxed) * 1e-6;
+    return s;
 }
 
 
@@ -546,6 +634,7 @@ DeviceState Simulation::getDeviceState(const std::string& deviceName) {
     mjData* snap = snap_[r];
 
     DeviceState state;
+    state.time = snap->time;   // simulated time of this snapshot, see DeviceState
     for (int j : it->second) {
         int qadr = model->jnt_qposadr[j];
         int vadr = model->jnt_dofadr[j];

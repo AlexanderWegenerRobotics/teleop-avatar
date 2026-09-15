@@ -1,6 +1,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <algorithm>   // std::min/std::max, for the dt guard in control()
 
 #include "sim_env/robot.hpp"
 #include "sim_env/simulation.hpp"
@@ -114,6 +115,7 @@ void Robot::populateRobotState(const DeviceState& ds, double dt) {
         robot_state_.dq[i]    = ds.dq[i];
         robot_state_.tau_J[i] = ds.tau_J[i];
     }
+    robot_state_.sim_time = ds.time;
     robot_state_.O_T_EE = model_->EEPose(robot_state_.q);
     updateGMO(robot_state_.q, robot_state_.dq, robot_state_.tau_J_d, dt);
 }
@@ -207,6 +209,15 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
     constexpr double alpha = (omega * dt) / (1.0 + omega * dt);
 
     auto next_control_time = std::chrono::high_resolution_clock::now();
+    auto tick_prev = next_control_time;
+    // Rolling mean of the achieved period, reported every kRateReportTicks. The
+    // nominal 1 ms is a request, not a guarantee -- this loop measured 2.001 ms
+    // on Windows before the hybrid sleep+spin below (see the note there).
+    constexpr int kRateReportTicks = 5000;
+    double dt_sum  = 0.0;   // wall seconds accumulated
+    double sim_sum = 0.0;   // simulated seconds accumulated
+    int    dt_n    = 0;
+
     Duration dur;
 
     if (sim == nullptr) {
@@ -231,7 +242,34 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
             }
 
             DeviceState device_state = sim->getDeviceState(name_);
-            populateRobotState(device_state, dt);
+
+            // SIMULATED elapsed time, not wall clock. The momentum observer
+            // differentiates mjData state, so its dt is the plant's integration
+            // time; using a wall clock biases it by (M*qdd)*(dt_sim/dt_wall - 1),
+            // which is zero at rest and grows with acceleration. The sim thread
+            // runs slower than real time (measured 0.50x), so the two differ by
+            // a factor of two here.
+            double dt_sim = (sim_time_prev_ < 0.0) ? 0.0
+                                                   : device_state.time - sim_time_prev_;
+            sim_time_prev_ = device_state.time;
+            // dt_sim == 0 means no new sim step since the last tick; p is then
+            // unchanged too, so the observer correctly leaves r_ alone.
+            if (dt_sim < 0.0 || dt_sim > 0.1) dt_sim = 0.0;   // reset/seek guard
+
+            const auto tick_now = std::chrono::high_resolution_clock::now();
+            dt_sum += std::chrono::duration<double>(tick_now - tick_prev).count();
+            sim_sum += dt_sim;
+            tick_prev = tick_now;
+            if (++dt_n >= kRateReportTicks) {
+                std::cout << "[SIM] " << name_ << ": control loop " << (dt_sum / dt_n) * 1e3
+                          << " ms wall / " << (sim_sum / dt_n) * 1e3 << " ms sim per tick ("
+                          << (dt_sum > 0 ? sim_sum / dt_sum : 0.0) << "x real time)" << std::endl;
+                dt_sum = 0.0;
+                sim_sum = 0.0;
+                dt_n   = 0;
+            }
+
+            populateRobotState(device_state, dt_sim);
 
             Torques tau_cmd = control_callback(robot_state_, dur);
 

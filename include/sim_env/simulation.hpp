@@ -63,6 +63,26 @@ struct DeviceState {
     std::vector<double> dq;
     std::vector<double> tau_J;
     std::vector<double> tau_ext;
+    // mjData::time of the snapshot these values came from -- SIMULATED time, not
+    // wall time. q and dq are physically consistent in THIS clock only. Anything
+    // differentiating this state (the momentum observer) must use its delta,
+    // never a wall clock; anything resampling a recorded episode should use it
+    // as the time base. See getTimingStats() for how far the two clocks drift.
+    double time = 0.0;
+};
+
+// Sim-vs-wall clock accounting, sampled from run_model(). rtf < 1 means the
+// simulation is running slower than real time: sim seconds per wall second.
+// Deliberately reported, never enforced -- a loaded machine produces a slow
+// episode with recorded slip, not a discarded one.
+struct SimTimingStats {
+    double   sim_seconds        = 0.0;  // steps * opt.timestep
+    double   wall_seconds       = 0.0;
+    double   rtf                = 0.0;  // sim_seconds / wall_seconds
+    uint64_t steps              = 0;
+    uint64_t deadline_misses    = 0;    // steps that overran their wall deadline
+    double   step_ms_mean       = 0.0;  // mj_step cost alone
+    double   step_ms_max        = 0.0;
 };
 
 
@@ -93,6 +113,12 @@ public:
     void setLighting(const LightingConfig& lc);
     void setBodyScale(const std::string& bodyName, double scale);
     uint64_t         getFrameId() const { return stream_frame_count_.load(); }
+
+    // Effective integration step, after the sim_config override is applied on
+    // top of whatever the scene XML declared. Read this rather than assuming
+    // 0.001: the scene XMLs say 0.005 and MuJoCo's own default is 0.002.
+    double           getTimestep() const { return model ? model->opt.timestep : 0.0; }
+    SimTimingStats   getTimingStats() const;
 
     // ── Twin / reconciler support (docs/twin_concept.md) ────────────────────
     // Read-only access to the loaded mjModel so a Reconciler can build its own
@@ -160,6 +186,14 @@ private:
     std::unordered_map<std::string, int>              gripper_ids_;
     std::unordered_map<std::string, std::vector<int>> joint_ids_;
     std::unordered_map<std::string, bool> active_devices_;
+    // run_model() timing accounting -- written by the model thread only, read
+    // by anyone via getTimingStats().
+    std::atomic<uint64_t> sim_steps_{0};
+    std::atomic<uint64_t> deadline_misses_{0};
+    std::atomic<double>   wall_seconds_{0.0};
+    std::atomic<double>   step_ns_sum_{0.0};
+    std::atomic<double>   step_ns_max_{0.0};
+
     std::atomic<bool> bModelIsRunning{false};
     std::atomic<bool> bRenderingIsRunning{false};
     std::thread       model_thread;

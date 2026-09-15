@@ -777,6 +777,11 @@ void ArmControl::runControlHandler(){
                 entry.wall_clock_ns = static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count());
+#ifdef WITH_FRANKA
+                entry.sim_time      = 0.0;                  // no sim clock on hardware
+#else
+                entry.sim_time      = robot_state.sim_time; // mjData::time, see ArmLogEntry
+#endif
                 entry.state = state_;
                 entry.gripper_width = gripper_width_.load();
                 entry.gripper_cmd   = (grasp_allowed_.load() && desired_gripper_closed_.load()) ? 0.0 : 0.08;

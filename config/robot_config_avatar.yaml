@@ -11,6 +11,15 @@ avatar:
     host:     "127.0.0.1"
     port:     7100          # must match pipeline_config.yaml episode_listener_port
 
+  # Candidate/bin world geometry (StateSnapshot slots), published once per tick
+  # for external consumers -- e.g. teleop-orchestrator's SimObjectSource, which
+  # ticks on this message: without it the orchestrator sees no frames at all.
+  # Matches teleop-orchestrator/configs/system.yaml's network.scene_objects.
+  scene_objects:
+    enabled: true
+    host:    "127.0.0.1"
+    port:    7200
+
   # Joint-state telemetry (y(t_s), section 4 of docs/twin_concept.md) forwarded
   # to the operator-side twin process's reconciler. Only meaningful when this
   # process runs role: avatar and a paired role: twin process is running on

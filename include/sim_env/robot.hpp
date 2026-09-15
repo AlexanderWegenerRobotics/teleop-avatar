@@ -40,6 +40,9 @@ struct RobotState {
     std::array<double, 7>  tau_ext_hat_filtered;
     std::array<double, 6>  O_F_ext_hat_K;
     std::array<double, 16> O_T_EE;
+    // mjData::time of the snapshot this state came from (sim build only; 0 on
+    // hardware, which has no sim clock). q/dq are consistent in THIS clock.
+    double                 sim_time = 0.0;
 
     RobotState() {
         q.fill(0.0);                  dq.fill(0.0);
@@ -107,6 +110,8 @@ private:
 
     Vector7 r_;
     Vector7 p_prev_;
+    // mjData::time at the previous GMO update; <0 means "no previous sample".
+    double  sim_time_prev_ = -1.0;
     static constexpr double K_GMO = 50.0;
 
     // Stored for parity with the real API; sim has no separate collision-reflex
