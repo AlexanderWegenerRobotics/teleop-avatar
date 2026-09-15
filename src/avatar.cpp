@@ -98,6 +98,14 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
     setsockopt(episode_sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
+    if (sys_config["avatar"]["loop_rate_hz"])
+        loop_rate_hz_ = sys_config["avatar"]["loop_rate_hz"].as<double>();
+    if (loop_rate_hz_ < 1.0) {
+        std::cout << "[AVATAR-WARN] loop_rate_hz = " << loop_rate_hz_
+                  << " is not usable, falling back to 100." << std::endl;
+        loop_rate_hz_ = 100.0;
+    }
+
     // ── Scene object geometry, published for external consumers ────────────
     if (sys_config["avatar"]["scene_objects"]) {
         const auto& so = sys_config["avatar"]["scene_objects"];
@@ -424,8 +432,13 @@ void Avatar::start(){
         }
     }).detach();
 
-    constexpr std::chrono::microseconds control_period(static_cast<int>(1e6 / 100));
+    // Sets the orchestrator's tick rate, since tick_id is stamped once per
+    // iteration here. Parsed in the constructor; this is the command-rate knob.
+    std::cout << "[AVATAR-INFO] loop rate " << loop_rate_hz_ << " Hz" << std::endl;
+    const auto control_period = std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(
+        std::chrono::duration<double>(1.0 / loop_rate_hz_));
 	auto next_control_time = std::chrono::high_resolution_clock::now();
+    uint64_t tick_id = 0;
 
     auto loop_start_time = std::chrono::high_resolution_clock::now();
 
@@ -532,6 +545,7 @@ void Avatar::start(){
             if (intention_buffer_) {
                 StateSnapshot snap;
                 snap.frame_id    = sim_->getFrameId();
+                snap.tick_id     = tick_id;
                 snap.timestamp_ns = static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count());
@@ -652,6 +666,7 @@ void Avatar::start(){
             }
         #endif
 
+        ++tick_id;
         next_control_time += control_period;
         std::this_thread::sleep_until(next_control_time);
     }
@@ -718,6 +733,7 @@ void Avatar::sendSceneObjects(const StateSnapshot& snap) {
     if (scene_objects_sock_ == kInvalidSocket || scene_objects_port_ == 0) return;
     SceneObjectsMsg msg;
     msg.frame_id     = snap.frame_id;
+    msg.tick_id      = snap.tick_id;
     msg.timestamp_ns = snap.timestamp_ns;
     msg.slots.reserve(snap.slots.size());
     for (const auto& s : snap.slots) {

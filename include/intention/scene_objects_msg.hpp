@@ -24,9 +24,20 @@ struct SceneObjectSlot {
 };
 
 struct SceneObjectsMsg {
-    uint64_t                      frame_id     = 0;  // sim frame counter, same space as GazeSampleMsg::frame_id
+    // Two different clocks, deliberately separate.
+    //   frame_id  visual frame counter (Simulation::stream_frame_count_, paced
+    //             at rendering.fps). Gaze pixels and camera images only mean
+    //             anything against the frame they were captured in, so this
+    //             stays the join key for GazeSampleMsg and for the policy.
+    //   tick_id   Avatar control-loop counter, one per avatar tick. This is the
+    //             orchestrator's pacing signal. Keeping it apart from frame_id
+    //             is what stops the command rate being hostage to the render
+    //             rate -- they were the same number, so commands ran at
+    //             rendering.fps (15 Hz) while the avatar looped at 100.
+    uint64_t                      frame_id     = 0;
+    uint64_t                      tick_id      = 0;
     uint64_t                      timestamp_ns = 0;
     std::vector<SceneObjectSlot>  slots;
 
-    MSGPACK_DEFINE_MAP(frame_id, timestamp_ns, slots)
+    MSGPACK_DEFINE_MAP(frame_id, tick_id, timestamp_ns, slots)
 };

@@ -124,6 +124,9 @@ private:
     // ── Scene object geometry, published for external consumers (orchestrator) ──
     std::string scene_objects_host_;
     int         scene_objects_port_ = 0;
+    // Avatar control-loop rate, and therefore the orchestrator's tick rate:
+    // tick_id is stamped once per iteration and LiveSource paces on it.
+    double      loop_rate_hz_ = 100.0;
     socket_t    scene_objects_sock_ = kInvalidSocket;
 
     void sendSceneObjects(const StateSnapshot& snap);

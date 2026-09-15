@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <mutex>
 #include <vector>
 #include <cstddef>
@@ -64,6 +65,16 @@ public:
 
     Eigen::VectorXd   getCurrentJoint()     const;
     Eigen::Isometry3d getCurrentCartesian() const;
+    // Base-frame reference twist of the segment step() last traversed; zero once
+    // the plan is exhausted. Taken from the waypoints rather than differentiated
+    // downstream, so it is exact for any profile and carries no sampling noise.
+    Eigen::Matrix<double, 6, 1> getCurrentCartesianVelocity() const;
+
+    // Measured interval between consecutive commands, from whoever is sending:
+    // the VR interface on its own port, or the orchestrator on the absolute
+    // channel. Sizes the plan so the reference keeps moving across the gap
+    // instead of sprinting to the target and waiting.
+    void setCommandInterval(double dt_s);
 
     bool step();
     bool isDone() const;
@@ -105,7 +116,8 @@ private:
 
 private:
     InterpolatorConfig config_;
-    int                min_steps_;
+    std::atomic<int>   min_steps_;
+    double             cmd_interval_s_ = 0.0;
     InterpolationSpace space_;
     mutable std::mutex mtx_;
 
@@ -116,6 +128,7 @@ private:
 
     std::vector<Eigen::Isometry3d> cartesian_waypoints_;
     int                            cartesian_idx_ = 0;
+    Eigen::Matrix<double, 6, 1>    cartesian_vel_ = Eigen::Matrix<double, 6, 1>::Zero();
 
     // ── IK internal state ────────────────────────────────────────────────────
     mutable std::mutex          ik_mtx_;

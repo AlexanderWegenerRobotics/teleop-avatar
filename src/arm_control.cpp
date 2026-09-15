@@ -20,6 +20,17 @@ constexpr double kGripperMaxWidth = 0.08;
 constexpr double kMinCmdDt = 0.0005;
 constexpr double kMaxCmdDt = 0.05;
 
+// Well below the float32 resolution of a command on the wire, so this only ever
+// matches a genuinely repeated target.
+constexpr double kTargetEpsM   = 1e-6;
+constexpr double kTargetEpsRad = 1e-6;
+
+bool targetsEqual(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b) {
+    if ((a.translation() - b.translation()).norm() > kTargetEpsM) return false;
+    return Eigen::Quaterniond(a.rotation()).angularDistance(
+               Eigen::Quaterniond(b.rotation())) <= kTargetEpsRad;
+}
+
 template<size_t N>
 std::array<double, N> toArray(const std::vector<double>& v) {
     std::array<double, N> a{};
@@ -143,6 +154,17 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
 
     kp_cart_ = yamlToVector<6>(device_config["control"]["kp_cart"]);
     kd_cart_ = yamlToVector<6>(device_config["control"]["kd_cart"]);
+    const YAML::Node ctrl = device_config["control"];
+    if (ctrl["eta_lin"])       eta_lin_       = ctrl["eta_lin"].as<double>();
+    if (ctrl["eta_rot"])       eta_rot_       = ctrl["eta_rot"].as<double>();
+    if (ctrl["ff_force_max"])  ff_force_max_  = ctrl["ff_force_max"].as<double>();
+    if (ctrl["ff_torque_max"]) ff_torque_max_ = ctrl["ff_torque_max"].as<double>();
+    eta_lin_ = std::clamp(eta_lin_, 0.0, 1.0);
+    eta_rot_ = std::clamp(eta_rot_, 0.0, 1.0);
+    if (eta_lin_ > 0.0 || eta_rot_ > 0.0)
+        std::cout << "[INFO] " << name_ << ": velocity feedforward eta_lin=" << eta_lin_
+                  << " eta_rot=" << eta_rot_ << " (cap " << ff_force_max_ << " N / "
+                  << ff_torque_max_ << " Nm)" << std::endl;
     kp_null_ = yamlToVector<7>(device_config["control"]["kp_null"]);
     kd_null_ = yamlToVector<7>(device_config["control"]["kd_null"]);
     kd_joint_limit_ = yamlToVector<7>(device_config["control"]["kd_joint_limit"]);
@@ -438,6 +460,7 @@ void ArmControl::runStateHandler(){
             Eigen::Isometry3d T_ee(Eigen::Map<const Eigen::Matrix4d>(rs.O_T_EE.data()));
             motion_gen_.seedJointReference(q_seed);
             motion_gen_.setCartesianGoal(T_ee);
+            has_planned_target_ = false;
         }
 
         // ── ENGAGED tick ──────────────────────────────────────────────────────
@@ -646,9 +669,11 @@ void ArmControl::applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommand
     if (control_mode_ == ControlMode::JOINT_IK) {
         // IK goal update -- goal is frozen when commands stop
         motion_gen_.setCartesianGoal(T_target);
-    } else {
-        // CARTESIAN_IMPEDANCE: plan interpolated trajectory as before
+    } else if (!has_planned_target_ || !targetsEqual(T_target, last_planned_target_)) {
+        motion_gen_.setCommandInterval(last_cmd_dt_);
         motion_gen_.planCartesian(motion_gen_.getCurrentCartesian(), T_target, ProfileType::LINEAR);
+        last_planned_target_ = T_target;
+        has_planned_target_  = true;
     }
 
     target_pose_ = T_base_ * T_target;
@@ -1142,7 +1167,8 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
 
     Eigen::Matrix<double, 6, 1> ee_vel = J * dq;
 
-    Eigen::Matrix<double, 6, 1> F = kp_cart_.cwiseProduct(error) - kd_cart_.cwiseProduct(ee_vel);
+    Eigen::Matrix<double, 6, 1> F = kp_cart_.cwiseProduct(error) - kd_cart_.cwiseProduct(ee_vel)
+                                  + feedforwardWrench(motion_gen_.getCurrentCartesianVelocity());
     Vector7 tau_task = J.transpose() * F;
 
     auto mass_array = model->mass(rs);
@@ -1170,6 +1196,22 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
             tau_vel_damp(i) = -80.0 * excess * (dq(i) > 0 ? 1.0 : -1.0);
     }
     return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq) + tau_vel_damp;
+}
+
+Eigen::Matrix<double, 6, 1> ArmControl::feedforwardWrench(
+        const Eigen::Matrix<double, 6, 1>& v_ref) const {
+    Eigen::Matrix<double, 6, 1> F = Eigen::Matrix<double, 6, 1>::Zero();
+    F.head<3>() = eta_lin_ * kd_cart_.head<3>().cwiseProduct(v_ref.head<3>());
+    F.tail<3>() = eta_rot_ * kd_cart_.tail<3>().cwiseProduct(v_ref.tail<3>());
+
+    // Norm-clamped per block so the direction survives. Without this the
+    // rotational term reaches 0.9 * 15 * 4 = 54 Nm at the configured angular
+    // rate limit, against a 12 Nm wrist joint limit.
+    const double f = F.head<3>().norm();
+    if (f > ff_force_max_)  F.head<3>() *= ff_force_max_ / f;
+    const double m = F.tail<3>().norm();
+    if (m > ff_torque_max_) F.tail<3>() *= ff_torque_max_ / m;
+    return F;
 }
 
 bool ArmControl::isHome() {
@@ -1320,6 +1362,7 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
         // stalled sender, an operator who stopped moving -- cannot hand out an
         // effectively unbounded jump.
         cmd_dt = std::clamp(cmd_dt, kMinCmdDt, kMaxCmdDt);
+        last_cmd_dt_ = cmd_dt;
     }
 
     if (has_prev_valid_target_) {

@@ -15,7 +15,7 @@ MotionGenerator::MotionGenerator(const InterpolatorConfig& config)
     // empty waypoint vector, and getCurrentCartesian() falling back to
     // Isometry3d::Identity() -- i.e. an impedance target at the robot base.
     // Harmless at 200 Hz, latent the moment the command rate is raised.
-    , min_steps_(std::max(1, config.control_freq / config.comm_freq))
+    , min_steps_(std::max(1, config.control_freq / config.comm_freq))   // until the first measurement
     , space_(InterpolationSpace::JOINT)
     , joint_idx_(0)
     , cartesian_idx_(0)
@@ -25,11 +25,30 @@ MotionGenerator::MotionGenerator(const InterpolatorConfig& config)
 //  Interpolation helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+void MotionGenerator::setCommandInterval(double dt_s) {
+    if (!(dt_s > 0.0)) return;
+
+    constexpr double kEma    = 0.2;
+    constexpr double kShrink = 0.9;
+    constexpr int    kMax    = 100;
+
+    cmd_interval_s_ = (cmd_interval_s_ <= 0.0) ? dt_s
+                                               : (1.0 - kEma) * cmd_interval_s_ + kEma * dt_s;
+
+    // Deliberately biased short. A plan LONGER than the command interval is
+    // superseded before it finishes, and since each replan only re-ramps the
+    // remaining distance, the reference converges geometrically and never
+    // arrives. A plan shorter than the interval just completes and holds --
+    // the old behaviour, which is merely suboptimal rather than divergent.
+    const int steps = static_cast<int>(std::lround(kShrink * cmd_interval_s_ * config_.control_freq));
+    min_steps_.store(std::clamp(steps, 1, kMax), std::memory_order_relaxed);
+}
+
 int MotionGenerator::computeJointSteps(const Eigen::VectorXd& q_start, const Eigen::VectorXd& q_end) const {
     double max_displacement = (q_end - q_start).cwiseAbs().maxCoeff();
     double t_min            = max_displacement / config_.max_angular_vel;
     int    steps            = static_cast<int>(std::ceil(t_min * config_.control_freq));
-    return std::max(steps, min_steps_);
+    return std::max(steps, min_steps_.load(std::memory_order_relaxed));
 }
 
 int MotionGenerator::computeCartesianSteps(const Eigen::Isometry3d& T_start, const Eigen::Isometry3d& T_end) const {
@@ -40,7 +59,7 @@ int MotionGenerator::computeCartesianSteps(const Eigen::Isometry3d& T_start, con
     double t_linear  = linear_dist  / config_.max_linear_vel;
     double t_angular = angular_dist / config_.max_angular_vel;
     int    steps     = static_cast<int>(std::ceil(std::max(t_linear, t_angular) * config_.control_freq));
-    return std::max(steps, min_steps_);
+    return std::max(steps, min_steps_.load(std::memory_order_relaxed));
 }
 
 double MotionGenerator::trapezoidalProfile(double t) const {
@@ -147,17 +166,45 @@ Eigen::Isometry3d MotionGenerator::getCurrentCartesian() const {
 bool MotionGenerator::step() {
     std::lock_guard<std::mutex> lock(mtx_);
     if (space_ == InterpolationSpace::JOINT) {
+        cartesian_vel_.setZero();
         if (joint_idx_ < (int)joint_waypoints_.size() - 1) {
             ++joint_idx_;
             return true;
         }
-    } else {
-        if (cartesian_idx_ < (int)cartesian_waypoints_.size() - 1) {
-            ++cartesian_idx_;
-            return true;
-        }
+        return false;
     }
+
+    if (cartesian_idx_ < (int)cartesian_waypoints_.size() - 1) {
+        const Eigen::Isometry3d& a = cartesian_waypoints_[cartesian_idx_];
+        ++cartesian_idx_;
+        const Eigen::Isometry3d& b = cartesian_waypoints_[cartesian_idx_];
+
+        const double f = static_cast<double>(config_.control_freq);
+        Eigen::AngleAxisd aa(Eigen::Quaterniond(b.rotation()) *
+                             Eigen::Quaterniond(a.rotation()).conjugate());
+        cartesian_vel_.head<3>() = (b.translation() - a.translation()) * f;
+        cartesian_vel_.tail<3>() = aa.axis() * aa.angle() * f;
+
+        // f is the ASSUMED loop rate. A loop running slower than control_freq
+        // would scale this up, and it feeds a force, not a target. The plan was
+        // built under these caps, so exceeding them means the assumption is
+        // wrong; clamp rather than propagate it.
+        const double vl = cartesian_vel_.head<3>().norm();
+        if (vl > config_.max_linear_vel)
+            cartesian_vel_.head<3>() *= config_.max_linear_vel / vl;
+        const double va = cartesian_vel_.tail<3>().norm();
+        if (va > config_.max_angular_vel)
+            cartesian_vel_.tail<3>() *= config_.max_angular_vel / va;
+        return true;
+    }
+
+    cartesian_vel_.setZero();
     return false;
+}
+
+Eigen::Matrix<double, 6, 1> MotionGenerator::getCurrentCartesianVelocity() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return cartesian_vel_;
 }
 
 bool MotionGenerator::isDone() const {
@@ -171,6 +218,7 @@ void MotionGenerator::reset() {
     std::lock_guard<std::mutex> lock(mtx_);
     joint_idx_     = 0;
     cartesian_idx_ = 0;
+    cartesian_vel_.setZero();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

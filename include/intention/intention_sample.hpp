@@ -41,7 +41,8 @@ struct ObjectSlot {
 };
 
 struct StateSnapshot {
-    uint64_t frame_id      = 0;
+    uint64_t frame_id      = 0;   // visual frame; see SceneObjectsMsg
+    uint64_t tick_id       = 0;   // avatar control-loop tick
     uint64_t timestamp_ns  = 0;
 
     Eigen::Isometry3d T_ee_left;

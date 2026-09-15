@@ -1,4 +1,9 @@
 avatar:
+  # Avatar control-loop rate. Also the orchestrator's tick rate: tick_id is
+  # stamped once per iteration and LiveSource paces on it, so this is the
+  # command rate. Independent of rendering.fps, which now only clocks
+  # frame_id (camera frames, gaze join, policy inference).
+  loop_rate_hz: 100
   log_dir: "../logs"
   transmission:
     remote_ip: "127.0.0.1"
@@ -58,6 +63,15 @@ devices:
       # now means what it says. Raising it is a separate decision.
       kp_cart: [1000, 1000, 1000, 125, 125, 125]
       kd_cart: [50, 50, 50, 15, 15, 15]
+      # Velocity feedforward: F += eta * kd_cart * v_ref, so steady-state lag
+      # goes from kd/kp to (1 - eta) * kd/kp. 0 = previous behaviour.
+      # Stability bound is eta <= 1 - omega_n*dt/4, ~0.97 here; 0.8-0.9 is the
+      # useful range. Caps bound the feedforward wrench on contact, where it is
+      # otherwise unbounded by anything (v -> 0 but v_ref keeps going).
+      eta_lin: 0.0
+      eta_rot: 0.0
+      ff_force_max: 30.0     # N
+      ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
       kp_null: [20, 20, 20, 20, 8, 8, 8]
       kd_null: [2, 2, 2, 2, 1, 1, 1]
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]

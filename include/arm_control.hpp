@@ -110,6 +110,7 @@ private:
     void notifyCommandArrived();
     Vector7 jointImpedanceControl(const franka::RobotState& rs);
     Vector7 cartesianImpedanceControl(const franka::RobotState& rs);
+    Eigen::Matrix<double, 6, 1> feedforwardWrench(const Eigen::Matrix<double, 6, 1>& v_ref) const;
     void updateStateMachine(SysState cmd_state);
     void updateRecovery();
     bool isHome();
@@ -208,6 +209,12 @@ private:
     // buffer is empty, which would command a full-speed move to q = 0.
     std::atomic<bool> idle_hold_valid_{false};
     Eigen::Matrix<double, 6, 1> kp_cart_, kd_cart_;
+    // Velocity feedforward ratio: F += eta * kd * v_ref, so the steady-state lag
+    // becomes (1 - eta) * kd/kp. Separate per block because the rotational
+    // feedforward saturates the FR3 wrist long before the translational one does.
+    // Both default to 0, i.e. the previous position-only behaviour.
+    double eta_lin_{0.0}, eta_rot_{0.0};
+    double ff_force_max_{30.0}, ff_torque_max_{8.0};
     Vector7 kp_null_, kd_null_;
 
 private:
@@ -229,4 +236,12 @@ private:
     // step by MEASURED elapsed time instead of the nominal command period. See
     // the comment there for why cmd_dt_ alone was wrong.
     std::chrono::steady_clock::time_point prev_valid_target_time_{};
+    double last_cmd_dt_{0.0};   // measured in validateTargetPose, sizes the plan
+    // Last pose actually handed to planCartesian. UdpStream resends the latest
+    // command at its own rate, so most packets carry a target the interpolator
+    // is already planning to; replanning on those restarts the plan from
+    // waypoint 0 and, once the send rate exceeds the plan length, the reference
+    // only ever covers a fraction of the remaining distance per replan.
+    Eigen::Isometry3d last_planned_target_ = Eigen::Isometry3d::Identity();
+    bool              has_planned_target_{false};
 };
