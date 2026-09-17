@@ -1,0 +1,41 @@
+<mujoco model="peg_v1_4">
+  <!-- FMB board 1 - bow.  Per-side clearance 1.00 mm (FMB default is 2.00).
+       Geometry is generated, not hand-written: every lateral dimension is derived
+       from the board feature it mates with, minus 2 x clearance. All z dimensions
+       are identical to FMB default, so the seated height is unchanged.
+       The visual geoms are the collision boxes themselves - for these rectilinear
+       parts that is exact, and it means visual and collision can never disagree. -->
+
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true"/>
+
+  <default>
+    <default class="peg_v1_4">
+      <default class="vis">
+        <geom contype="0" conaffinity="0" group="2" density="0" material="peg_v1_4_mat"/>
+      </default>
+      <default class="col">
+        <geom contype="1" conaffinity="1" group="3" priority="0"
+              friction="0.3 0.02 0.001" solref="0.002 1" solimp="0.995 0.995 0.0001"
+              condim="6" rgba="0.1 0.5 0.1 0.5"/>
+      </default>
+    </default>
+  </default>
+
+  <asset><material name="peg_v1_4_mat" rgba="0.1 0.5 0.1 1.0"/></asset>
+
+  <worldbody>
+    <body name="peg_v1_4" pos="0 0 0" childclass="peg_v1_4">
+      <freejoint name="peg_v1_4_joint"/>
+      <geom name="peg_v1_4_vis_foot_neg" type="box" class="vis" pos="0.000000 -0.050500 0.022500" size="0.016000 0.031000 0.022500"/>
+      <geom name="peg_v1_4_vis_foot_pos" type="box" class="vis" pos="0.000000 0.050500 0.022500" size="0.016000 0.031000 0.022500"/>
+      <geom name="peg_v1_4_vis_arch_neg" type="box" class="vis" pos="0.000000 -0.024500 0.058500" size="0.016000 0.005000 0.013500"/>
+      <geom name="peg_v1_4_vis_arch_pos" type="box" class="vis" pos="0.000000 0.024500 0.058500" size="0.016000 0.005000 0.013500"/>
+      <geom name="peg_v1_4_vis_top" type="box" class="vis" pos="0.000000 0.000000 0.086000" size="0.016000 0.029500 0.014000"/>
+      <geom name="peg_v1_4_col_foot_neg" type="box" class="col" pos="0.000000 -0.050500 0.022500" size="0.016000 0.031000 0.022500"/>
+      <geom name="peg_v1_4_col_foot_pos" type="box" class="col" pos="0.000000 0.050500 0.022500" size="0.016000 0.031000 0.022500"/>
+      <geom name="peg_v1_4_col_arch_neg" type="box" class="col" pos="0.000000 -0.024500 0.058500" size="0.016000 0.005000 0.013500"/>
+      <geom name="peg_v1_4_col_arch_pos" type="box" class="col" pos="0.000000 0.024500 0.058500" size="0.016000 0.005000 0.013500"/>
+      <geom name="peg_v1_4_col_top" type="box" class="col" pos="0.000000 0.000000 0.086000" size="0.016000 0.029500 0.014000"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,20 +1,37 @@
-<mujoco model="peg_v1_hook">
+<mujoco model="peg_v1_1">
+  <!-- FMB board 1 - cradle, left side slot.  Per-side clearance 1.00 mm (FMB default is 2.00).
+       Geometry is generated, not hand-written: every lateral dimension is derived
+       from the board feature it mates with, minus 2 x clearance. All z dimensions
+       are identical to FMB default, so the seated height is unchanged.
+       The visual geoms are the collision boxes themselves - for these rectilinear
+       parts that is exact, and it means visual and collision can never disagree. -->
+
   <compiler angle="radian" autolimits="true" inertiafromgeom="true"/>
 
-  <asset>
-    <material name="peg_v1_1_mat" rgba="0.1 0.1 0.5 1"/>
-  </asset>
-
-   <default>
-    <geom condim="6" friction="0.6 0.005 0.0001" solimp="0.99 0.99 0.001" solref="0.01 1"/>
+  <default>
+    <default class="peg_v1_1">
+      <default class="vis">
+        <geom contype="0" conaffinity="0" group="2" density="0" material="peg_v1_1_mat"/>
+      </default>
+      <default class="col">
+        <geom contype="1" conaffinity="1" group="3" priority="0"
+              friction="0.3 0.02 0.001" solref="0.002 1" solimp="0.995 0.995 0.0001"
+              condim="6" rgba="0.1 0.1 0.5 0.5"/>
+      </default>
+    </default>
   </default>
 
+  <asset><material name="peg_v1_1_mat" rgba="0.1 0.1 0.5 1.0"/></asset>
+
   <worldbody>
-    <body name="peg_v1_hook">
-      <freejoint name="peg_v1_hook_joint"/>
-      <geom name="peg_v1_hook_leg_left" type="box" pos="-0.035 0 0.050" size="0.015 0.015 0.050" material="peg_v1_1_mat"/>
-      <geom name="peg_v1_hook_leg_right" type="box" pos="0.035 0 0.050" size="0.015 0.015 0.050" material="peg_v1_1_mat"/>
-      <geom name="peg_v1_hook_bridge" type="box" pos="0 0 0.085" size="0.020 0.015 0.015" material="peg_v1_1_mat"/>
+    <body name="peg_v1_1" pos="0 0 0" childclass="peg_v1_1">
+      <freejoint name="peg_v1_1_joint"/>
+      <geom name="peg_v1_1_vis_base" type="box" class="vis" pos="0.000000 0.000000 0.017500" size="0.016000 0.051000 0.017500"/>
+      <geom name="peg_v1_1_vis_upright_neg" type="box" class="vis" pos="0.000000 -0.035125 0.067500" size="0.016000 0.015875 0.032500"/>
+      <geom name="peg_v1_1_vis_upright_pos" type="box" class="vis" pos="0.000000 0.035125 0.067500" size="0.016000 0.015875 0.032500"/>
+      <geom name="peg_v1_1_col_base" type="box" class="col" pos="0.000000 0.000000 0.017500" size="0.016000 0.051000 0.017500"/>
+      <geom name="peg_v1_1_col_upright_neg" type="box" class="col" pos="0.000000 -0.035125 0.067500" size="0.016000 0.015875 0.032500"/>
+      <geom name="peg_v1_1_col_upright_pos" type="box" class="col" pos="0.000000 0.035125 0.067500" size="0.016000 0.015875 0.032500"/>
     </body>
   </worldbody>
 </mujoco>

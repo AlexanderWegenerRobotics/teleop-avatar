@@ -1,0 +1,13 @@
+FMB board 1  -  peg clearance 1.00 mm per side   (FMB default is 2.00 mm)
+
+Board geometry is FMB default and unmodified. Only the pegs are scaled, and only
+in the axes that set lateral clearance, so the parts still seat at z = 5 / 5 / 40 / 5 mm.
+
+Two fits differ from the number above: the bar (peg_v1_3) is frozen at 37 x 37 x 200,
+so its fit in the board's corridor stays 2.00 mm; and it sits 0.75 mm per side
+between the cradle uprights, which is FMB's own 25%-tighter mate.
+
+Contact settings belong with this clearance: timestep 0.001, solref "0.002 1", solimp "0.995 0.995 0.0001",
+friction 0.3, elliptic cone, impratio 10, condim 6.
+
+Matching scene: ../scene_board_1_tol1000um.xml
