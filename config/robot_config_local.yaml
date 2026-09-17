@@ -17,18 +17,11 @@ avatar:
     host:     "127.0.0.1"
     port:     7100          # must match pipeline_config.yaml episode_listener_port
 
-  # Candidate/bin world geometry (StateSnapshot slots), published once per tick
-  # for external consumers -- e.g. teleop-orchestrator's SimObjectSource.
-  # Matches teleop-orchestrator/configs/system.yaml's network.scene_objects.
   scene_objects:
     enabled: true
     host:    "127.0.0.1"
     port:    7200
 
-  # Joint-state telemetry forwarded to a paired twin process's reconciler
-  # (see docs/twin_concept.md section 4). Only relevant when this process
-  # runs role: avatar; harmless no-op otherwise. Enabled by default here so
-  # local dev can run avatar + twin side by side on 127.0.0.1 -- disable if
   # running avatar alone without a twin listening on this port.
   twin_telemetry:
     enabled: true
@@ -53,10 +46,6 @@ devices:
       receive_port: 7001
       frequency: 200
 
-    # Absolute-pose channel for an autonomous policy (world frame, no
-    # origin/VR semantics) -- own port, same ArmCommandMsg struct as
-    # transmission above, see ArmControl::worldAbsoluteToBase. Matches
-    # teleop-orchestrator/configs/system.yaml's network.arm_left.absolute_send_port.
     transmission_absolute:
       remote_ip: "127.0.0.1"
       send_port: 8011
@@ -78,15 +67,8 @@ devices:
     #q0: [0.0, -1.2, 0.17, -1.58, 0, 1.6, 0.0]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
-    # FR3, matching models/mujoco/robots/franka_fr3/fr3.xml joint ranges.
-    # These were Panda's limits: joint 7 was capped at 2.8973 while the model
-    # allows 3.0159, so the arm could legally reach a pose robot.cpp called a
-    # violation -- and then sat at the model's hard stop, permanently faulted.
-    # Joints 1 and 5 were the other way round, looser than the real arm.
     q_min: [-2.7437, -1.7837, -2.9007, -3.0421, -2.8065, 0.5445, -3.0159]
     q_max: [ 2.7437,  1.7837,  2.9007, -0.1518,  2.8065, 4.5169,  3.0159]
-    # FR3 joint velocity ceilings, rad/s. Sizes joint trajectories in
-    # MotionGenerator and matches kMaxJointVelocity in sim_env/robot.cpp.
     dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]
 
     control:
@@ -94,8 +76,8 @@ devices:
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
       kp_cart: [1000, 1000, 1000, 125, 125, 125]
       kd_cart: [50, 50, 50, 15, 15, 15]
-      eta_lin: 0.0
-      eta_rot: 0.0
+      eta_lin: 0.9
+      eta_rot: 0.9
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
       kp_null: [20, 20, 20, 20, 8, 8, 8]
@@ -109,10 +91,8 @@ devices:
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 1.0
-      max_command_angular_velocity: 4.0
-      # Furthest the target may lead the measured pose. kp_cart 1000 N/m, so
-      # 0.05 m caps the impedance spring at 50 N.
+      max_command_velocity: 0.7
+      max_command_angular_velocity: 2.0
       max_target_lead: 0.05
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
@@ -121,7 +101,6 @@ devices:
     control_mode: cartesian_impedance   # or: joint_ik | cartesian_impedance
     ik:
       kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
-      # halved with the same axis*angle change in stepIk -- see kp_cart note
       kp_o:       3                         # task ori gain (1/s)
       v_lin_max:  0.8                        # m/s  (matches interpolator max_linear_vel)
       v_ang_max:  0.8                        # rad/s
@@ -166,34 +145,17 @@ devices:
     #max_torque: [40, 40, 40, 40, 6, 6, 6]       # sim: [87, 87, 87, 87, 12, 12, 12]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
-    # FR3, matching models/mujoco/robots/franka_fr3/fr3.xml joint ranges.
-    # These were Panda's limits: joint 7 was capped at 2.8973 while the model
-    # allows 3.0159, so the arm could legally reach a pose robot.cpp called a
-    # violation -- and then sat at the model's hard stop, permanently faulted.
-    # Joints 1 and 5 were the other way round, looser than the real arm.
     q_min: [-2.7437, -1.7837, -2.9007, -3.0421, -2.8065, 0.5445, -3.0159]
     q_max: [ 2.7437,  1.7837,  2.9007, -0.1518,  2.8065, 4.5169,  3.0159]
-    # FR3 joint velocity ceilings, rad/s. Sizes joint trajectories in
-    # MotionGenerator and matches kMaxJointVelocity in sim_env/robot.cpp.
     dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]
 
     control:
       kp_joint: [600, 600, 600, 600, 250, 150, 50]
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
-      # NOTE: rotational entries [3..5] were halved when the orientation error
-      # in cartesianImpedanceControl changed from vec(q_err) (= half the
-      # rotation vector) to the full axis*angle. Effective rotational
-      # stiffness -- and closed-loop behaviour -- is unchanged; the number
-      # now means what it says. Raising it is a separate decision.
       kp_cart:  [1000, 1000, 1000, 125, 125, 125]
       kd_cart:  [50, 50, 50, 15, 15, 15]
-      # Velocity feedforward: F += eta * kd_cart * v_ref, so steady-state lag
-      # goes from kd/kp to (1 - eta) * kd/kp. 0 = previous behaviour.
-      # Stability bound is eta <= 1 - omega_n*dt/4, ~0.97 here; 0.8-0.9 is the
-      # useful range. Caps bound the feedforward wrench on contact, where it is
-      # otherwise unbounded by anything (v -> 0 but v_ref keeps going).
-      eta_lin: 0.0
-      eta_rot: 0.0
+      eta_lin: 0.9
+      eta_rot: 0.9
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
       kp_null:  [20, 20, 20, 20, 8, 8, 8]
@@ -206,10 +168,8 @@ devices:
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 1.0       # sim: 3.0
-      max_command_angular_velocity: 4.0 # sim: 8.0
-      # Furthest the target may lead the measured pose. kp_cart 1000 N/m, so
-      # 0.05 m caps the impedance spring at 50 N.
+      max_command_velocity: 0.7
+      max_command_angular_velocity: 2.0
       max_target_lead: 0.05
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
@@ -218,7 +178,6 @@ devices:
     control_mode: cartesian_impedance   # or: joint_ik | cartesian_impedance
     ik:
       kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
-      # halved with the same axis*angle change in stepIk -- see kp_cart note
       kp_o:       9                        # task ori gain (1/s)
       v_lin_max:  2.0                        # m/s  (matches interpolator max_linear_vel)
       v_ang_max:  6.0                        # rad/s

@@ -87,18 +87,8 @@ devices:
     control:
       kp_joint: [600, 600, 600, 600, 250, 150, 50]
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
-      # NOTE: rotational entries [3..5] were halved when the orientation error
-      # in cartesianImpedanceControl changed from vec(q_err) (= half the
-      # rotation vector) to the full axis*angle. Effective rotational
-      # stiffness -- and closed-loop behaviour -- is unchanged; the number
-      # now means what it says. Raising it is a separate decision.
       kp_cart: [1000, 1000, 1000, 125, 125, 125]
       kd_cart: [50, 50, 50, 15, 15, 15]
-      # Velocity feedforward: F += eta * kd_cart * v_ref, so steady-state lag
-      # goes from kd/kp to (1 - eta) * kd/kp. 0 = previous behaviour.
-      # Stability bound is eta <= 1 - omega_n*dt/4, ~0.97 here; 0.8-0.9 is the
-      # useful range. Caps bound the feedforward wrench on contact, where it is
-      # otherwise unbounded by anything (v -> 0 but v_ref keeps going).
       eta_lin: 0.0
       eta_rot: 0.0
       ff_force_max: 30.0     # N
@@ -107,9 +97,6 @@ devices:
       kd_null: [2, 2, 2, 2, 1, 1, 1]
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
-      # Fraction of max_torque_rate the limiter may actually spend. 0.9 leaves only
-      # 10% headroom against the FCI 1000 Nm/s discontinuity limit; lower it if the
-      # host shows control_command_success_rate < 1.
       torque_rate_margin: 0.9
 
     # CPU cores for this arm's 1 kHz control thread and 200 Hz state thread.
