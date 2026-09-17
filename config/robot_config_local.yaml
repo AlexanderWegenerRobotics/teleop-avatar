@@ -78,16 +78,24 @@ devices:
     #q0: [0.0, -1.2, 0.17, -1.58, 0, 1.6, 0.0]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
-    q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
-    q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+    # FR3, matching models/mujoco/robots/franka_fr3/fr3.xml joint ranges.
+    # These were Panda's limits: joint 7 was capped at 2.8973 while the model
+    # allows 3.0159, so the arm could legally reach a pose robot.cpp called a
+    # violation -- and then sat at the model's hard stop, permanently faulted.
+    # Joints 1 and 5 were the other way round, looser than the real arm.
+    q_min: [-2.7437, -1.7837, -2.9007, -3.0421, -2.8065, 0.5445, -3.0159]
+    q_max: [ 2.7437,  1.7837,  2.9007, -0.1518,  2.8065, 4.5169,  3.0159]
+    # FR3 joint velocity ceilings, rad/s. Sizes joint trajectories in
+    # MotionGenerator and matches kMaxJointVelocity in sim_env/robot.cpp.
+    dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]
 
     control:
       kp_joint: [600, 600, 600, 600, 250, 150, 50]
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
       kp_cart: [1000, 1000, 1000, 125, 125, 125]
       kd_cart: [50, 50, 50, 15, 15, 15]
-      eta_lin: 0.9
-      eta_rot: 0.9
+      eta_lin: 0.0
+      eta_rot: 0.0
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
       kp_null: [20, 20, 20, 20, 8, 8, 8]
@@ -103,6 +111,9 @@ devices:
       table_safety_margin: 0.01
       max_command_velocity: 1.0
       max_command_angular_velocity: 4.0
+      # Furthest the target may lead the measured pose. kp_cart 1000 N/m, so
+      # 0.05 m caps the impedance spring at 50 N.
+      max_target_lead: 0.05
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
@@ -155,8 +166,16 @@ devices:
     #max_torque: [40, 40, 40, 40, 6, 6, 6]       # sim: [87, 87, 87, 87, 12, 12, 12]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
-    q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
-    q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+    # FR3, matching models/mujoco/robots/franka_fr3/fr3.xml joint ranges.
+    # These were Panda's limits: joint 7 was capped at 2.8973 while the model
+    # allows 3.0159, so the arm could legally reach a pose robot.cpp called a
+    # violation -- and then sat at the model's hard stop, permanently faulted.
+    # Joints 1 and 5 were the other way round, looser than the real arm.
+    q_min: [-2.7437, -1.7837, -2.9007, -3.0421, -2.8065, 0.5445, -3.0159]
+    q_max: [ 2.7437,  1.7837,  2.9007, -0.1518,  2.8065, 4.5169,  3.0159]
+    # FR3 joint velocity ceilings, rad/s. Sizes joint trajectories in
+    # MotionGenerator and matches kMaxJointVelocity in sim_env/robot.cpp.
+    dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]
 
     control:
       kp_joint: [600, 600, 600, 600, 250, 150, 50]
@@ -173,8 +192,8 @@ devices:
       # Stability bound is eta <= 1 - omega_n*dt/4, ~0.97 here; 0.8-0.9 is the
       # useful range. Caps bound the feedforward wrench on contact, where it is
       # otherwise unbounded by anything (v -> 0 but v_ref keeps going).
-      eta_lin: 0.9
-      eta_rot: 0.9
+      eta_lin: 0.0
+      eta_rot: 0.0
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
       kp_null:  [20, 20, 20, 20, 8, 8, 8]
@@ -189,6 +208,9 @@ devices:
       table_safety_margin: 0.01
       max_command_velocity: 1.0       # sim: 3.0
       max_command_angular_velocity: 4.0 # sim: 8.0
+      # Furthest the target may lead the measured pose. kp_cart 1000 N/m, so
+      # 0.05 m caps the impedance spring at 50 N.
+      max_target_lead: 0.05
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40

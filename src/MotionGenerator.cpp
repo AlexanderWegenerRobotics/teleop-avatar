@@ -44,10 +44,32 @@ void MotionGenerator::setCommandInterval(double dt_s) {
     min_steps_.store(std::clamp(steps, 1, kMax), std::memory_order_relaxed);
 }
 
-int MotionGenerator::computeJointSteps(const Eigen::VectorXd& q_start, const Eigen::VectorXd& q_end) const {
-    double max_displacement = (q_end - q_start).cwiseAbs().maxCoeff();
-    double t_min            = max_displacement / config_.max_angular_vel;
-    int    steps            = static_cast<int>(std::ceil(t_min * config_.control_freq));
+double MotionGenerator::profilePeakRate(ProfileType profile) {
+    switch (profile) {
+        case ProfileType::MINJERK:     return 1.875;          // max of 30t^2(1-t)^2
+        case ProfileType::TRAPEZOIDAL: return 1.0 / (1.0 - 0.2);  // ramp_fraction in trapezoidalProfile
+        default:                       return 1.0;
+    }
+}
+
+int MotionGenerator::computeJointSteps(const Eigen::VectorXd& q_start, const Eigen::VectorXd& q_end,
+                                       ProfileType profile) const {
+    const Eigen::VectorXd displacement = (q_end - q_start).cwiseAbs();
+    const double peak = profilePeakRate(profile);
+
+    const bool have_joint_limits =
+        static_cast<int>(config_.max_joint_vel.size()) == config_.n_dof;
+
+    double t_min = 0.0;
+    for (int i = 0; i < config_.n_dof && i < displacement.size(); ++i) {
+        const double v_max = have_joint_limits
+            ? config_.joint_vel_margin * config_.max_joint_vel[i]
+            : config_.max_angular_vel;
+        if (v_max > 1e-9)
+            t_min = std::max(t_min, peak * displacement(i) / v_max);
+    }
+
+    int steps = static_cast<int>(std::ceil(t_min * config_.control_freq));
     return std::max(steps, min_steps_.load(std::memory_order_relaxed));
 }
 
@@ -110,7 +132,7 @@ void MotionGenerator::planJoint(const Eigen::VectorXd& q_start, const Eigen::Vec
     if (q_start.size() != config_.n_dof || q_end.size() != config_.n_dof)
         throw std::invalid_argument("Joint vector size mismatch");
 
-    int n_steps = computeJointSteps(q_start, q_end);
+    int n_steps = computeJointSteps(q_start, q_end, profile);
     std::vector<Eigen::VectorXd> waypoints(n_steps);
 
     for (int i = 0; i < n_steps; ++i) {

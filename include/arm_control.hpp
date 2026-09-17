@@ -224,6 +224,10 @@ private:
     double table_safety_margin_;
     double max_command_velocity_;
     double max_command_angular_velocity_;
+    // Furthest the commanded target may sit ahead of the MEASURED pose, in m.
+    // Bounds the impedance spring: at kp_cart 1000 N/m, 0.05 m is 50 N. <=0 disables.
+    double max_target_lead_{0.0};
+    std::chrono::steady_clock::time_point last_leash_log_time_{};
     double ee_fingertip_length_;
     double max_tilt_angle_;
     double cmd_dt_;

@@ -24,6 +24,19 @@ struct InterpolatorConfig {
     int    n_dof;
     double max_linear_vel;
     double max_angular_vel;
+
+    // Per-joint velocity ceiling, rad/s, one entry per DOF. Empty or the wrong
+    // length falls back to max_angular_vel -- which is what computeJointSteps
+    // used to do unconditionally, and max_angular_vel is the END-EFFECTOR
+    // rotational cap, which says nothing about what a joint can do. With MINJERK
+    // peaking at 1.875x the average, a plan timed off 4.0 rad/s reaches
+    // 7.5 rad/s on the joint that travels furthest, against FR3 limits of
+    // 2.62-5.26. That is what aborted the homing motion on 2026-09-16.
+    std::vector<double> max_joint_vel;
+
+    // Fraction of max_joint_vel a plan may reach. The safety check throws at the
+    // limit exactly, so a plan aimed straight at it trips on rounding.
+    double joint_vel_margin = 0.85;
 };
 
 // ── Resolved-rate IK configuration ───────────────────────────────────────────
@@ -35,9 +48,11 @@ struct IkConfig {
     double                       lambda{0.01};           // Levenberg–Marquardt damping
     Eigen::Matrix<double,7,1>    Kp_posture = Eigen::Matrix<double,7,1>::Constant(0.0001);  // posture weight (soft, << Wtask)
     Eigen::Matrix<double,7,1>    q0         = Eigen::Matrix<double,7,1>::Zero();
+    // FR3. Was Panda's (2.175 / 2.610), like every other limit table in this
+    // repo turned out to be.
     Eigen::Matrix<double,7,1>    qd_max     = (Eigen::Matrix<double,7,1>()
-                                                << 2.175, 2.175, 2.175, 2.175,
-                                                   2.610, 2.610, 2.610).finished();
+                                                << 2.62, 2.62, 2.62, 2.62,
+                                                   5.26, 4.18, 5.26).finished();
     Eigen::Matrix<double,7,1>    q_min      = Eigen::Matrix<double,7,1>::Constant(-3.0);
     Eigen::Matrix<double,7,1>    q_max      = Eigen::Matrix<double,7,1>::Constant( 3.0);
     double                       T_brake{0.10}; // position-limit braking horizon (s)
@@ -106,7 +121,13 @@ public:
 
 private:
     // Interpolation helpers
-    int    computeJointSteps    (const Eigen::VectorXd& q_start, const Eigen::VectorXd& q_end)      const;
+    int    computeJointSteps    (const Eigen::VectorXd& q_start, const Eigen::VectorXd& q_end,
+                                 ProfileType profile)                                             const;
+    // Peak of ds/dt for a profile normalised to unit duration: MINJERK 1.875,
+    // TRAPEZOIDAL 1/(1-ramp_fraction), LINEAR 1. Timing a plan on the average
+    // rate and then applying a profile that peaks above it is how a trajectory
+    // sized to a limit ends up exceeding it.
+    static double profilePeakRate(ProfileType profile);
     int    computeCartesianSteps(const Eigen::Isometry3d& T_start, const Eigen::Isometry3d& T_end)  const;
     double applyProfile         (double t, ProfileType profile) const;
     double trapezoidalProfile   (double t) const;

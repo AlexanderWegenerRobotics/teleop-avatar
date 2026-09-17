@@ -107,6 +107,16 @@ private:
     std::atomic<bool>      bRunning{false};
     Vector7                tau_filtered_;
     Vector7                tau_prev_;
+    // Set on every entry to control(). The torque-rate check divides by a fixed
+    // 1 ms, but no ticks run while enterFaultAndWaitForReset() holds the loop,
+    // so the first tick after a resume differences against a torque from
+    // seconds ago and reports a rate that never happened.
+    bool                   tau_rate_seed_pending_{true};
+    // Per joint: a position-limit violation has been reported and not yet
+    // cleared by the joint returning inside its range. Latches so the arm can
+    // travel back out of a limit it is already past -- see checkFrankaErrors.
+    // Deliberately NOT reset on re-entry to control().
+    std::array<bool, 7>    joint_limit_tripped_{};
 
     Vector7 r_;
     Vector7 p_prev_;

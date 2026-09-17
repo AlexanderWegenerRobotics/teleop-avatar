@@ -67,7 +67,18 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         // both from the same config keys the limiter uses keeps them from
         // drifting apart again.
         .max_linear_vel  = device_config["safety"]["max_command_velocity"].as<double>(),
-        .max_angular_vel = device_config["safety"]["max_command_angular_velocity"].as<double>()
+        .max_angular_vel = device_config["safety"]["max_command_angular_velocity"].as<double>(),
+        // Joint plans were timed off max_angular_vel above, which is the
+        // END-EFFECTOR rotational cap. Nothing there bounds a joint, and MINJERK
+        // peaks at 1.875x the average it was sized for, so a recovery plan
+        // reached 7.5 rad/s and faulted the arm mid-homing. Same numbers the
+        // robot's own check uses; absent from the config it falls back to the
+        // old behaviour and says so.
+        .max_joint_vel   = [&device_config]() -> std::vector<double> {
+            if (device_config["dq_max"])
+                return device_config["dq_max"].as<std::vector<double>>();
+            return {};
+        }()
     })
     , recovery_(device_config["name"].as<std::string>())
 {
@@ -235,6 +246,14 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     table_safety_margin_ = device_config["safety"]["table_safety_margin"].as<double>();
     max_command_velocity_ = device_config["safety"]["max_command_velocity"].as<double>();
     max_command_angular_velocity_ = device_config["safety"]["max_command_angular_velocity"].as<double>();
+    if (device_config["safety"]["max_target_lead"]) {
+        max_target_lead_ = device_config["safety"]["max_target_lead"].as<double>();
+        std::cout << "[INFO] " << name_ << ": target leash " << max_target_lead_ * 1000.0
+                  << " mm" << std::endl;
+    } else {
+        std::cout << "[INFO] " << name_ << ": no safety.max_target_lead in config - "
+                  << "target may lead the measured pose without bound." << std::endl;
+    }
     ee_fingertip_length_ = device_config["safety"]["ee_fingertip_length"].as<double>();
     max_tilt_angle_ = device_config["safety"]["max_tilt_angle"].as<double>();
     cmd_dt_ = 1.0 / static_cast<double>(device_config["transmission"]["frequency"].as<int>());
@@ -699,6 +718,17 @@ void ArmControl::updateRecovery() {
             std::lock_guard<std::mutex> lock(state_mtx);
             recovery_target_q_ = req.target_q;
         }
+        // Drop the pre-fault operator target. rearmFromMeasuredState already
+        // re-plans the motion generator from the measured pose, but these two
+        // survived it: the first command after a reset was rate-limited against
+        // a prev_valid_target_pos_ from before the fault, and targetsEqual()
+        // against a stale last_planned_target_ could suppress the replan
+        // entirely, leaving the arm running the recovery trajectory. Written on
+        // the state thread, same as validateTargetPose. Safe to clear now that
+        // max_target_lead_ bounds the first unlimited command.
+        has_prev_valid_target_ = false;
+        has_planned_target_    = false;
+
         motion_gen_.planJoint(q_current, req.target_q, ProfileType::MINJERK);
         recovery_.setMode(RecoveryMode::MOVING_TO_SAFE);
         state_ = SysState::RECOVERING;
@@ -1381,6 +1411,44 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 
         if (angle > max_angle && angle > 1e-9)
             q_target = prev_valid_target_rot_.slerp(max_angle / angle, q_target);
+    }
+
+    // Leash the target to the MEASURED pose.
+    //
+    // Everything above bounds target-against-target: how fast the setpoint may
+    // move. None of it looks at where the robot actually is, so a command far
+    // enough away is not rejected -- it is walked toward at max_command_velocity
+    // for as long as it takes, and the impedance spring stretches the whole way.
+    // On 2026-09-16 a 143 mm command glitch became 150 ms at 1 m/s, 113 mm of
+    // error, ~113 N at kp_cart 1000, and both arms latched FAULT. The rate limit
+    // did not prevent that; it was the mechanism.
+    //
+    // Capping the lead converts an unreachable command into bounded force: the
+    // target sits max_target_lead_ ahead, pulls with kp_cart * lead, and advances
+    // only as the robot advances. The operator sees lag instead of a fault, and
+    // the arm still gets there.
+    if (max_target_lead_ > 0.0) {
+        Eigen::Vector3d ee_pos;
+        {
+            std::lock_guard<std::mutex> lock(state_mtx);
+            ee_pos = Eigen::Isometry3d(
+                Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data())).translation();
+        }
+        // Zero before the first state arrives -- leashing to the base frame would
+        // yank the target to the robot's origin.
+        if (ee_pos.norm() > 1e-6) {
+            Eigen::Vector3d lead = p_target - ee_pos;
+            double lead_norm = lead.norm();
+            if (lead_norm > max_target_lead_ && lead_norm > 1e-9) {
+                p_target = ee_pos + (max_target_lead_ / lead_norm) * lead;
+                if (cmd_now - last_leash_log_time_ > std::chrono::seconds(1)) {
+                    last_leash_log_time_ = cmd_now;
+                    std::cout << "[WARN] " << name_ << ": target leashed - operator "
+                              << lead_norm * 1000.0 << " mm ahead of the arm, capped at "
+                              << max_target_lead_ * 1000.0 << " mm.\n";
+                }
+            }
+        }
     }
 
     Eigen::Vector3d ee_z_world = (T_base_.rotation() * q_target.toRotationMatrix()).col(2);

@@ -143,7 +143,15 @@ void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const V
 
     static const std::array<double, 7> kMaxTorqueRate    = {1000, 1000, 1000, 1000, 1000, 1000, 1000};
     static const std::array<double, 7> kMaxTorque        = {87, 87, 87, 87, 12, 12, 12};
-    static const std::array<double, 7> kMaxJointVelocity = {2.150, 2.150, 2.150, 2.150, 2.580, 2.580, 2.580};
+    // FR3, matching models/mujoco/robots/franka_fr3. The datasheet gives
+    // A1-A4 150 deg/s (2.62 rad/s) and A5-A7 301 deg/s (5.26 rad/s); libfranka
+    // publishes 4.18 for A6, so take the tighter value there.
+    //
+    // These were previously Panda's limits (2.175 / 2.610) rounded down, on an
+    // FR3 model. That faulted the wrist at half its real ceiling: every
+    // joint_velocity_violation in session 002 was joint 5 at 2.58-2.61 rad/s,
+    // against a true limit of 4.18. See claude/arm-fault-root-cause-001.md.
+    static const std::array<double, 7> kMaxJointVelocity = {2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26};
     // 0.01 rad (~0.6 deg) numerical safety margin inside the per-device
     // q_min_/q_max_ (set in set_simulation() from this robot's own config --
     // the SAME range ArmControl's IK plans/brakes against). Previously this
@@ -153,6 +161,17 @@ void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const V
     constexpr double kJointLimitMargin = 0.01;
 
     constexpr double dt = 1.0 / 1000.0;
+
+    // First tick after entering or re-entering control(): seed tau_prev_ from
+    // the current command instead of differencing against a torque that is
+    // seconds old. The loop is parked in enterFaultAndWaitForReset() while
+    // faulted, so no ticks run, but the rate below still divides by a nominal
+    // 1 ms -- which turned an ordinary 1.8 Nm resume command into a reported
+    // 1800 Nm/s and re-faulted the arm on the tick after every reset.
+    if (tau_rate_seed_pending_) {
+        tau_rate_seed_pending_ = false;
+        tau_prev_ = tau_cmd;
+    }
 
     // Mirrors libfranka's behavior: a reflex-worthy condition throws
     // franka::ControlException out of control(), rather than merely logging.
@@ -186,14 +205,35 @@ void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const V
                                     std::to_string(i));
         }
 
+        // Report the ENTRY into violation, once, then latch until the joint is
+        // back inside. A joint that is already past its limit has to be allowed
+        // to travel out again, or the fault is permanent: this runs on the first
+        // tick after control resumes, before the recovery trajectory has moved
+        // anything, and the arm is at rest there. Anything that keys off the
+        // sign of dq re-faults immediately, because dq is zero.
+        //
+        // The escape itself already exists -- an operator reset calls
+        // requestRecovery(OPERATOR_RESET, getQ0()) and updateRecovery() plans a
+        // MINJERK move to q0, which is inside the range on every joint. It just
+        // needs permission to execute.
+        //
+        // This is also what the hardware does: the reflex is on being driven
+        // into the stop, and moving the joint back out is what clears it.
         const double q_lo = q_min_[i] + kJointLimitMargin;
         const double q_hi = q_max_[i] - kJointLimitMargin;
         if (q(i) < q_lo || q(i) > q_hi) {
-            std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
-                      << ": joint_position_limits_violation - q=" << q(i)
-                      << " rad (limits=[" << q_lo << ", " << q_hi << "] rad)\n";
-            throw ControlException("sim robot (" + name_ + "): joint_position_limits_violation on joint " +
-                                    std::to_string(i));
+            if (!joint_limit_tripped_[i]) {
+                joint_limit_tripped_[i] = true;
+                std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
+                          << ": joint_position_limits_violation - q=" << q(i)
+                          << " rad (limits=[" << q_lo << ", " << q_hi << "] rad)\n";
+                throw ControlException("sim robot (" + name_ + "): joint_position_limits_violation on joint " +
+                                        std::to_string(i));
+            }
+        } else if (joint_limit_tripped_[i]) {
+            joint_limit_tripped_[i] = false;
+            std::cout << "[SIM] " << name_ << " joint " << i
+                      << ": back inside position limits (q=" << q(i) << " rad)\n";
         }
     }
 
@@ -226,6 +266,7 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
     }
 
     sim->setDeviceActive(name_, true);
+    tau_rate_seed_pending_ = true;
     // tau_filtered_/tau_prev_ deliberately NOT reset here -- see Robot::Robot()
     // and automaticErrorRecovery() comments. This function is re-entered by
     // arm_control.cpp's retry loop after every caught fault; zeroing either on
