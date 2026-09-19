@@ -4,8 +4,8 @@
 enabled:        true
 stereo:         true          # set true to switch to left+right eye streams
 stream_fps:     20
-stream_width:   1280
-stream_height:  960
+stream_width:   960  #1280
+stream_height:  720 #960
 
 # Which MuJoCo cameras to render and write to shared memory.
 # In mono mode (stereo: false) only entries with eye: "mono" are active.
@@ -147,10 +147,10 @@ cameras:
       feedback_port:      5005
       status_port:        5007
       status_interval_ms: 500
-      bitrate_kbps:       6000 
+      bitrate_kbps:       3500   #6000 
       fec_percentage:     10
-      width:              2560    # 2 × single-eye width
-      height:             960
+      width:              1920      #2560    # 2 × single-eye width
+      height:             720     # 960
 
     log:
       enabled:    true

@@ -95,6 +95,22 @@ void Robot::automaticErrorRecovery() {
 }
 
 RobotState Robot::readOnce() {
+    // Outside control() nothing refreshes robot_state_, so a caller planning a
+    // recovery from it would see the pose at the moment of the fault, not where
+    // the arm has coasted to since. Pull the live sim state instead, without
+    // touching the momentum observer (its dt bookkeeping belongs to control()).
+    if (!bRunning.load() && sim != nullptr) {
+        DeviceState ds = sim->getDeviceState(name_);
+        if (ds.q.size() >= 7) {
+            for (size_t i = 0; i < 7; ++i) {
+                robot_state_.q[i]     = ds.q[i];
+                robot_state_.dq[i]    = ds.dq[i];
+                robot_state_.tau_J[i] = ds.tau_J[i];
+            }
+            robot_state_.sim_time = ds.time;
+            robot_state_.O_T_EE   = model_->EEPose(robot_state_.q);
+        }
+    }
     return robot_state_;
 }
 

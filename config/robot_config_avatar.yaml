@@ -95,6 +95,20 @@ devices:
       ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
       kp_null: [20, 20, 20, 20, 8, 8, 8]
       kd_null: [2, 2, 2, 2, 1, 1, 1]
+      # Nullspace posture (PostureOptimizer). The elbow orbit is searched each
+      # state tick for the human-like swivel angle closest to the one at q0,
+      # inside the joint-limit margin. enabled: false restores the fixed q0 pull.
+      posture:
+        enabled: true
+        window_rad: 0.30
+        samples: 7
+        lead_rad: 0.15
+        filter_tau_s: 0.20
+        margin_rad: 0.30
+        manip_floor: 0.0
+        swivel_offset_deg: 0.0
+        k_height: 0.0
+        k_lateral: 0.0
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
       torque_rate_margin: 0.9
@@ -114,6 +128,11 @@ devices:
       table_safety_margin: 0.01
       max_command_velocity: 1.0
       max_command_angular_velocity: 4.0
+      # Second-order bound on the command target (validateTargetPose): |dv| <= a*dt,
+      # plus a braking curve at 3a toward the raw target so a held-back target never
+      # overshoots. 0 disables. 5 m/s^2 with workspace scale 1.5 on the interface.
+      max_command_acceleration: 5.0          # m/s^2
+      max_command_angular_acceleration: 25.0 # rad/s^2
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
@@ -194,6 +213,20 @@ devices:
       ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
       kp_null:  [20, 20, 20, 20, 8, 8, 8]
       kd_null:  [2, 2, 2, 2, 1, 1, 1]
+      # Nullspace posture (PostureOptimizer). The elbow orbit is searched each
+      # state tick for the human-like swivel angle closest to the one at q0,
+      # inside the joint-limit margin. enabled: false restores the fixed q0 pull.
+      posture:
+        enabled: true
+        window_rad: 0.30
+        samples: 7
+        lead_rad: 0.15
+        filter_tau_s: 0.20
+        margin_rad: 0.30
+        manip_floor: 0.0
+        swivel_offset_deg: 0.0
+        k_height: 0.0
+        k_lateral: 0.0
       # --- conservative real-hardware gains ---
       #kp_joint: [300, 300, 300, 300, 120, 75, 25]
       #kd_joint: [25,  25,  25,  25,  15,  12,  8]
@@ -211,6 +244,11 @@ devices:
       table_safety_margin: 0.01
       max_command_velocity: 1.0       # sim: 3.0
       max_command_angular_velocity: 4.0 # sim: 8.0
+      # Second-order bound on the command target (validateTargetPose): |dv| <= a*dt,
+      # plus a braking curve at 3a toward the raw target so a held-back target never
+      # overshoots. 0 disables. 5 m/s^2 with workspace scale 1.5 on the interface.
+      max_command_acceleration: 5.0          # m/s^2
+      max_command_angular_acceleration: 25.0 # rad/s^2
       max_tilt_angle: 1.74533
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
@@ -290,4 +328,4 @@ devices:
     enabled: True
     base_pose:
       position: [0, 0, 0]
-      orientation: [1, 0, 0, 0]
+      orientation: [1, 0, 0, 0]

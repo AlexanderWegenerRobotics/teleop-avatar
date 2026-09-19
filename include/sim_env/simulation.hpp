@@ -186,6 +186,20 @@ private:
     std::unordered_map<std::string, int>              gripper_ids_;
     std::unordered_map<std::string, std::vector<int>> joint_ids_;
     std::unordered_map<std::string, bool> active_devices_;
+    // Reflex stop for an inactive (faulted / not-yet-controlled) device. The
+    // real robot decelerates and engages brakes on a reflex; without this the
+    // sim arm free-floats on gravity compensation with whatever velocity the
+    // fault left it, which is what turned a 1 ms contact impulse in logs/002
+    // into seconds of uncontrolled rotation. Phase 1 damps every joint; once
+    // all joints are below kBrakeRestVel the pose is latched and held.
+    struct BrakeState {
+        bool                braked = false;
+        std::vector<double> q_hold;
+    };
+    std::unordered_map<std::string, BrakeState> brake_;
+    static constexpr double kBrakeRestVel   = 0.05;  // rad/s, all joints
+    static constexpr double kBrakeDampFrac  = 0.30;  // D_i = frac * ctrl_max_i  [Nm s/rad]
+    static constexpr double kBrakeStiffFrac = 10.0;  // K_i = frac * ctrl_max_i  [Nm/rad]
     // run_model() timing accounting -- written by the model thread only, read
     // by anyone via getTimingStats().
     std::atomic<uint64_t> sim_steps_{0};

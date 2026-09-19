@@ -40,6 +40,14 @@ struct ArmLogEntry {
     double                 gripper_width;
     double                 gripper_cmd;
     uint8_t                grasp_state;
+    // Nullspace posture reference actually used by cartesianImpedanceControl
+    // this tick (q0 when the optimizer is off), plus the optimizer's chosen
+    // orbit displacement, cost, joint-limit margin and swivel angle.
+    std::array<double, 7>  q_null_ref;
+    double                 posture_s;
+    double                 posture_cost;
+    double                 posture_margin;
+    double                 posture_swivel;
     SysState               state;
 };
 
@@ -286,6 +294,8 @@ inline std::string armLogHeader() {
     h += "gripper_width;";
     h += "gripper_cmd;";
     h += "grasp_state;";
+    for (int i = 0; i < 7;  ++i) h += "q_null_ref_" + std::to_string(i) + ";";
+    h += "posture_s;posture_cost;posture_margin;posture_swivel;";
     h += "state\n";
     return h;
 }
@@ -307,6 +317,9 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     r += std::to_string(e.gripper_width) + ";";
     r += std::to_string(e.gripper_cmd) + ";";
     r += std::to_string(e.grasp_state) + ";";
+    for (auto v : e.q_null_ref) r += std::to_string(v) + ";";
+    r += std::to_string(e.posture_s) + ";" + std::to_string(e.posture_cost) + ";"
+       + std::to_string(e.posture_margin) + ";" + std::to_string(e.posture_swivel) + ";";
     r += std::to_string(static_cast<uint8_t>(e.state)) + "\n";
     return r;
 }

@@ -17,6 +17,7 @@
 #include "data_logger.hpp"
 #include "self_collision_protection.hpp"
 #include "arm_recovery.hpp"
+#include "posture_optimizer.hpp"
 #include "common.hpp"
 
 class Simulation;
@@ -120,6 +121,14 @@ private:
     void applySelfCollisionFilter(Eigen::Isometry3d& T_target);
     void validateTargetPose(Eigen::Isometry3d& T_target);
     Vector7 jointLimitAvoidanceTorque(const Vector7& q, const Vector7& dq);
+    // On every ENGAGED entry: hold target and T_origin_ become one and the same
+    // pose, matching the interface zeroing its deltas on Engage. From PAUSED the
+    // arm has been floating, so the measured pose is used; otherwise the current
+    // hold target, which is what the arm is already being pulled to.
+    void latchOriginForEngage(SysState from);
+    // Re-seed the posture reference from the measured configuration. Called on
+    // every entry into a state that uses the nullspace reference.
+    void resetPostureFromMeasured();
     void applyGripper(bool close);
     void updateGraspConfirmation(double width);
 
@@ -169,6 +178,8 @@ private:
     CollisionState scp_state_;
     Vector7 recovery_target_q_ = Vector7::Zero();
     std::chrono::steady_clock::time_point recovery_start_time_;
+    bool recovery_deferred_{false};
+    std::chrono::steady_clock::time_point recovery_defer_start_;
     std::atomic<double> gripper_width_{0.0};
     std::atomic<bool>   desired_gripper_closed_{false};
     std::atomic<bool>   grasp_allowed_{false};
@@ -217,6 +228,16 @@ private:
     double ff_force_max_{30.0}, ff_torque_max_{8.0};
     Vector7 kp_null_, kd_null_;
 
+    // ── Nullspace posture ────────────────────────────────────────────────────
+    // State thread writes (update / reset), control thread reads one snapshot
+    // per tick into posture_snap_ and uses it for tau_null and the log row.
+    PostureConfig     posture_cfg_;
+    PostureOptimizer  posture_;
+    PostureSnapshot   posture_snap_;
+    // RobotState whose F_T_EE / EE_T_K the kinematics functors reuse when
+    // evaluating poses at configurations other than the measured one.
+    franka::RobotState kin_template_;
+
 private:
     Eigen::Vector3d workspace_min_;
     Eigen::Vector3d workspace_max_;
@@ -224,6 +245,11 @@ private:
     double table_safety_margin_;
     double max_command_velocity_;
     double max_command_angular_velocity_;
+    // Second-order bound on the command target (see validateTargetPose). 0 disables.
+    double max_command_acceleration_{5.0};          // m/s^2
+    double max_command_angular_acceleration_{25.0}; // rad/s^2
+    Eigen::Vector3d prev_target_vel_    = Eigen::Vector3d::Zero();
+    Eigen::Vector3d prev_target_angvel_ = Eigen::Vector3d::Zero();
     // Furthest the commanded target may sit ahead of the MEASURED pose, in m.
     // Bounds the impedance spring: at kp_cart 1000 N/m, 0.05 m is 50 N. <=0 disables.
     double max_target_lead_{0.0};

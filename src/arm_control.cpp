@@ -19,6 +19,12 @@ constexpr double kGripperMaxWidth = 0.08;
 // command stream (0.05 s x max_command_velocity = 50 mm at 1.0 m/s).
 constexpr double kMinCmdDt = 0.0005;
 constexpr double kMaxCmdDt = 0.05;
+// Shortest interval the acceleration bound divides by. Two packets 0.5 ms apart
+// differ by float32 quantisation, which over 0.5 ms reads as tens of m/s^2.
+constexpr double kAccelDtFloor = 0.002;
+// Braking-curve deceleration allowed toward the raw target, as a multiple of
+// the configured acceleration bound (see validateTargetPose).
+constexpr double kBrakeAccelFactor = 3.0;
 
 // Well below the float32 resolution of a command on the wire, so this only ever
 // matches a genuinely repeated target.
@@ -178,6 +184,23 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
                   << ff_torque_max_ << " Nm)" << std::endl;
     kp_null_ = yamlToVector<7>(device_config["control"]["kp_null"]);
     kd_null_ = yamlToVector<7>(device_config["control"]["kd_null"]);
+    if (ctrl["posture"]) {
+        const auto& p = ctrl["posture"];
+        if (p["enabled"])           posture_cfg_.enabled           = p["enabled"].as<bool>();
+        if (p["window_rad"])        posture_cfg_.window_rad        = p["window_rad"].as<double>();
+        if (p["samples"])           posture_cfg_.samples           = p["samples"].as<int>();
+        if (p["lead_rad"])          posture_cfg_.lead_rad          = p["lead_rad"].as<double>();
+        if (p["filter_tau_s"])      posture_cfg_.filter_tau_s      = p["filter_tau_s"].as<double>();
+        if (p["margin_rad"])        posture_cfg_.margin_rad        = p["margin_rad"].as<double>();
+        if (p["manip_floor"])       posture_cfg_.manip_floor       = p["manip_floor"].as<double>();
+        if (p["swivel_offset_deg"]) posture_cfg_.swivel_offset_deg = p["swivel_offset_deg"].as<double>();
+        if (p["k_height"])          posture_cfg_.k_height          = p["k_height"].as<double>();
+        if (p["k_lateral"])         posture_cfg_.k_lateral         = p["k_lateral"].as<double>();
+    }
+    std::cout << "[INFO] " << name_ << ": nullspace posture "
+              << (posture_cfg_.enabled ? "enabled" : "disabled (q0 hold)")
+              << " window=" << posture_cfg_.window_rad << " lead=" << posture_cfg_.lead_rad
+              << " margin=" << posture_cfg_.margin_rad << std::endl;
     kd_joint_limit_ = yamlToVector<7>(device_config["control"]["kd_joint_limit"]);
     kp_joint_limit_ = yamlToVector<7>(device_config["control"]["kp_joint_limit"]);
     joint_limit_buffer_  = device_config["safety"]["joint_limit_buffer"].as<double>();
@@ -246,6 +269,13 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     table_safety_margin_ = device_config["safety"]["table_safety_margin"].as<double>();
     max_command_velocity_ = device_config["safety"]["max_command_velocity"].as<double>();
     max_command_angular_velocity_ = device_config["safety"]["max_command_angular_velocity"].as<double>();
+    if (device_config["safety"]["max_command_acceleration"])
+        max_command_acceleration_ = device_config["safety"]["max_command_acceleration"].as<double>();
+    if (device_config["safety"]["max_command_angular_acceleration"])
+        max_command_angular_acceleration_ = device_config["safety"]["max_command_angular_acceleration"].as<double>();
+    std::cout << "[INFO] " << name_ << ": target acceleration bound "
+              << max_command_acceleration_ << " m/s^2 / " << max_command_angular_acceleration_
+              << " rad/s^2 (0 = off)" << std::endl;
     if (device_config["safety"]["max_target_lead"]) {
         max_target_lead_ = device_config["safety"]["max_target_lead"].as<double>();
         std::cout << "[INFO] " << name_ << ": target leash " << max_target_lead_ * 1000.0
@@ -349,6 +379,35 @@ void ArmControl::start(){
 #endif
     Eigen::Map<const Vector7> q_init(current_state.q.data());
     motion_gen_.planJoint(q_init, q_init, ProfileType::TRAPEZOIDAL);
+
+    kin_template_ = current_state;
+    {
+        PostureKinematics kin;
+        kin.pose = [this](franka::Frame frame, const Vector7& q) -> Eigen::Isometry3d {
+            std::array<double, 7> qa;
+            Eigen::Map<Vector7>(qa.data()) = q;
+#ifdef WITH_FRANKA
+            auto T = model->pose(frame, qa, kin_template_.F_T_EE, kin_template_.EE_T_K);
+#else
+            auto T = model->framePose(frame, qa);
+#endif
+            return Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(T.data()));
+        };
+        kin.jacobian = [this](const Vector7& q) -> Matrix6x7 {
+            franka::RobotState rs = kin_template_;
+            Eigen::Map<Vector7>(rs.q.data()) = q;
+            auto J = model->zeroJacobian(franka::Frame::kEndEffector, rs);
+            return Eigen::Map<Matrix6x7>(J.data());
+        };
+        posture_.init(posture_cfg_, q_min_, q_max_, q0_, T_base_.rotation(), std::move(kin));
+        if (posture_cfg_.enabled && !posture_.enabled())
+            std::cout << "[WARN] " << name_ << ": posture optimizer failed to initialise at q0 - "
+                         "falling back to q0 hold." << std::endl;
+        else if (posture_.enabled())
+            std::cout << "[INFO] " << name_ << ": posture swivel at q0 = "
+                      << posture_.swivelAngle(q0_) * 180.0 / 3.14159265358979323846 << " deg" << std::endl;
+    }
+
     control_thread = std::thread(&ArmControl::runControlHandler, this);
     set_realtime(control_thread, rt_control_core_);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -437,6 +496,26 @@ void ArmControl::runStateHandler(){
         if (state_ != SysState::ENGAGED) {
             has_cmd = false;
             has_cmd_abs = false;
+        }
+
+        // ── Nullspace posture ────────────────────────────────────────────────
+        {
+            const bool cart_now  = (state_ == SysState::AWAITING || state_ == SysState::ENGAGED);
+            const bool cart_prev = (prev_state == SysState::AWAITING || prev_state == SysState::ENGAGED);
+            if (cart_now && !cart_prev)
+                resetPostureFromMeasured();
+            if (cart_now && posture_.enabled()) {
+                Vector7 q_meas;
+                {
+                    std::lock_guard<std::mutex> lock(state_mtx);
+                    q_meas = Eigen::Map<const Vector7>(current_state.q.data());
+                }
+                if (q_meas.allFinite() && q_meas.norm() > 1e-9) {
+                    Vector7 q_ref = posture_.update(q_meas, dt_state);
+                    if (control_mode_ == ControlMode::JOINT_IK)
+                        motion_gen_.setIkPosture(q_ref);
+                }
+            }
         }
 
         // ── HOMING entry ──────────────────────────────────────────────────────
@@ -703,15 +782,41 @@ void ArmControl::applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommand
 void ArmControl::updateRecovery() {
     RecoveryRequest req = recovery_.consumePending();
     if (req.valid) {
-        Vector7 q_current;
+        Vector7 q_current, dq_current;
+        // While FAULT holds the control thread, current_state is frozen at the
+        // moment of the fault. Read the robot directly (readOnce() is live
+        // outside control()) so the recovery plan starts where the arm is, and
+        // hold the request until the reflex brake has brought it to rest.
+        if (state_ == SysState::FAULT) {
+            franka::RobotState rs = robot->readOnce();
+            std::lock_guard<std::mutex> lock(state_mtx);
+            current_state = rs;
+        }
         {
             std::lock_guard<std::mutex> lock(state_mtx);
-            q_current = Eigen::Map<const Vector7>(current_state.q.data());
+            q_current  = Eigen::Map<const Vector7>(current_state.q.data());
+            dq_current = Eigen::Map<const Vector7>(current_state.dq.data());
         }
         if (q_current.norm() < 1e-6) {
             recovery_.pushBack(req);
             return;
         }
+        if (dq_current.cwiseAbs().maxCoeff() > 0.10) {
+            if (!recovery_deferred_) {
+                recovery_deferred_      = true;
+                recovery_defer_start_   = std::chrono::steady_clock::now();
+                std::cout << "[INFO]: " << name_ << " recovery requested while moving ("
+                          << dq_current.cwiseAbs().maxCoeff() << " rad/s) - waiting for rest." << std::endl;
+            }
+            const double waited = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - recovery_defer_start_).count();
+            if (waited < 3.0) {
+                recovery_.pushBack(req);
+                return;
+            }
+            std::cout << "[WARN]: " << name_ << " arm still moving after 3 s - starting recovery anyway." << std::endl;
+        }
+        recovery_deferred_ = false;
         // Under state_mtx because runControlHandler's rearmFromMeasuredState reads
         // it from the control thread when restarting a faulted loop.
         {
@@ -808,6 +913,7 @@ void ArmControl::updateStateMachine(SysState cmd_state){
                 state_ = SysState::IDLE;
             }
             else if(cmd_state == SysState::ENGAGED){
+                latchOriginForEngage(SysState::AWAITING);
                 state_ = SysState::ENGAGED;
                 has_prev_valid_target_ = false;
                 std::cout << "[INFO]: " << name_ << " engaged." << std::endl;
@@ -826,7 +932,11 @@ void ArmControl::updateStateMachine(SysState cmd_state){
                 state_ = SysState::IDLE;
             }
             else if(cmd_state == SysState::ENGAGED){
+                latchOriginForEngage(SysState::PAUSED);
                 state_ = SysState::ENGAGED;
+                has_prev_valid_target_ = false;
+                has_planned_target_    = false;
+                std::cout << "[INFO]: " << name_ << " re-engaged from pause." << std::endl;
             }
             break;
 
@@ -855,6 +965,7 @@ void ArmControl::runControlHandler(){
         control_callback = [&](const franka::RobotState& robot_state, franka::Duration) -> franka::Torques {
             
             motion_gen_.step();
+            posture_snap_ = posture_.snapshot();
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
                 current_state = robot_state;
@@ -935,6 +1046,11 @@ void ArmControl::runControlHandler(){
                 entry.grasp_state = static_cast<uint8_t>(grasp_state_.load());
                 std::copy(robot_state.q.begin(),                    robot_state.q.end(),                    entry.q.begin());
                 Eigen::Map<Vector7>(entry.q_cmd.data()) = q_target;
+                Eigen::Map<Vector7>(entry.q_null_ref.data()) = posture_snap_.valid ? posture_snap_.q_ref : q0_;
+                entry.posture_s      = posture_snap_.s_opt;
+                entry.posture_cost   = posture_snap_.cost;
+                entry.posture_margin = posture_snap_.margin;
+                entry.posture_swivel = posture_snap_.swivel;
                 std::copy(robot_state.dq.begin(),                   robot_state.dq.end(),                   entry.dq.begin());
                 std::copy(robot_state.tau_J.begin(),                robot_state.tau_J.end(),                entry.tau_J.begin());
                 // Post rate-limit, post-saturation: exactly the vector handed to
@@ -1025,6 +1141,7 @@ void ArmControl::runControlHandler(){
                 } else {
                     motion_gen_.planCartesian(T_ee, T_ee);
                 }
+                posture_.reset(q);
                 break;
         }
     };
@@ -1047,10 +1164,43 @@ void ArmControl::runControlHandler(){
         }
     };
 
+    // After a reflex stop the arm keeps whatever velocity the fault left it
+    // (in sim it coasts on the reflex brake; on hardware the FCI's controlled
+    // stop takes a few hundred ms). Re-entering control() before it is still
+    // trips the same velocity reflex within a tick -- logs/002 shows three
+    // retries at 6.5, 6.2 and 5.9 rad/s -- and rearmFromMeasuredState would
+    // plan from a pose that is already stale. Poll readOnce(), which is live
+    // outside control(), and refresh current_state so everything downstream
+    // starts from where the arm actually stopped.
+    auto waitForRest = [this](double timeout_s) -> bool {
+        constexpr double kRestVel = 0.10;   // rad/s
+        const auto t0 = std::chrono::steady_clock::now();
+        bool at_rest = false;
+        while (bRunning) {
+            franka::RobotState rs = robot->readOnce();
+            Eigen::Map<const Vector7> dq(rs.dq.data());
+            {
+                std::lock_guard<std::mutex> lock(state_mtx);
+                current_state = rs;
+            }
+            at_rest = dq.cwiseAbs().maxCoeff() < kRestVel;
+            const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            if (at_rest || elapsed > timeout_s) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!at_rest)
+            std::cout << "[WARN] " << name_ << ": arm still moving after " << timeout_s
+                      << " s post-fault - re-entering control anyway." << std::endl;
+        return at_rest;
+    };
+
     while (bRunning) {
         // Only on a restart: on the very first entry start() has already seeded
         // motion_gen_ and tau_prev_ is zero by construction.
-        if (!first_attempt) rearmFromMeasuredState();
+        if (!first_attempt) {
+            waitForRest(3.0);
+            rearmFromMeasuredState();
+        }
         first_attempt = false;
 
         try {
@@ -1215,7 +1365,8 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Matrix<double, 6, 6> JMinvJt_damped = JMinvJt + lambda_sq * Eigen::Matrix<double, 6, 6>::Identity();
     Eigen::Matrix<double, 7, 6> J_pinv = M_inv * J.transpose() * JMinvJt_damped.ldlt().solve(Eigen::Matrix<double, 6, 6>::Identity());
     Eigen::Matrix<double, 7, 7> N = Matrix7::Identity() - J_pinv * J;
-    Vector7 tau_null = N * (kp_null_.cwiseProduct(q0_ - q) - kd_null_.cwiseProduct(dq));
+    const Vector7& q_null_ref = posture_snap_.valid ? posture_snap_.q_ref : q0_;
+    Vector7 tau_null = N * (kp_null_.cwiseProduct(q_null_ref - q) - kd_null_.cwiseProduct(dq));
 
     static const Vector7 kMaxDq = (Vector7() << 2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610).finished();
     static const double kVelDampOnset = 0.05;
@@ -1411,6 +1562,58 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 
         if (angle > max_angle && angle > 1e-9)
             q_target = prev_valid_target_rot_.slerp(max_angle / angle, q_target);
+
+        // Acceleration bound on the target itself (second-order rate limiter).
+        // The velocity bound above only caps the step; a command stream can
+        // still reverse or stop within one tick, and the stiff impedance turns
+        // that into a force step the operator feels as a jolt. Two rules:
+        //   1. |dv| <= a_max * dt      -- speed may not change faster than a_max
+        //   2. |v|  <= sqrt(2 a_brk d) -- braking curve toward the raw target,
+        //      a_brk = kBrakeAccelFactor * a_max, so a target that was held
+        //      back (leash release, a fast catch-up) arrives at the operator's
+        //      pose at zero speed instead of overshooting by v^2/2a.
+        // Rule 2 costs a steady lag of v^2/(2 a_brk) -- small with the
+        // defaults (8 m/s^2, brake 24 m/s^2: 2 mm at 0.3 m/s). On logs/002 this halves
+        // the p99 target acceleration and jerk at a p95 lag of 1.2 mm. dt is
+        // floored so bunched packets do not read as spikes.
+        if (max_command_acceleration_ > 0.0 || max_command_angular_acceleration_ > 0.0) {
+            const double dt_acc = std::max(cmd_dt, kAccelDtFloor);
+
+            if (max_command_acceleration_ > 0.0) {
+                const double a_max = max_command_acceleration_;
+                const double a_brk = kBrakeAccelFactor * a_max;
+                Eigen::Vector3d to_raw = p_target - prev_valid_target_pos_;
+                const double d = to_raw.norm();
+                Eigen::Vector3d v_new = to_raw / dt_acc;
+                Eigen::Vector3d dv = v_new - prev_target_vel_;
+                if (dv.norm() > a_max * dt_acc)
+                    v_new = prev_target_vel_ + dv * (a_max * dt_acc / dv.norm());
+                const double v_cap = std::sqrt(2.0 * a_brk * d);
+                if (v_new.norm() > v_cap && v_new.norm() > 1e-12)
+                    v_new *= v_cap / v_new.norm();
+                p_target = prev_valid_target_pos_ + v_new * dt_acc;
+            }
+
+            if (max_command_angular_acceleration_ > 0.0) {
+                const double a_max = max_command_angular_acceleration_;
+                const double a_brk = kBrakeAccelFactor * a_max;
+                Eigen::AngleAxisd aa((q_target * prev_valid_target_rot_.inverse()).normalized());
+                Eigen::Vector3d rot = aa.axis() * aa.angle();
+                const double d = rot.norm();
+                Eigen::Vector3d w_new = rot / dt_acc;
+                Eigen::Vector3d dw = w_new - prev_target_angvel_;
+                if (dw.norm() > a_max * dt_acc)
+                    w_new = prev_target_angvel_ + dw * (a_max * dt_acc / dw.norm());
+                const double w_cap = std::sqrt(2.0 * a_brk * d);
+                if (w_new.norm() > w_cap && w_new.norm() > 1e-12)
+                    w_new *= w_cap / w_new.norm();
+                const double ang = w_new.norm() * dt_acc;
+                Eigen::Quaterniond step = (ang > 1e-12)
+                    ? Eigen::Quaterniond(Eigen::AngleAxisd(ang, w_new / w_new.norm()))
+                    : Eigen::Quaterniond::Identity();
+                q_target = (step * prev_valid_target_rot_).normalized();
+            }
+        }
     }
 
     // Leash the target to the MEASURED pose.
@@ -1471,6 +1674,19 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 
     T_target.translation() = p_target;
     T_target.linear()      = q_target.toRotationMatrix();
+    // Target velocity bookkeeping for the acceleration bound, taken from the
+    // FINAL target so a leash or workspace clamp above counts as a stop rather
+    // than as stored momentum. Zeroed when the history is invalid (engage,
+    // recovery), so the first command after a re-plan ramps up from rest.
+    if (has_prev_valid_target_) {
+        const double dt_acc = std::max(cmd_dt, kAccelDtFloor);
+        prev_target_vel_ = (p_target - prev_valid_target_pos_) / dt_acc;
+        Eigen::AngleAxisd aa((q_target * prev_valid_target_rot_.inverse()).normalized());
+        prev_target_angvel_ = aa.axis() * aa.angle() / dt_acc;
+    } else {
+        prev_target_vel_.setZero();
+        prev_target_angvel_.setZero();
+    }
     prev_valid_target_pos_  = p_target;
     prev_valid_target_rot_  = q_target;
     prev_valid_target_time_ = cmd_now;
@@ -1480,6 +1696,39 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 void ArmControl::reOrigin() {
     std::lock_guard<std::mutex> lock(state_mtx);
     T_origin_ = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
+}
+
+void ArmControl::latchOriginForEngage(SysState from) {
+    Eigen::Isometry3d T_hold;
+    const bool from_measured = (from == SysState::PAUSED) || (control_mode_ == ControlMode::JOINT_IK);
+    if (from_measured) {
+        std::lock_guard<std::mutex> lock(state_mtx);
+        T_hold = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
+    } else {
+        T_hold = motion_gen_.getCurrentCartesian();
+    }
+    if (!T_hold.matrix().allFinite() || T_hold.translation().norm() < 1e-9) return;
+
+    if (control_mode_ == ControlMode::JOINT_IK)
+        motion_gen_.setCartesianGoal(T_hold);
+    else
+        motion_gen_.planCartesian(T_hold, T_hold);
+    {
+        std::lock_guard<std::mutex> lock(state_mtx);
+        T_origin_ = T_hold;
+    }
+    target_pose_     = T_base_ * T_hold;
+    target_pose_raw_ = target_pose_;
+}
+
+void ArmControl::resetPostureFromMeasured() {
+    Vector7 q;
+    {
+        std::lock_guard<std::mutex> lock(state_mtx);
+        q = Eigen::Map<const Vector7>(current_state.q.data());
+    }
+    if (q.allFinite() && q.norm() > 1e-9)
+        posture_.reset(q);
 }
 
 void ArmControl::applyGripper(bool close) {

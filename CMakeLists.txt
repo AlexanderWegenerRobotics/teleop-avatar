@@ -177,6 +177,7 @@ set(SOURCES
     src/arm_control.cpp
     src/head_control.cpp
     src/MotionGenerator.cpp
+    src/posture_optimizer.cpp
     src/network/udp_transport.cpp
     src/network/udp_reliable.cpp
     src/intention/intention_buffer.cpp

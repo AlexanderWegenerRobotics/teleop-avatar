@@ -252,6 +252,11 @@ void MotionGenerator::setIkConfig(const IkConfig& c) {
     ik_cfg_ = c;
 }
 
+void MotionGenerator::setIkPosture(const Eigen::Matrix<double,7,1>& q_posture) {
+    std::lock_guard<std::mutex> lock(ik_mtx_);
+    ik_cfg_.q0 = q_posture;
+}
+
 void MotionGenerator::seedJointReference(const Eigen::Matrix<double,7,1>& q) {
     std::lock_guard<std::mutex> lock(ik_mtx_);
     q_ref_     = q;

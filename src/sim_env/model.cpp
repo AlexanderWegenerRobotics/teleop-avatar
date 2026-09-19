@@ -118,6 +118,33 @@ std::array<double, 16> Model::EEPose(const std::array<double, 7>& q) {
     return result;
 }
 
+std::array<double, 16> Model::framePose(Frame frame, const std::array<double, 7>& q) {
+    std::string name;
+    switch (frame) {
+        case Frame::kJoint1: name = "fr3_joint1"; break;
+        case Frame::kJoint2: name = "fr3_joint2"; break;
+        case Frame::kJoint3: name = "fr3_joint3"; break;
+        case Frame::kJoint4: name = "fr3_joint4"; break;
+        case Frame::kJoint5: name = "fr3_joint5"; break;
+        case Frame::kJoint6: name = "fr3_joint6"; break;
+        case Frame::kJoint7: name = "fr3_joint7"; break;
+        case Frame::kFlange: name = "fr3_link8";  break;
+        default:             name = ee_frame_name_; break;
+    }
+    if (!pin_model_.existFrame(name))
+        throw std::runtime_error("[Model] frame '" + name + "' not found in URDF");
+
+    Vector7 q_eig = Eigen::Map<const Vector7>(q.data());
+    std::lock_guard<std::mutex> lock(pin_mutex_);
+    pinocchio::forwardKinematics(pin_model_, pin_data_, q_eig);
+    pinocchio::updateFramePlacements(pin_model_, pin_data_);
+
+    const pinocchio::SE3& T = pin_data_.oMf[pin_model_.getFrameId(name)];
+    std::array<double, 16> result;
+    Eigen::Map<Eigen::Matrix4d>(result.data()) = T.toHomogeneousMatrix();
+    return result;
+}
+
 std::array<double, 6> Model::cartesianWrench(const std::array<double, 7>& q,
                                             const std::array<double, 7>& tau_ext) {
     Vector7 q_eig       = Eigen::Map<const Vector7>(q.data());

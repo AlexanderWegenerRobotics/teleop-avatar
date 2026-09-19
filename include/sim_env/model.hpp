@@ -51,6 +51,9 @@ public:
     // Simulation-internal (used by robot.cpp, keep q-based)
     std::array<double, 7>  gravity(const std::array<double, 7>& q);
     std::array<double, 16> EEPose(const std::array<double, 7>& q);
+    // Base-frame pose of a robot frame. kJoint1..7 map to the URDF joint frames,
+    // kFlange to fr3_link8, kEndEffector/kStiffness to the configured EE frame.
+    std::array<double, 16> framePose(Frame frame, const std::array<double, 7>& q);
     std::array<double, 6>  cartesianWrench(const std::array<double, 7>& q, const std::array<double, 7>& tau_ext);
     GMOInputs computeGMOInputs(const std::array<double, 7>& q, const std::array<double, 7>& dq);
 
@@ -65,4 +68,4 @@ private:
 
 }  // namespace franka
 
-#endif  // WITH_FRANKA
+#endif  // WITH_FRANKA

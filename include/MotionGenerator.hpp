@@ -102,6 +102,9 @@ public:
     // Call on ENGAGED entry to avoid a jump: seeds q_ref and clears u_prev.
     void seedJointReference(const Eigen::Matrix<double,7,1>& q);
 
+    // Replace the posture pull target (IkConfig::q0) at runtime. Thread-safe.
+    void setIkPosture(const Eigen::Matrix<double,7,1>& q_posture);
+
     // Update the Cartesian goal (base frame). Thread-safe; called from state thread.
     void setCartesianGoal(const Eigen::Isometry3d& X_d);
     Eigen::Isometry3d getCartesianGoal() const;

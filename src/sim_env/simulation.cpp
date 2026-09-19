@@ -1,5 +1,7 @@
 #include "sim_env/simulation.hpp"
 
+#include <algorithm>
+
 #include <stdexcept>
 #include <iostream>
 #include <chrono>
@@ -196,9 +198,32 @@ void Simulation::run_model() {
                     if (active) continue;
                     const auto& act_ids  = actuator_ids_[name];
                     const auto& jnt_ids  = joint_ids_[name];
-                    for (size_t i = 0; i < act_ids.size() && i < jnt_ids.size(); ++i) {
-                        int vadr = model->jnt_dofadr[jnt_ids[i]];
-                        ctrl_buffer_[act_ids[i]] = data->qfrc_bias[vadr];
+                    const size_t n = std::min(act_ids.size(), jnt_ids.size());
+                    BrakeState& br = brake_[name];
+
+                    if (!br.braked) {
+                        bool at_rest = true;
+                        for (size_t i = 0; i < n; ++i)
+                            if (std::abs(data->qvel[model->jnt_dofadr[jnt_ids[i]]]) > kBrakeRestVel) { at_rest = false; break; }
+                        if (at_rest) {
+                            br.q_hold.resize(n);
+                            for (size_t i = 0; i < n; ++i)
+                                br.q_hold[i] = data->qpos[model->jnt_qposadr[jnt_ids[i]]];
+                            br.braked = true;
+                        }
+                    }
+
+                    for (size_t i = 0; i < n; ++i) {
+                        const int a    = act_ids[i];
+                        const int vadr = model->jnt_dofadr[jnt_ids[i]];
+                        const int qadr = model->jnt_qposadr[jnt_ids[i]];
+                        const double ctrl_max = model->actuator_ctrllimited[a]
+                            ? std::max(std::abs(model->actuator_ctrlrange[2*a]), std::abs(model->actuator_ctrlrange[2*a+1]))
+                            : 87.0;
+                        double u = data->qfrc_bias[vadr] - kBrakeDampFrac * ctrl_max * data->qvel[vadr];
+                        if (br.braked)
+                            u -= kBrakeStiffFrac * ctrl_max * (data->qpos[qadr] - br.q_hold[i]);
+                        ctrl_buffer_[a] = std::clamp(u, -ctrl_max, ctrl_max);
                     }
                 }
 
@@ -648,7 +673,9 @@ DeviceState Simulation::getDeviceState(const std::string& deviceName) {
 }
 
 void Simulation::setDeviceActive(const std::string& deviceName, bool state){
+    std::lock_guard<std::mutex> lock(ctrl_mtx_);
     active_devices_[deviceName] = state;
+    brake_[deviceName] = BrakeState{};
 }
 
 std::vector<double> Simulation::getDeviceCtrl(const std::string& deviceName) {

@@ -504,6 +504,14 @@ std::string SceneBuilder::buildSceneXML(const std::vector<DeviceConfig>& devices
     optionEl->SetAttribute("gravity", "0 0 -9.81");
     optionEl->SetAttribute("integrator", "implicitfast");
     optionEl->SetAttribute("cone", "elliptic");
+    // Frictional-to-normal constraint impedance ratio. With elliptic cones the
+    // default (1) makes friction as soft as the normal contact, and a grasped
+    // part creeps along the fingertip pads under a sustained tangential load:
+    // measured 0.9 mm/s at 20 N with the stiff hand model, 0.09 mm/s at 10.
+    // The standalone board scenes already run at 10; this makes the generated
+    // scene match them. Injected models' own <option> elements are not merged
+    // (only <compiler> is), so this is the one place the value is set.
+    optionEl->SetAttribute("impratio", "10");
     root->InsertEndChild(optionEl);
 
     XMLElement* assetEl   = scene.NewElement("asset");
