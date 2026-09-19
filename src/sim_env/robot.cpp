@@ -54,6 +54,19 @@ void Robot::set_simulation(Simulation& _sim, const YAML::Node& sim_dev, const YA
     model_ = std::make_unique<franka::Model>(urdf_path, base_quat, ee_frame_name_,
                                              joint_damping, joint_coulomb, rotor_inertia);
 
+    if (robot_dev["safety"]) {
+        const auto& s = robot_dev["safety"];
+        if (s["collision_reflex_enabled"])
+            collision_reflex_enabled_ = s["collision_reflex_enabled"].as<bool>();
+        if (s["collision_persist_ticks"])
+            collision_persist_ticks_ = std::max(1, s["collision_persist_ticks"].as<int>());
+    }
+    std::cout << "[SIM] " << name_ << ": collision reflex "
+              << (collision_reflex_enabled_ ? "ENABLED" : "DISABLED") << ", persist "
+              << collision_persist_ticks_ << " ticks, upper force ["
+              << upper_force_thresholds_[0] << ", " << upper_force_thresholds_[1] << ", "
+              << upper_force_thresholds_[2] << "] N." << std::endl;
+
     if (robot_dev["q_min"] && robot_dev["q_max"]) {
         auto qmin_vec = robot_dev["q_min"].as<std::vector<double>>();
         auto qmax_vec = robot_dev["q_max"].as<std::vector<double>>();
@@ -75,9 +88,14 @@ void Robot::setCollisionBehavior(
     upper_torque_thresholds_ = upper_torque_thresholds;
     lower_force_thresholds_  = lower_force_thresholds;
     upper_force_thresholds_  = upper_force_thresholds;
-    std::cout << "[SIM] " << name_ << ": setCollisionBehavior() applied (stored only - sim has no "
-                 "separate collision reflex yet; hard torque/velocity/position limits are still "
-                 "enforced via checkFrankaErrors)." << std::endl;
+    // Called from ArmControl's constructor, i.e. BEFORE set_simulation(), so
+    // name_ and the reflex settings are not populated yet -- those are logged
+    // there instead.
+    std::cout << "[SIM] setCollisionBehavior() - upper force ["
+              << upper_force_thresholds_[0] << ", " << upper_force_thresholds_[1] << ", "
+              << upper_force_thresholds_[2] << "] N, upper wrist torque ["
+              << upper_torque_thresholds_[4] << ", " << upper_torque_thresholds_[5] << ", "
+              << upper_torque_thresholds_[6] << "] Nm." << std::endl;
 }
 
 void Robot::setJointImpedance(const std::array<double, 7>& K_theta) {
@@ -91,6 +109,16 @@ void Robot::setCartesianImpedance(const std::array<double, 6>& K_x) {
 void Robot::automaticErrorRecovery() {
     r_            = Vector7::Zero();
     p_prev_       = Vector7::Zero();
+    gmo_seed_pending_ = true;
+    // The observer is being re-seeded, so any streak counted against the old
+    // residual is meaningless. Not clearing these re-trips the reflex on the
+    // first tick after the resume, before the arm has moved.
+    joint_reflex_streak_.fill(0);
+    cart_reflex_streak_.fill(0);
+    robot_state_.joint_contact.fill(0.0);
+    robot_state_.cartesian_contact.fill(0.0);
+    robot_state_.joint_collision.fill(0.0);
+    robot_state_.cartesian_collision.fill(0.0);
     std::cout << "[SIM] " << name_ << ": automaticErrorRecovery()" << std::endl;
 }
 
@@ -117,12 +145,94 @@ RobotState Robot::readOnce() {
 void Robot::updateGMO(const std::array<double, 7>& q, const std::array<double, 7>& dq, const std::array<double, 7>& tau_cmd, double dt) {
     Vector7 tau_eig = Eigen::Map<const Vector7>(tau_cmd.data());
     auto [p, tau_model] = model_->computeGMOInputs(q, dq);
+    // Seed rather than difference against a zeroed p_prev_. Robot() and
+    // automaticErrorRecovery() both zero it, so the first update after either
+    // one evaluated r_ += K_GMO * p -- 50x the momentum, reported as external
+    // torque. At rest p is zero and it did not show; after a fault the arm is
+    // still coasting (waitForRest only gets it under 0.1 rad/s) and it is not.
+    if (gmo_seed_pending_) {
+        gmo_seed_pending_ = false;
+        p_prev_ = p;
+    }
     r_ += K_GMO * (p - p_prev_ - (tau_eig - tau_model + r_) * dt);
     p_prev_ = p;
     std::array<double, 7> tau_ext;
     Eigen::Map<Vector7>(tau_ext.data()) = r_;
     robot_state_.tau_ext_hat_filtered   = tau_ext;
     robot_state_.O_F_ext_hat_K          = model_->cartesianWrench(q, tau_ext);
+
+    // Rotate the base-frame wrench into the stiffness frame. O_T_EE is
+    // column-major, so the leading 3x3 block of the Map is the rotation.
+    Eigen::Map<const Eigen::Matrix4d> T(robot_state_.O_T_EE.data());
+    const Eigen::Matrix3d R = T.topLeftCorner<3, 3>();
+    Eigen::Map<const Eigen::Vector3d> f_O(robot_state_.O_F_ext_hat_K.data());
+    Eigen::Map<const Eigen::Vector3d> m_O(robot_state_.O_F_ext_hat_K.data() + 3);
+    Eigen::Map<Eigen::Vector3d>(robot_state_.K_F_ext_hat_K.data())     = R.transpose() * f_O;
+    Eigen::Map<Eigen::Vector3d>(robot_state_.K_F_ext_hat_K.data() + 3) = R.transpose() * m_O;
+}
+
+void Robot::checkCollisionReflex() {
+    // The real FR3 reflex, reproduced: the LOWER thresholds only raise the
+    // contact flags, the UPPER ones stop the arm. Without this the twin will
+    // happily push tens of newtons into a fixture that would have reflex-stopped
+    // the plant, so anything learned or recorded against it is a habit that
+    // faults on hardware.
+    auto& rs = robot_state_;
+
+    for (int i = 0; i < 7; ++i) {
+        const double t = std::abs(rs.tau_ext_hat_filtered[i]);
+        rs.joint_contact[i]   = (t > lower_torque_thresholds_[i]) ? 1.0 : 0.0;
+        rs.joint_collision[i] = (t > upper_torque_thresholds_[i]) ? 1.0 : 0.0;
+    }
+    for (int i = 0; i < 6; ++i) {
+        const double f = std::abs(rs.K_F_ext_hat_K[i]);
+        rs.cartesian_contact[i]   = (f > lower_force_thresholds_[i]) ? 1.0 : 0.0;
+        rs.cartesian_collision[i] = (f > upper_force_thresholds_[i]) ? 1.0 : 0.0;
+    }
+
+    if (!collision_reflex_enabled_) {
+        joint_reflex_streak_.fill(0);
+        cart_reflex_streak_.fill(0);
+        return;
+    }
+
+    // Persistence, not a single sample. See collision_persist_ticks_ in the
+    // header for why: this observer's free-motion noise reaches ~5 N p95.
+    static const char* kAxis[6] = {"Fx", "Fy", "Fz", "Mx", "My", "Mz"};
+
+    for (int i = 0; i < 6; ++i) {
+        if (rs.cartesian_collision[i] != 0.0) {
+            if (++cart_reflex_streak_[i] >= collision_persist_ticks_) {
+                const double f = rs.K_F_ext_hat_K[i];
+                std::cout << "[FRANKA ERROR] " << name_ << ": cartesian_reflex - "
+                          << kAxis[i] << "=" << f << (i < 3 ? " N" : " Nm")
+                          << " (limit=" << upper_force_thresholds_[i]
+                          << (i < 3 ? " N)" : " Nm)") << "\n";
+                cart_reflex_streak_.fill(0);
+                joint_reflex_streak_.fill(0);
+                throw ControlException("sim robot (" + name_ + "): cartesian_reflex on " +
+                                       kAxis[i]);
+            }
+        } else {
+            cart_reflex_streak_[i] = 0;
+        }
+    }
+
+    for (int i = 0; i < 7; ++i) {
+        if (rs.joint_collision[i] != 0.0) {
+            if (++joint_reflex_streak_[i] >= collision_persist_ticks_) {
+                std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
+                          << ": joint_reflex - tau_ext=" << rs.tau_ext_hat_filtered[i]
+                          << " Nm (limit=" << upper_torque_thresholds_[i] << " Nm)\n";
+                cart_reflex_streak_.fill(0);
+                joint_reflex_streak_.fill(0);
+                throw ControlException("sim robot (" + name_ + "): joint_reflex on joint " +
+                                       std::to_string(i));
+            }
+        } else {
+            joint_reflex_streak_[i] = 0;
+        }
+    }
 }
 
 void Robot::populateRobotState(const DeviceState& ds, double dt) {
@@ -283,6 +393,7 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
 
     sim->setDeviceActive(name_, true);
     tau_rate_seed_pending_ = true;
+    gmo_seed_pending_      = true;
     // tau_filtered_/tau_prev_ deliberately NOT reset here -- see Robot::Robot()
     // and automaticErrorRecovery() comments. This function is re-entered by
     // arm_control.cpp's retry loop after every caught fault; zeroing either on
@@ -343,6 +454,11 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
             // May throw franka::ControlException, same as real hardware hitting a
             // reflex stop - propagates out of control() below, exactly like libfranka.
             checkFrankaErrors(tau_cmd_eig, dq_eig, q_eig);
+            // Contact and collision against the setCollisionBehavior thresholds,
+            // on the momentum observer's estimate. Separate from the hard limits
+            // above: those are about what we COMMAND, this is about what the
+            // world is doing back to the arm.
+            checkCollisionReflex();
 
             tau_filtered_ = alpha * tau_raw + (1.0 - alpha) * tau_filtered_;
 

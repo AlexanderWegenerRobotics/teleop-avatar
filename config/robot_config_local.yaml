@@ -113,7 +113,36 @@ devices:
       max_command_acceleration: 5.0          # m/s^2
       max_command_angular_acceleration: 25.0 # rad/s^2
       max_target_lead: 0.05
+      # Rotational twin of max_target_lead, in radians. Bounds the rotational
+      # spring: at kp_cart 125 Nm/rad, 0.10 rad is 12.5 Nm, which is already the
+      # FR3 wrist ceiling (joints 5-7 are limited to 12 Nm), so this sits under
+      # it. Raise if the wrist feels leashed during normal work; lower if the
+      # logs show tau_J_range_violation on joints 5-7. 0 disables.
+      max_target_lead_rot: 0.08
       max_tilt_angle: 1.74533
+
+      # Collision reflex. Consumed by the sim Robot via setCollisionBehavior().
+      # Lower thresholds only raise the contact flags; upper thresholds stop the
+      # arm with a franka::ControlException, exactly as the FR3 reflex does.
+      # Values are libfranka's own setDefaultBehavior example set.
+      #
+      # Without these the twin will push arbitrary force into a fixture that
+      # would have reflex-stopped the plant, so anything recorded against it is
+      # a habit that faults on hardware.
+      #
+      # Joint torques in Nm; forces (x,y,z) in N and (R,P,Y) in Nm, checked on
+      # the STIFFNESS-frame wrench (K_F_ext_hat_K), same as hardware.
+      collision_lower_torque: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
+      collision_upper_torque: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
+      collision_lower_force:  [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+      collision_upper_force:  [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+      collision_reflex_enabled: true
+      # Consecutive 1 kHz ticks a crossing must persist before it trips. The
+      # momentum observer's free-motion noise reaches ~5 N p95 on arm_right
+      # (claude/external-wrench-estimator.md), so a single-sample trip would
+      # fault on estimator noise. 5 ticks = 5 ms, short against any real
+      # contact transient.
+      collision_persist_ticks: 5
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
 
@@ -209,7 +238,36 @@ devices:
       max_command_acceleration: 5.0          # m/s^2
       max_command_angular_acceleration: 25.0 # rad/s^2
       max_target_lead: 0.05
+      # Rotational twin of max_target_lead, in radians. Bounds the rotational
+      # spring: at kp_cart 125 Nm/rad, 0.10 rad is 12.5 Nm, which is already the
+      # FR3 wrist ceiling (joints 5-7 are limited to 12 Nm), so this sits under
+      # it. Raise if the wrist feels leashed during normal work; lower if the
+      # logs show tau_J_range_violation on joints 5-7. 0 disables.
+      max_target_lead_rot: 0.08
       max_tilt_angle: 1.74533
+
+      # Collision reflex. Consumed by the sim Robot via setCollisionBehavior().
+      # Lower thresholds only raise the contact flags; upper thresholds stop the
+      # arm with a franka::ControlException, exactly as the FR3 reflex does.
+      # Values are libfranka's own setDefaultBehavior example set.
+      #
+      # Without these the twin will push arbitrary force into a fixture that
+      # would have reflex-stopped the plant, so anything recorded against it is
+      # a habit that faults on hardware.
+      #
+      # Joint torques in Nm; forces (x,y,z) in N and (R,P,Y) in Nm, checked on
+      # the STIFFNESS-frame wrench (K_F_ext_hat_K), same as hardware.
+      collision_lower_torque: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
+      collision_upper_torque: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
+      collision_lower_force:  [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+      collision_upper_force:  [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+      collision_reflex_enabled: true
+      # Consecutive 1 kHz ticks a crossing must persist before it trips. The
+      # momentum observer's free-motion noise reaches ~5 N p95 on arm_right
+      # (claude/external-wrench-estimator.md), so a single-sample trip would
+      # fault on estimator noise. 5 ticks = 5 ms, short against any real
+      # contact transient.
+      collision_persist_ticks: 5
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
 

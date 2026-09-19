@@ -284,6 +284,14 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         std::cout << "[INFO] " << name_ << ": no safety.max_target_lead in config - "
                   << "target may lead the measured pose without bound." << std::endl;
     }
+    if (device_config["safety"]["max_target_lead_rot"]) {
+        max_target_lead_rot_ = device_config["safety"]["max_target_lead_rot"].as<double>();
+        std::cout << "[INFO] " << name_ << ": rotation leash "
+                  << max_target_lead_rot_ * 180.0 / M_PI << " deg" << std::endl;
+    } else {
+        std::cout << "[INFO] " << name_ << ": no safety.max_target_lead_rot in config - "
+                  << "commanded orientation may lead the wrist without bound." << std::endl;
+    }
     ee_fingertip_length_ = device_config["safety"]["ee_fingertip_length"].as<double>();
     max_tilt_angle_ = device_config["safety"]["max_tilt_angle"].as<double>();
     cmd_dt_ = 1.0 / static_cast<double>(device_config["transmission"]["frequency"].as<int>());
@@ -1150,9 +1158,31 @@ void ArmControl::runControlHandler(){
     // clears it. The existing arm_reset / reset_all commands already drive
     // ArmRecovery -> updateRecovery() on the state thread, which moves state_
     // out of FAULT into RECOVERING on its own - we just wait for that to happen.
-    auto enterFaultAndWaitForReset = [this]() {
+    // Every fault previously went out as INTERNAL_ERROR, so fault_code on the
+    // wire said only "something went wrong" — an arm stopped by contact and an
+    // arm stopped by a torque discontinuity were indistinguishable to the
+    // operator and in the logs. libfranka has no structured error on
+    // ControlException either, so the cause has to come from the message; the
+    // substrings below are the ones both libfranka and the sim's
+    // checkFrankaErrors / checkCollisionReflex emit.
+    auto classifyFault = [](const std::string& what) {
+        auto has = [&what](const char* s) { return what.find(s) != std::string::npos; };
+        if (has("reflex") || has("cartesian_motion_generator_") ||
+            has("force") || has("collision"))            return FaultCode::HIGH_EXTERNAL_FORCE;
+        if (has("joint_position_limits") || has("joint_motion_generator_position") ||
+            has("tau_J_range"))                          return FaultCode::JOINT_LIMIT;
+        if (has("velocity"))                             return FaultCode::VELOCITY_LIMIT;
+        if (has("discontinuity") || has("acceleration")) return FaultCode::IMPLAUSIBLE_COMMAND;
+        if (has("self_collision"))                       return FaultCode::COLLISION_RISK;
+        if (has("communication") || has("control_command_success_rate"))
+                                                         return FaultCode::COMM_LOSS;
+        return FaultCode::INTERNAL_ERROR;
+    };
+    FaultCode last_fault_code = FaultCode::INTERNAL_ERROR;
+
+    auto enterFaultAndWaitForReset = [this, &last_fault_code]() {
         state_ = SysState::FAULT;
-        if (transmission_) transmission_->setState(state_, FaultCode::INTERNAL_ERROR);
+        if (transmission_) transmission_->setState(state_, last_fault_code);
         std::cout << "[WARN] " << name_
                   << ": control loop faulted - holding in FAULT until an operator reset "
                      "(arm_reset / reset_all)." << std::endl;
@@ -1223,8 +1253,10 @@ void ArmControl::runControlHandler(){
 
             ++fault_count;
             fault_streak_.store(static_cast<uint32_t>(fault_count), std::memory_order_relaxed);
+            last_fault_code = classifyFault(e.what());
             std::cout << "[WARN] " << name_ << ": franka::ControlException (#" << fault_count
-                      << "/" << kMaxConsecutiveFaults << "): " << e.what() << std::endl;
+                      << "/" << kMaxConsecutiveFaults << ", fault_code="
+                      << static_cast<int>(last_fault_code) << "): " << e.what() << std::endl;
 
             // Tell the operator NOW, on the first fault, not only once the
             // streak threshold is crossed.
@@ -1242,7 +1274,7 @@ void ArmControl::runControlHandler(){
             // self-clearing, and it must not latch the interface into the
             // operator-reset path that FAULT triggers. It restores itself
             // below once control() is successfully re-entered.
-            if (transmission_) transmission_->setState(SysState::RECOVERING, FaultCode::INTERNAL_ERROR);
+            if (transmission_) transmission_->setState(SysState::RECOVERING, last_fault_code);
 
             try {
                 robot->automaticErrorRecovery();
@@ -1267,6 +1299,7 @@ void ArmControl::runControlHandler(){
             // retry loop can paper over - surface as FAULT and wait for the operator
             // rather than spinning or terminating the process.
             std::cout << "[ERROR] " << name_ << ": franka::Exception: " << e.what() << std::endl;
+            last_fault_code = FaultCode::INTERNAL_ERROR;
             enterFaultAndWaitForReset();
             fault_count      = 0;
             have_prior_fault = false;
@@ -1630,16 +1663,31 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
     // target sits max_target_lead_ ahead, pulls with kp_cart * lead, and advances
     // only as the robot advances. The operator sees lag instead of a fault, and
     // the arm still gets there.
-    if (max_target_lead_ > 0.0) {
-        Eigen::Vector3d ee_pos;
+    //
+    // Rotation is leashed the same way and for the same reason. Everything above
+    // bounds the orientation target's velocity and acceleration; none of it
+    // looks at where the wrist actually is, so an unreachable orientation is
+    // walked toward at max_command_angular_velocity while the rotational spring
+    // stretches. At kp_cart 125 Nm/rad that is 125 Nm/rad of lead against a
+    // 12 Nm wrist, i.e. roughly 0.1 rad before the commanded torque alone
+    // exceeds what joints 5-7 are allowed to produce -- the identical failure
+    // mode to the 143 mm translation glitch, on an axis nothing was checking.
+    if (max_target_lead_ > 0.0 || max_target_lead_rot_ > 0.0) {
+        Eigen::Vector3d    ee_pos;
+        Eigen::Quaterniond ee_rot;
         {
             std::lock_guard<std::mutex> lock(state_mtx);
-            ee_pos = Eigen::Isometry3d(
-                Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data())).translation();
+            const Eigen::Isometry3d T_ee(
+                Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
+            ee_pos = T_ee.translation();
+            ee_rot = Eigen::Quaterniond(T_ee.rotation());
         }
         // Zero before the first state arrives -- leashing to the base frame would
-        // yank the target to the robot's origin.
-        if (ee_pos.norm() > 1e-6) {
+        // yank the target to the robot's origin, and O_T_EE's rotation block is
+        // all zeros there, which is not a rotation at all.
+        const bool state_valid = ee_pos.norm() > 1e-6;
+
+        if (state_valid && max_target_lead_ > 0.0) {
             Eigen::Vector3d lead = p_target - ee_pos;
             double lead_norm = lead.norm();
             if (lead_norm > max_target_lead_ && lead_norm > 1e-9) {
@@ -1649,6 +1697,21 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
                     std::cout << "[WARN] " << name_ << ": target leashed - operator "
                               << lead_norm * 1000.0 << " mm ahead of the arm, capped at "
                               << max_target_lead_ * 1000.0 << " mm.\n";
+                }
+            }
+        }
+
+        if (state_valid && max_target_lead_rot_ > 0.0) {
+            ee_rot.normalize();
+            if (q_target.dot(ee_rot) < 0.0) q_target.coeffs() *= -1.0;
+            const double lead_ang = ee_rot.angularDistance(q_target);
+            if (lead_ang > max_target_lead_rot_ && lead_ang > 1e-9) {
+                q_target = ee_rot.slerp(max_target_lead_rot_ / lead_ang, q_target).normalized();
+                if (cmd_now - last_leash_rot_log_time_ > std::chrono::seconds(1)) {
+                    last_leash_rot_log_time_ = cmd_now;
+                    std::cout << "[WARN] " << name_ << ": rotation leashed - operator "
+                              << lead_ang * 180.0 / M_PI << " deg ahead of the wrist, capped at "
+                              << max_target_lead_rot_ * 180.0 / M_PI << " deg.\n";
                 }
             }
         }

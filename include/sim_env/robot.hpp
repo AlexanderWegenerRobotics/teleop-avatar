@@ -39,7 +39,23 @@ struct RobotState {
     std::array<double, 7>  tau_J_d;
     std::array<double, 7>  tau_ext_hat_filtered;
     std::array<double, 6>  O_F_ext_hat_K;
+    // The same wrench expressed in the stiffness frame. This sim has no separate
+    // EE_T_K, so K is the configured EE frame. setCollisionBehavior's Cartesian
+    // thresholds are defined on THIS wrench on hardware, not on the base-frame
+    // one: checking a per-axis threshold set against O_F_ext_hat_K would mean
+    // something different depending on where the wrist happens to be pointing.
+    std::array<double, 6>  K_F_ext_hat_K;
     std::array<double, 16> O_T_EE;
+
+    // Collision-behaviour flags, same meaning as libfranka's. The lower
+    // thresholds raise *_contact and nothing else; the upper thresholds raise
+    // *_collision and trigger the reflex. This is how a caller tells "the arm is
+    // touching something" from "the arm has stopped".
+    std::array<double, 7>  joint_contact;
+    std::array<double, 6>  cartesian_contact;
+    std::array<double, 7>  joint_collision;
+    std::array<double, 6>  cartesian_collision;
+
     // mjData::time of the snapshot this state came from (sim build only; 0 on
     // hardware, which has no sim clock). q/dq are consistent in THIS clock.
     double                 sim_time = 0.0;
@@ -48,7 +64,10 @@ struct RobotState {
         q.fill(0.0);                  dq.fill(0.0);
         tau_J.fill(0.0);              tau_J_d.fill(0.0);
         tau_ext_hat_filtered.fill(0.0);
-        O_F_ext_hat_K.fill(0.0);     O_T_EE.fill(0.0);
+        O_F_ext_hat_K.fill(0.0);      K_F_ext_hat_K.fill(0.0);
+        O_T_EE.fill(0.0);
+        joint_contact.fill(0.0);      cartesian_contact.fill(0.0);
+        joint_collision.fill(0.0);    cartesian_collision.fill(0.0);
     }
 };
 
@@ -97,6 +116,10 @@ private:
                    const std::array<double, 7>& tau_cmd,
                    double dt);
     void checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const Vector7& q);
+    // Consumes the setCollisionBehavior thresholds against the momentum
+    // observer's estimate. Throws ControlException on an upper-threshold
+    // crossing, the same way libfranka surfaces cartesian_reflex / joint_reflex.
+    void checkCollisionReflex();
 
 private:
     Simulation*            sim    = nullptr;
@@ -112,6 +135,8 @@ private:
     // so the first tick after a resume differences against a torque from
     // seconds ago and reports a rate that never happened.
     bool                   tau_rate_seed_pending_{true};
+    // Same idea for the momentum observer's p_prev_ — see updateGMO.
+    bool                   gmo_seed_pending_{true};
     // Per joint: a position-limit violation has been reported and not yet
     // cleared by the joint returning inside its range. Latches so the arm can
     // travel back out of a limit it is already past -- see checkFrankaErrors.
@@ -124,13 +149,26 @@ private:
     double  sim_time_prev_ = -1.0;
     static constexpr double K_GMO = 50.0;
 
-    // Stored for parity with the real API; sim has no separate collision-reflex
-    // path yet, so these aren't consumed anywhere (see checkFrankaErrors for the
-    // hard torque/velocity/position limits that ARE enforced in sim).
-    std::array<double, 7> lower_torque_thresholds_{};
-    std::array<double, 7> upper_torque_thresholds_{};
-    std::array<double, 6> lower_force_thresholds_{};
-    std::array<double, 6> upper_force_thresholds_{};
+    // Consumed by checkCollisionReflex(). Defaults are libfranka's own
+    // setDefaultBehavior example values, so an arm whose config omits the
+    // safety.collision_* block still reflexes somewhere sane instead of never.
+    // Torques in Nm per joint; forces (x,y,z) in N and (R,P,Y) in Nm, on the
+    // stiffness-frame wrench.
+    std::array<double, 7> lower_torque_thresholds_{20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0};
+    std::array<double, 7> upper_torque_thresholds_{20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0};
+    std::array<double, 6> lower_force_thresholds_{20.0, 20.0, 20.0, 25.0, 25.0, 25.0};
+    std::array<double, 6> upper_force_thresholds_{20.0, 20.0, 20.0, 25.0, 25.0, 25.0};
+
+    // A momentum observer is noisier than the FR3's internal estimator: this
+    // one measures 0.97 N mean / 3.1 N p95 in free motion on arm_left and
+    // 2.19 / 4.8 on arm_right (claude/external-wrench-estimator.md). Tripping on
+    // a single sample would fault on estimator noise rather than on contact, so
+    // a crossing has to persist. At the 1 kHz control tick the default is 5 ms,
+    // which is short against any real contact transient.
+    int  collision_persist_ticks_ = 5;
+    bool collision_reflex_enabled_ = true;
+    std::array<int, 7> joint_reflex_streak_{};
+    std::array<int, 6> cart_reflex_streak_{};
     std::array<double, 7> joint_impedance_{};
     std::array<double, 6> cartesian_impedance_{};
 

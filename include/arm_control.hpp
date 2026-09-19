@@ -253,7 +253,13 @@ private:
     // Furthest the commanded target may sit ahead of the MEASURED pose, in m.
     // Bounds the impedance spring: at kp_cart 1000 N/m, 0.05 m is 50 N. <=0 disables.
     double max_target_lead_{0.0};
+    // Rotational twin of the above, in radians. Bounds the rotational spring the
+    // same way: at kp_cart 125 Nm/rad, 0.10 rad is 12.5 Nm, which is already the
+    // FR3 wrist's per-joint ceiling, so the useful range sits well under that.
+    // <=0 disables.
+    double max_target_lead_rot_{0.0};
     std::chrono::steady_clock::time_point last_leash_log_time_{};
+    std::chrono::steady_clock::time_point last_leash_rot_log_time_{};
     double ee_fingertip_length_;
     double max_tilt_angle_;
     double cmd_dt_;
