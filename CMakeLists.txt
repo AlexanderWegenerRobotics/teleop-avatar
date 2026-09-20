@@ -193,6 +193,7 @@ if(BUILD_WITH_MUJOCO)
         src/sim_env/gripper.cpp
         src/sim_env/scene_builder.cpp
         src/sim_env/model.cpp
+        src/sim_env/wrench_truth.cpp
         src/sim_env/tum_head_driver.cpp
     )
 endif()

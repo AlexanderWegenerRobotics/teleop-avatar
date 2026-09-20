@@ -118,6 +118,15 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
         }
     }
 
+    // Ground truth for the momentum observer. Needs joint_ids_, so it comes
+    // after buildActuatorIndex(). Returns null when the config block is absent
+    // or unusable -- every failure path logs once and is not fatal, because
+    // this is a validation aid and must never be able to stop a run.
+    wrench_truth_ = WrenchTruth::create(
+        model, sim_config, robot_config, joint_ids_,
+        std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count()));
+
     snap_[0] = mj_copyData(nullptr, model, data);
     snap_[1] = mj_copyData(nullptr, model, data);
     buildCameraList();
@@ -232,6 +241,10 @@ void Simulation::run_model() {
             }
             mj_step(model, data);
             swapSnapshots();
+            // Read-only, rate-decimated internally off mjData::time. Sampled
+            // here rather than from the snapshot so it sees exactly the state
+            // that was just integrated, contacts included.
+            if (wrench_truth_) wrench_truth_->sample(data);
         }
         const double step_ns =
             std::chrono::duration<double, std::nano>(clock::now() - step_t0).count();

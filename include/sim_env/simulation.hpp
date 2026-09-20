@@ -18,6 +18,7 @@
 #include "sim_env/scene_builder.hpp"
 #include "intention/intention_sample.hpp"
 #include "twin/role.hpp"
+#include "sim_env/wrench_truth.hpp"
 
 struct LightingConfig {
     float main_pos[3]           = {0.5f,  0.0f,  1.8f};
@@ -168,6 +169,12 @@ public:
 private:
     mjModel* model = nullptr;
     mjData*  data  = nullptr;
+
+    // MuJoCo ground truth for the momentum observer. Sim-only by construction:
+    // this header is not compiled in the hardware build, nothing it produces
+    // reaches franka::RobotState, and it writes its own CSV rather than adding
+    // columns to arm.csv. null when the config block is absent or disabled.
+    std::unique_ptr<WrenchTruth> wrench_truth_;
 
     std::vector<DeviceConfig> devices_;
     std::vector<ObjectConfig> objects_;

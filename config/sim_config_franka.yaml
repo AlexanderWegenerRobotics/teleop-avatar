@@ -1,5 +1,5 @@
 rendering:
-  enabled: false
+  enabled: true
   fps: 15
 
 simulation:
@@ -7,6 +7,30 @@ simulation:
   control_frequency: 1000
   model_path: "../models/mujoco/scenes/world_scene.xml"
   task_config: "../config/tasks/FMB_board_1.yaml"
+
+  # MuJoCo ground truth for the momentum observer. SIMULATION ONLY -- this is
+  # never read by the controller, never enters franka::RobotState, and the
+  # source file is not even compiled in the WITH_FRANKA build.
+  #
+  # Writes ../log/<device>_wrench_truth.csv, joined against <device>_log.csv
+  # on the sim_time column. Contact forces rather than an F/T sensor: a
+  # MuJoCo site force sensor reports the load transmitted through the site,
+  # i.e. gravity and inertia of everything distal plus contact, while the
+  # observer estimates external wrench only.
+  #
+  # The primary comparison is tau_contact (here) against tau_ext (arm.csv).
+  # Joint space, because that is what the observer estimates and because
+  # joint torques carry no frame. The Cartesian columns are secondary and
+  # need ee_body; without it they are blank and joint space still logs.
+  ground_truth_wrench:
+    enabled: true
+    rate_hz: 200        # observer bandwidth is K_GMO=50 rad/s, ~8 Hz; 200 is ample
+    log_dir: "../log/"
+    devices:
+      - name: arm_left
+        ee_body: "hand_left_hand"
+      - name: arm_right
+        ee_body: "hand_right_hand"
 
 devices:
   - name: arm_left
