@@ -121,6 +121,12 @@ public:
     double           getTimestep() const { return model ? model->opt.timestep : 0.0; }
     SimTimingStats   getTimingStats() const;
 
+    // Point the ground-truth wrench CSVs at a new episode folder. No-op when
+    // the feature is off, so callers need no guard.
+    void restartWrenchTruthLoggers(const std::string& folder) {
+        if (wrench_truth_) wrench_truth_->restartLoggers(folder);
+    }
+
     // ── Twin / reconciler support (docs/twin_concept.md) ────────────────────
     // Read-only access to the loaded mjModel so a Reconciler can build its own
     // private, headless mjData (mj_makeData(model)) that shares this model --

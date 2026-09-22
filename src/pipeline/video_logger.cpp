@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -22,6 +23,16 @@ struct VideoLogger::Impl {
     hid_t dset_ts  = H5I_INVALID_HID;
     hid_t dset_fid = H5I_INVALID_HID;
 
+    // Sidecar timestamps CSV, written alongside the HDF5.
+    //
+    // The timestamps are already in the file as /observations/timestamp_ns, so
+    // this is redundant on its own. It exists for parity: a channel that
+    // streams gets its timestamps as <file>.timestamps.csv from
+    // VideoStreamer::startEncodedLog, and a log-only channel got nothing an
+    // analysis script could read without opening HDF5. Same base name and the
+    // same first three column names, so one loader handles both.
+    std::FILE* ts_csv = nullptr;
+
     hsize_t frame_count = 0;
 
     void close() {
@@ -29,6 +40,7 @@ struct VideoLogger::Impl {
         if (dset_ts  != H5I_INVALID_HID) { H5Dclose(dset_ts);  dset_ts  = H5I_INVALID_HID; }
         if (dset_fid != H5I_INVALID_HID) { H5Dclose(dset_fid); dset_fid = H5I_INVALID_HID; }
         if (file_id  != H5I_INVALID_HID) { H5Fclose(file_id);  file_id  = H5I_INVALID_HID; }
+        if (ts_csv   != nullptr)         { std::fclose(ts_csv); ts_csv  = nullptr; }
         frame_count = 0;
     }
 };
@@ -284,6 +296,20 @@ void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_ind
     writeStrAttr(impl_->file_id, "session_id",     session_id);
     writeI32Attr(impl_->file_id, "episode_index",  episode_index);
 
+    // Sidecar CSV. Failing to open it is not fatal -- the same timestamps are
+    // in the HDF5, so an episode still records without it.
+    {
+        std::string ts_path = (dir / ("images_" + config_.camera_name + ".timestamps.csv")).string();
+        impl_->ts_csv = std::fopen(ts_path.c_str(), "wb");
+        if (impl_->ts_csv) {
+            std::fprintf(impl_->ts_csv, "frame_idx,wall_clock_ns,capture_time_ns,frame_id\n");
+        } else {
+            std::cerr << "[VideoLogger:" << config_.camera_name
+                      << "] failed to open timestamps CSV: " << ts_path
+                      << " (timestamps are still in the HDF5)" << std::endl;
+        }
+    }
+
     impl_->frame_count = 0;
 
     std::cout << "[VideoLogger:" << config_.camera_name << "] Episode started -> " << path << std::endl;
@@ -422,6 +448,20 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
         H5Dwrite(impl_->dset_fid, H5T_STD_U64LE, mspace, fspace, H5P_DEFAULT, &frame_id);
         H5Sclose(mspace);
         H5Sclose(fspace);
+    }
+
+    // frame_idx is the row index in the HDF5 datasets, so the CSV and the file
+    // are joinable both ways; frame_id is the channel-global counter, which
+    // skips when the writer queue drops a frame.
+    if (impl_->ts_csv) {
+        const uint64_t now_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        std::fprintf(impl_->ts_csv, "%llu,%llu,%llu,%llu\n",
+                     static_cast<unsigned long long>(T),
+                     static_cast<unsigned long long>(now_ns),
+                     static_cast<unsigned long long>(timestamp_ns),
+                     static_cast<unsigned long long>(frame_id));
     }
 
     ++impl_->frame_count;

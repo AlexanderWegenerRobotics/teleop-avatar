@@ -96,6 +96,12 @@ public:
     // call it every step.
     void sample(const mjData* d);
 
+    // Re-open each arm's CSV inside a new episode folder, matching what the
+    // arm loggers do. Without this every episode writes to the same flat file
+    // and overwrites the last one, so the truth cannot be joined against the
+    // episode it belongs to.
+    void restartLoggers(const std::string& folder);
+
 private:
     struct Arm {
         std::string      name;

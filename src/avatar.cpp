@@ -896,6 +896,9 @@ void Avatar::startNewEpisodeFolder() {
         std::string path = folder + "/" + arm->getDeviceName() + ".csv";
         arm->restartLogger(path);
     }
+    // MuJoCo ground truth lands beside the arm log it is compared against,
+    // as <device>_wrench_truth.csv, joined on the sim_time column.
+    if (sim_) sim_->restartWrenchTruthLoggers(folder);
     for (auto& head : head_instances) {
         std::string path = folder + "/" + head->getDeviceName() + ".csv";
         head->restartLogger(path);

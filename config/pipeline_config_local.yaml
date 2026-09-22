@@ -30,6 +30,15 @@ stream_cameras:
     eye:      "aux"
     width:    640
     height:   480
+  # Fixed scene camera from sim_config_franka.yaml's `cameras:` block. Those
+  # get their YAML name verbatim as the MuJoCo camera name (scene_builder
+  # writes <camera name="..."> into worldbody), unlike device cameras which are
+  # prefixed, e.g. camera_left -> camera_left_rgb.
+  - camera:   "workspace_overview"
+    shm_name: "avatar_overview_cam"
+    eye:      "aux"
+    width:    640
+    height:   480
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pipeline process (avatar_pipeline binary)
@@ -75,7 +84,7 @@ cameras:
     eye:          "aux"
     source_type:  "mujoco"
     shm_name:     "avatar_wrist_cam_right"
-    fps:          15
+    fps:          20
     source_width:  640
     source_height: 480
     realsense_serial: ""
@@ -102,7 +111,7 @@ cameras:
     eye:          "aux"
     source_type:  "mujoco"
     shm_name:     "avatar_wrist_cam_left"
-    fps:          15
+    fps:          20
     source_width:  640
     source_height: 480
     realsense_serial: ""
@@ -124,6 +133,39 @@ cameras:
       output_dir: "logs"
       width:      320
       height:     240
+
+  # ── Overview camera: recorded, never streamed ───────────────────────────
+  # stream.enabled false + log.enabled true is an explicitly handled case in
+  # CameraChannel: with no streamer it builds a VideoLogger instead, which
+  # writes images_overview_cam.hdf5 plus images_overview_cam.timestamps.csv per
+  # episode. No UDP port, no encoder, no bitrate -- the stream block is left
+  # here only so the channel schema stays uniform.
+  - name:         "overview_cam"
+    eye:          "aux"
+    source_type:  "mujoco"
+    shm_name:     "avatar_overview_cam"
+    fps:          20
+    source_width:  640
+    source_height: 480
+    realsense_serial: ""
+
+    stream:
+      enabled:            false
+      host:               "127.0.0.1"
+      port:               5016
+      feedback_port:      5017
+      status_port:        5018
+      status_interval_ms: 500
+      bitrate_kbps:       1500
+      fec_percentage:     10
+      width:              640
+      height:             480
+
+    log:
+      enabled:    true
+      output_dir: "logs"
+      width:      640
+      height:     480
 
   # ── Stereo combined channel (active when stereo: true) ──────────────────
   # Reads both eye shm buffers in the same poll iteration and composites them

@@ -97,6 +97,14 @@ private:
 private:
     void runControlHandler();
     void runStateHandler();
+    // Single definition of an arm log row, shared by the two writers so they
+    // can never drift apart. log_src = 0 is the control callback and fills the
+    // command columns from motion_gen_; log_src = 1 is the state-thread
+    // fallback, which runs only while the control loop is down and therefore
+    // reports no command and no torque.
+    ArmLogEntry buildArmLogEntry(const franka::RobotState& rs,
+                                 const Vector7& tau_cmd,
+                                 uint8_t log_src);
     // Command -> target pose, extracted from the ENGAGED tick so the state
     // thread can also run it on an early wake (see waitForCommandOrDeadline)
     // without dragging the rest of the tick -- state machine, telemetry,
@@ -182,6 +190,12 @@ private:
     std::chrono::steady_clock::time_point recovery_defer_start_;
     std::atomic<double> gripper_width_{0.0};
     std::atomic<bool>   desired_gripper_closed_{false};
+    // Latest ArmCommandMsg::clutch. Logged only -- nothing in the control path
+    // acts on it, because a clutched operator still sends a valid held pose and
+    // the avatar should keep tracking it. Defaults to clutched, matching the
+    // interface's own initial state, so the window before the first command is
+    // not mistaken for active demonstration.
+    std::atomic<bool>   clutch_active_{true};
     std::atomic<bool>   grasp_allowed_{false};
     std::atomic<bool>   gripper_busy_{false};
     bool                gripper_close_applied_{true};

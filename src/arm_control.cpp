@@ -448,6 +448,100 @@ void ArmControl::stop(){
     if (transmission_absolute_) transmission_absolute_->stop();
 }
 
+ArmLogEntry ArmControl::buildArmLogEntry(const franka::RobotState& rs,
+                                         const Vector7& tau_cmd,
+                                         uint8_t log_src) {
+    const Eigen::Isometry3d T_ee(Eigen::Map<const Eigen::Matrix4d>(rs.O_T_EE.data()));
+
+    // Default to the MEASURED pose rather than identity. Identity here was the
+    // bug behind the phantom setpoint: T_base_ * I is the arm's mounting frame,
+    // which plots as a perfectly plausible command that nobody issued. Writing
+    // the measured pose makes the command columns degenerate to "wherever the
+    // arm is" whenever there is no target, and cmd_valid says which it is.
+    Vector7 q_target  = Vector7::Zero();
+    Matrix4 T_target  = T_ee.matrix();
+    uint8_t cmd_valid = 0;
+
+    if (log_src == 0) {
+        const SysState s = state_;
+        if (s == SysState::HOMING || s == SysState::RECOVERING ||
+            (s == SysState::IDLE && idle_hold_valid_.load(std::memory_order_acquire))) {
+            // Joint-space plan only; there is no Cartesian target to report.
+            q_target = motion_gen_.getCurrentJoint();
+        }
+        else if (s == SysState::ENGAGED && control_mode_ == ControlMode::JOINT_IK) {
+            q_target  = motion_gen_.getJointReference();
+            T_target  = motion_gen_.getCartesianGoal().matrix();
+            cmd_valid = 1;
+        }
+        else if (s == SysState::ENGAGED || s == SysState::AWAITING) {
+            T_target  = motion_gen_.getCurrentCartesian().matrix();
+            cmd_valid = 1;
+        }
+    }
+
+    ArmLogEntry e{};
+    e.time = std::chrono::duration<double>(
+        std::chrono::high_resolution_clock::now() - startTime_).count();
+    e.wall_clock_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+#ifdef WITH_FRANKA
+    e.sim_time = 0.0;           // no sim clock on hardware
+#else
+    e.sim_time = rs.sim_time;   // mjData::time, see ArmLogEntry
+#endif
+    e.state         = state_;
+    e.cmd_valid     = cmd_valid;
+    e.log_src       = log_src;
+    e.gripper_width = gripper_width_.load();
+    e.gripper_cmd   = (grasp_allowed_.load() && desired_gripper_closed_.load()) ? 0.0 : 0.08;
+    e.grasp_state   = static_cast<uint8_t>(grasp_state_.load());
+    // Ungated, unlike gripper_cmd above: this is what the operator's hand was
+    // doing, whether or not this arm was in a state that would act on it.
+    e.grasp_cmd     = desired_gripper_closed_.load() ? 1 : 0;
+    e.clutch        = clutch_active_.load() ? 1 : 0;
+    e.applied_cmd_sequence = applied_cmd_seq_.load(std::memory_order_relaxed);
+
+    std::copy(rs.q.begin(),     rs.q.end(),     e.q.begin());
+    std::copy(rs.dq.begin(),    rs.dq.end(),    e.dq.begin());
+    std::copy(rs.tau_J.begin(), rs.tau_J.end(), e.tau_J.begin());
+    std::copy(rs.tau_ext_hat_filtered.begin(), rs.tau_ext_hat_filtered.end(), e.tau_ext.begin());
+    std::copy(rs.O_T_EE.begin(),        rs.O_T_EE.end(),        e.O_T_EE.begin());
+    std::copy(rs.O_F_ext_hat_K.begin(), rs.O_F_ext_hat_K.end(), e.F_ext.begin());
+
+    Eigen::Map<Vector7>(e.q_cmd.data()) = q_target;
+    // Post rate-limit, post-saturation: exactly the vector handed to
+    // franka::Torques. tau_J is what the joints measured, this is what we asked
+    // for; diff() it per tick against max_torque_rate to see a discontinuity
+    // instead of guessing at one. Zero in fallback rows, which is literally
+    // true -- no control loop is running to command anything.
+    Eigen::Map<Vector7>(e.tau_cmd.data()) = tau_cmd;
+
+    // posture_snap_ is written by the control thread every tick. Reading it
+    // from the state thread would be a race for no benefit, and it is stale by
+    // definition whenever the fallback fires.
+    if (log_src == 0) {
+        Eigen::Map<Vector7>(e.q_null_ref.data()) = posture_snap_.valid ? posture_snap_.q_ref : q0_;
+        e.posture_s      = posture_snap_.s_opt;
+        e.posture_cost   = posture_snap_.cost;
+        e.posture_margin = posture_snap_.margin;
+        e.posture_swivel = posture_snap_.swivel;
+    } else {
+        Eigen::Map<Vector7>(e.q_null_ref.data()) = q0_;
+    }
+
+    Eigen::Map<Matrix4>(e.O_T_EE_cmd.data()) = T_target;
+    // World-frame counterparts (T_base_ * local), additive -- the same
+    // composition already used live for ArmStateMsg, logged per-tick so policy
+    // training can consume world-frame poses directly instead of a base-frame
+    // pose tied to this arm's mounting calibration.
+    Eigen::Map<Matrix4>(e.O_T_EE_world.data())     = (T_base_ * T_ee).matrix();
+    Eigen::Map<Matrix4>(e.O_T_EE_cmd_world.data()) = (T_base_ * Eigen::Isometry3d(T_target)).matrix();
+
+    return e;
+}
+
 void ArmControl::runStateHandler(){
     // Loop period and the dt handed to stepIk now come from one number.
     // They used to be independently hardcoded -- a 200 Hz period sitting next to
@@ -476,11 +570,13 @@ void ArmControl::runStateHandler(){
             cmd = transmission_->getRecvData();
             has_cmd = true;
             desired_gripper_closed_.store(cmd.gripper > 0.5f);
+            clutch_active_.store(cmd.clutch != 0);
         }
         if (transmission_absolute_ && transmission_absolute_->hasNew()) {
             cmd_abs = transmission_absolute_->getRecvData();
             has_cmd_abs = true;
             desired_gripper_closed_.store(cmd_abs.gripper > 0.5f);
+            clutch_active_.store(cmd_abs.clutch != 0);
         }
 
         // ── Early wake ───────────────────────────────────────────────────────
@@ -692,6 +788,38 @@ void ArmControl::runStateHandler(){
             tr.state                = state_;
             tr.recovering           = (state_ == SysState::RECOVERING) ? 1 : 0;
             state_trace_->write(tr);
+        }
+
+        // ── log continuity across control-loop outages ────────────────────────
+        // logger_ is written from inside robot->control()'s callback, so a
+        // ControlException takes the writer with it. automaticErrorRecovery(),
+        // waitForRest(), the 500 ms re-entry dwell and the blocking wait in
+        // enterFaultAndWaitForReset() then leave 3-7 s with no rows at all --
+        // which is why arm.csv drew a straight line through every fault instead
+        // of showing one. Fill that window from here at the state rate, marked
+        // log_src = 1.
+        //
+        // current_state rather than a readOnce() of our own: waitForRest() is
+        // already polling the robot from the control thread during most of the
+        // outage and publishing into current_state under state_mtx, and two
+        // threads calling readOnce() concurrently is not something libfranka
+        // promises. When nothing refreshes it the pose is frozen, which is an
+        // accurate description of an arm that has been stopped by a reflex.
+        if (logger_) {
+            constexpr double kControlStaleLogMs = 20.0;
+            const uint64_t now_ns    = timestamp_ns();
+            const uint64_t sample_ns = state_sample_ns_.load(std::memory_order_relaxed);
+            const double   age_ms    = (sample_ns == 0 || now_ns < sample_ns)
+                                         ? 1e9
+                                         : static_cast<double>(now_ns - sample_ns) / 1e6;
+            if (age_ms > kControlStaleLogMs) {
+                franka::RobotState rs;
+                {
+                    std::lock_guard<std::mutex> lock(state_mtx);
+                    rs = current_state;
+                }
+                logger_->write(buildArmLogEntry(rs, Vector7::Zero(), 1));
+            }
         }
 
         prev_state = state_;
@@ -1020,65 +1148,7 @@ void ArmControl::runControlHandler(){
             ctrl_torque = ctrl_torque.cwiseMax(-tau_max_).cwiseMin(tau_max_);
             tau_prev_ = ctrl_torque;
 
-            if (logger_) {
-                double t = std::chrono::duration<double>(
-                    std::chrono::high_resolution_clock::now() - startTime_).count();
-                Vector7 q_target = Vector7::Zero();
-                Matrix4 T_target = Matrix4::Identity();
-                if(state_ == SysState::HOMING || state_ == SysState::RECOVERING ||
-                   (state_ == SysState::IDLE && idle_hold_valid_.load(std::memory_order_acquire))){
-                    q_target = motion_gen_.getCurrentJoint();
-                }
-                else if(state_ == SysState::ENGAGED && control_mode_ == ControlMode::JOINT_IK){
-                    q_target = motion_gen_.getJointReference();
-                    T_target = motion_gen_.getCartesianGoal().matrix();
-                }
-                else if(state_ == SysState::ENGAGED || state_ == SysState::AWAITING){
-                    Eigen::Isometry3d T_ee_target = motion_gen_.getCurrentCartesian();
-                    T_target = T_ee_target.matrix();
-                }
-
-                ArmLogEntry entry{};
-                entry.time          = t;
-                entry.wall_clock_ns = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
-#ifdef WITH_FRANKA
-                entry.sim_time      = 0.0;                  // no sim clock on hardware
-#else
-                entry.sim_time      = robot_state.sim_time; // mjData::time, see ArmLogEntry
-#endif
-                entry.state = state_;
-                entry.gripper_width = gripper_width_.load();
-                entry.gripper_cmd   = (grasp_allowed_.load() && desired_gripper_closed_.load()) ? 0.0 : 0.08;
-                entry.grasp_state = static_cast<uint8_t>(grasp_state_.load());
-                std::copy(robot_state.q.begin(),                    robot_state.q.end(),                    entry.q.begin());
-                Eigen::Map<Vector7>(entry.q_cmd.data()) = q_target;
-                Eigen::Map<Vector7>(entry.q_null_ref.data()) = posture_snap_.valid ? posture_snap_.q_ref : q0_;
-                entry.posture_s      = posture_snap_.s_opt;
-                entry.posture_cost   = posture_snap_.cost;
-                entry.posture_margin = posture_snap_.margin;
-                entry.posture_swivel = posture_snap_.swivel;
-                std::copy(robot_state.dq.begin(),                   robot_state.dq.end(),                   entry.dq.begin());
-                std::copy(robot_state.tau_J.begin(),                robot_state.tau_J.end(),                entry.tau_J.begin());
-                // Post rate-limit, post-saturation: exactly the vector handed to
-                // franka::Torques below. diff() this per tick and compare against
-                // max_torque_rate to see a discontinuity instead of guessing at one.
-                Eigen::Map<Vector7>(entry.tau_cmd.data()) = ctrl_torque;
-                std::copy(robot_state.tau_ext_hat_filtered.begin(), robot_state.tau_ext_hat_filtered.end(), entry.tau_ext.begin());
-                std::copy(robot_state.O_T_EE.begin(),               robot_state.O_T_EE.end(),               entry.O_T_EE.begin());
-                Eigen::Map<Matrix4>(entry.O_T_EE_cmd.data()) = T_target;
-                // World-frame counterparts of the two above (T_base_ * local), additive --
-                // same T_base_ * T composition already used live for ArmStateMsg (see
-                // publishArmState) and target_pose_, just also logged per-tick here so
-                // future policy training can consume world-frame poses directly instead
-                // of a base-frame pose tied to this arm's mounting calibration.
-                Eigen::Isometry3d T_ee_raw(Eigen::Map<const Eigen::Matrix4d>(robot_state.O_T_EE.data()));
-                Eigen::Map<Matrix4>(entry.O_T_EE_world.data())     = (T_base_ * T_ee_raw).matrix();
-                Eigen::Map<Matrix4>(entry.O_T_EE_cmd_world.data()) = (T_base_ * Eigen::Isometry3d(T_target)).matrix();
-                std::copy(robot_state.O_F_ext_hat_K.begin(),        robot_state.O_F_ext_hat_K.end(),        entry.F_ext.begin());
-                logger_->write(entry);
-            }
+            if (logger_) logger_->write(buildArmLogEntry(robot_state, ctrl_torque, 0));
             std::array<double, 7> ctrl_array;
             Eigen::Map<Vector7>(ctrl_array.data()) = ctrl_torque;
 
@@ -1229,6 +1299,16 @@ void ArmControl::runControlHandler(){
         // motion_gen_ and tau_prev_ is zero by construction.
         if (!first_attempt) {
             waitForRest(3.0);
+            // Dwell before re-entering. Re-entry used to take milliseconds:
+            // the observer reconverges in ~20 ms, the contact is still there
+            // because the operator is still pushing into it, and three faults
+            // landed inside 50 ms -- so what is physically ONE collision
+            // consumed the whole retry budget and demanded an operator reset.
+            // On hardware automaticErrorRecovery() alone takes several hundred
+            // ms, during which the arm is visibly stopped and the operator has
+            // a chance to back off. This buys that same chance.
+            for (int i = 0; i < 50 && bRunning; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             rearmFromMeasuredState();
         }
         first_attempt = false;
@@ -1763,7 +1843,16 @@ void ArmControl::reOrigin() {
 
 void ArmControl::latchOriginForEngage(SysState from) {
     Eigen::Isometry3d T_hold;
-    const bool from_measured = (from == SysState::PAUSED) || (control_mode_ == ControlMode::JOINT_IK);
+    // The third clause is the one that matters after a recovery. The recovery
+    // is a JOINT plan, and planJoint never writes cartesian_waypoints_, so
+    // getCurrentCartesian() still returns the pose the arm was at when it
+    // faulted. Latching that set T_origin_ to the PRE-FAULT pose while the arm
+    // sat at home, and the impedance spring pulled it straight back there --
+    // 418 mm on 2026-09-21. Homing has the same shape, where the buffer is
+    // empty instead and the guard below skipped the latch entirely.
+    const bool from_measured = (from == SysState::PAUSED)
+                            || (control_mode_ == ControlMode::JOINT_IK)
+                            || !motion_gen_.isCartesianSpace();
     if (from_measured) {
         std::lock_guard<std::mutex> lock(state_mtx);
         T_hold = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));

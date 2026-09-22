@@ -221,6 +221,20 @@ bool WrenchTruth::isInSubtree(int body, int root) const {
 // Sampling
 // ---------------------------------------------------------------------------
 
+void WrenchTruth::restartLoggers(const std::string& folder) {
+    for (Arm& a : arms_) {
+        if (!a.logger) continue;
+        const std::string path = folder + "/" + a.name + "_wrench_truth.csv";
+        try {
+            a.logger->restart(path);
+        } catch (const std::exception& ex) {
+            std::cout << "[SIM-WARN] ground_truth_wrench: cannot reopen " << path
+                      << " (" << ex.what() << ") - '" << a.name
+                      << "' keeps writing to its previous file." << std::endl;
+        }
+    }
+}
+
 void WrenchTruth::sample(const mjData* d) {
     if (!d) return;
     if (d->time < next_sample_time_) return;

@@ -1,30 +1,16 @@
 rendering:
-  enabled: true
+  enabled: false
   fps: 15
 
 simulation:
   timestep: 0.001
   control_frequency: 1000
   model_path: "../models/mujoco/scenes/world_scene.xml"
-  task_config: "../config/tasks/FMB_board_1.yaml"
+  task_config: "../config/tasks/sorting.yaml"
 
-  # MuJoCo ground truth for the momentum observer. SIMULATION ONLY -- this is
-  # never read by the controller, never enters franka::RobotState, and the
-  # source file is not even compiled in the WITH_FRANKA build.
-  #
-  # Writes ../log/<device>_wrench_truth.csv, joined against <device>_log.csv
-  # on the sim_time column. Contact forces rather than an F/T sensor: a
-  # MuJoCo site force sensor reports the load transmitted through the site,
-  # i.e. gravity and inertia of everything distal plus contact, while the
-  # observer estimates external wrench only.
-  #
-  # The primary comparison is tau_contact (here) against tau_ext (arm.csv).
-  # Joint space, because that is what the observer estimates and because
-  # joint torques carry no frame. The Cartesian columns are secondary and
-  # need ee_body; without it they are blank and joint space still logs.
   ground_truth_wrench:
     enabled: true
-    rate_hz: 200        # observer bandwidth is K_GMO=50 rad/s, ~8 Hz; 200 is ample
+    rate_hz: 200
     log_dir: "../log/"
     devices:
       - name: arm_left
@@ -54,8 +40,10 @@ devices:
     root_body: "camera_mount"
     attach_to: "arm_left_fr3_link7"
     attach_offset:
-      position: [0, -0.0, 0.107] 
-      orientation: [0.9239, 0, 0, -0.3827]
+      #position: [0, -0.0, 0.107] 
+      position: [0.02, -0.02, 0.08] 
+      #orientation: [0.9239, 0, 0, -0.3827]
+      orientation: [0.9099, -0.0664, -0.1604, -0.3769]
 
   - name: arm_right
     model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"
@@ -79,8 +67,10 @@ devices:
     root_body: "camera_mount"
     attach_to: "arm_right_fr3_link7"
     attach_offset:
-      position: [0, 0.0, 0.107] 
-      orientation: [0.9239, 0, 0, -0.3827]
+      #position: [0, 0.0, 0.107] 
+      position: [0.02, -0.02, 0.08] 
+      #orientation: [0.9239, 0, 0, -0.3827]
+      orientation: [0.9099, -0.0664, -0.1604, -0.3769]
 
   - name: head
     model_path: "../models/mujoco/robots/pan_tilt_dummy/pan_tilt_dummy.xml"
@@ -156,12 +146,12 @@ objects:
 
 
 cameras:
-  - name: workspace_overview_1
-    enabled: False
+  - name: workspace_overview
+    enabled: True
     type: fixed
-    pos: [1.5, 0, 0.8]
-    look_at: [0.4, 0.0, 0.4]
-    fovy: 90
+    pos: [1.25, 0, 1.3]
+    look_at: [0.6, 0.0, 0.72]
+    fovy: 65
 
   - name: workspace_overview_2
     enabled: False

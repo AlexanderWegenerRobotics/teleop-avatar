@@ -99,6 +99,20 @@ struct ArmCommandMsg {
     float position[3];
     float quaternion[4];
     float gripper;
+    // Operator clutch, 1 = CLUTCHED. While clutched the operator's hand is
+    // decoupled from the setpoint: the retarget origin follows the hand, the
+    // commanded pose stops advancing, and the operator is repositioning their
+    // arm rather than demonstrating anything. Commands are still sent, so the
+    // sequence numbering stays continuous through a clutch.
+    //
+    // On the wire purely so the avatar can log it. Reconstructing it later
+    // means joining the avatar's per-episode files against one continuous
+    // operator-side stream recorded on another continent's clock, which is
+    // not a join worth trusting for training data.
+    //
+    // Senders that are never clutched (orchestrator playback, the autonomous
+    // policy path) send 0.
+    uint8_t clutch;
 };
  
 struct ArmStateMsg {
@@ -140,6 +154,21 @@ struct HeadStateMsg {
 };
  
 #pragma pack(pop)
+
+// The wire contract, not a description of the structs above. These same five
+// numbers appear in teleop_vr_interface's Public/Shared/protocol.hpp and in
+// teleop_orchestrator/live/wire.py; changing a struct in one place without the
+// other two is the 2026-09-14 failure. UdpStream::runRecv accepts a packet only
+// when n == sizeof(TRecv), so a stale sender is dropped on size and the device
+// reads as absent rather than misconfigured.
+//
+// This copy had no asserts at all until the clutch field was added, which is
+// why it was the one place a field could move silently.
+static_assert(sizeof(MsgHeader)      == 23,  "MsgHeader size mismatch");
+static_assert(sizeof(ArmCommandMsg)  == 56,  "ArmCommandMsg size mismatch");
+static_assert(sizeof(ArmStateMsg)    == 117, "ArmStateMsg size mismatch");
+static_assert(sizeof(HeadCommandMsg) == 31,  "HeadCommandMsg size mismatch");
+static_assert(sizeof(HeadStateMsg)   == 31,  "HeadStateMsg size mismatch");
 
 // per-device bookkeeping entry on the avatar side
 struct DeviceRecord {

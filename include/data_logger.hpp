@@ -49,6 +49,54 @@ struct ArmLogEntry {
     double                 posture_margin;
     double                 posture_swivel;
     SysState               state;
+    // 1 when O_T_EE_cmd / O_T_EE_cmd_world hold a pose that was actually
+    // commanded. 0 in HOMING / RECOVERING / IDLE / PAUSED / FAULT and in every
+    // fallback row, where no Cartesian target exists and those columns carry
+    // the measured pose instead.
+    //
+    // Before this column existed those states logged an identity target, which
+    // T_base_ turned into the arm's own mounting frame -- (0, -0.4, 1.277) with
+    // quaternion (0.5, 0.5, 0.5, 0.5) for arm_right. That is a well-formed pose
+    // sitting behind the robot, outside the safety workspace, and it accounted
+    // for two thirds of the rows in a session. Nothing in the file distinguished
+    // it from a real command.
+    uint8_t                cmd_valid;
+    // 0 = written from inside the control callback, i.e. one row per control
+    //     tick (~1 kHz).
+    // 1 = written from the state thread (~200 Hz) because robot->control() was
+    //     not running: a ControlException, automaticErrorRecovery(),
+    //     waitForRest(), the re-entry dwell, or the blocking wait in
+    //     enterFaultAndWaitForReset().
+    //
+    // The file is therefore NOT uniformly sampled. Filter on this before
+    // resampling, and never interpolate across a run of log_src = 1.
+    uint8_t                log_src;
+    // The operator's grasp input exactly as it arrived on the wire: 1 while the
+    // controller grip is held, 0 otherwise, in every state.
+    //
+    // gripper_cmd above is NOT this. It is a commanded WIDTH, and it is ANDed
+    // with grasp_allowed_ (true only in ENGAGED and PAUSED), so outside those
+    // states a held grip is logged identically to an open hand. That makes the
+    // operator's intent unrecoverable from this file alone in exactly the
+    // windows -- homing, recovery, the moments around engagement -- where you
+    // would want to know whether they were still squeezing.
+    uint8_t                grasp_cmd;
+    // ArmCommandMsg::clutch as received, 1 = the operator was clutched and
+    // therefore repositioning their hand rather than demonstrating. The
+    // commanded pose does not advance through a clutch, so these rows are dead
+    // time: cut them before training or the policy learns to pause for no
+    // observable reason. 1 before the first command arrives.
+    uint8_t                clutch;
+    // header.sequence of the last ArmCommandMsg this arm actually CONSUMED,
+    // the same value echoed to the interface in ArmStateMsg. Logged here so an
+    // episode file can be aligned to the operator-side command log by sequence
+    // rather than by wall clock -- the two hosts are on different continents
+    // and their offset is the same order as the latency being measured.
+    //
+    // Holds the last consumed sequence while nothing is being consumed (not
+    // ENGAGED), and 0 until the first command arrives. Flat runs mean commands
+    // stopped being applied, not that they stopped arriving.
+    uint32_t               applied_cmd_sequence;
 };
 
 // One row per state-thread tick (~200 Hz), written by runStateHandler.
@@ -296,7 +344,7 @@ inline std::string armLogHeader() {
     h += "grasp_state;";
     for (int i = 0; i < 7;  ++i) h += "q_null_ref_" + std::to_string(i) + ";";
     h += "posture_s;posture_cost;posture_margin;posture_swivel;";
-    h += "state\n";
+    h += "state;cmd_valid;log_src;grasp_cmd;clutch;applied_cmd_sequence\n";
     return h;
 }
 
@@ -320,7 +368,12 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     for (auto v : e.q_null_ref) r += std::to_string(v) + ";";
     r += std::to_string(e.posture_s) + ";" + std::to_string(e.posture_cost) + ";"
        + std::to_string(e.posture_margin) + ";" + std::to_string(e.posture_swivel) + ";";
-    r += std::to_string(static_cast<uint8_t>(e.state)) + "\n";
+    r += std::to_string(static_cast<uint8_t>(e.state)) + ";";
+    r += std::to_string(e.cmd_valid) + ";";
+    r += std::to_string(e.log_src) + ";";
+    r += std::to_string(e.grasp_cmd) + ";";
+    r += std::to_string(e.clutch) + ";";
+    r += std::to_string(e.applied_cmd_sequence) + "\n";
     return r;
 }
 

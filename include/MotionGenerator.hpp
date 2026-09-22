@@ -93,6 +93,14 @@ public:
 
     bool step();
     bool isDone() const;
+    // True when the last plan was Cartesian, i.e. getCurrentCartesian() is
+    // describing the pose the arm is actually being driven to. After a JOINT
+    // plan (homing, recovery) the Cartesian buffer is never written, so it
+    // still holds whatever the previous Cartesian plan left there.
+    bool isCartesianSpace() const {
+        std::lock_guard<std::mutex> lock(mtx_);
+        return space_ == InterpolationSpace::CARTESIAN && !cartesian_waypoints_.empty();
+    }
     void reset();
 
     // ── Resolved-rate IK API ────────────────────────────────────────────────
