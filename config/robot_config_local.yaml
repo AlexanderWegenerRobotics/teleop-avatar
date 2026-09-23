@@ -1,8 +1,4 @@
 avatar:
-  # Avatar control-loop rate. Also the orchestrator's tick rate: tick_id is
-  # stamped once per iteration and LiveSource paces on it, so this is the
-  # command rate. Independent of rendering.fps, which now only clocks
-  # frame_id (camera frames, gaze join, policy inference).
   loop_rate_hz: 100
   log_dir: "../logs"
   transmission:
@@ -11,22 +7,20 @@ avatar:
     receive_port: 7000
     frequency: 20
 
-  # Episode signals forwarded to the avatar_pipeline process
   pipeline_logger:
     enabled:  true
     host:     "127.0.0.1"
-    port:     7100          # must match pipeline_config.yaml episode_listener_port
+    port:     7100
 
   scene_objects:
     enabled: true
     host:    "127.0.0.1"
     port:    7200
 
-  # running avatar alone without a twin listening on this port.
   twin_telemetry:
     enabled: true
     host:    "127.0.0.1"
-    port:    7400            # must match reconciler_config.yaml listen_port
+    port:    7400
     frequency: 100
 
   self_collision:
@@ -79,12 +73,9 @@ devices:
       eta_lin: 0.9
       eta_rot: 0.9
       ff_force_max: 30.0     # N
-      ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
+      ff_torque_max: 8.0
       kp_null: [20, 20, 20, 20, 8, 8, 8]
       kd_null: [2, 2, 2, 2, 1, 1, 1]
-      # Nullspace posture (PostureOptimizer). The elbow orbit is searched each
-      # state tick for the human-like swivel angle closest to the one at q0,
-      # inside the joint-limit margin. enabled: false restores the fixed q0 pull.
       posture:
         enabled: true
         window_rad: 0.30
@@ -107,77 +98,36 @@ devices:
       table_safety_margin: 0.01
       max_command_velocity: 0.7
       max_command_angular_velocity: 2.0
-      # Second-order bound on the command target (validateTargetPose): |dv| <= a*dt,
-      # plus a braking curve at 3a toward the raw target so a held-back target never
-      # overshoots. 0 disables. 5 m/s^2 with workspace scale 1.5 on the interface.
       max_command_acceleration: 5.0          # m/s^2
       max_command_angular_acceleration: 25.0 # rad/s^2
       max_target_lead: 0.05
-      # Rotational twin of max_target_lead, in radians. Bounds the rotational
-      # spring: at kp_cart 125 Nm/rad, 0.10 rad is 12.5 Nm, which is already the
-      # FR3 wrist ceiling (joints 5-7 are limited to 12 Nm), so this sits under
-      # it. Raise if the wrist feels leashed during normal work; lower if the
-      # logs show tau_J_range_violation on joints 5-7. 0 disables.
       max_target_lead_rot: 0.08
       max_tilt_angle: 1.74533
 
-      # Collision reflex. Consumed by the sim Robot via setCollisionBehavior().
-      # Lower thresholds only raise the contact flags; upper thresholds stop the
-      # arm with a franka::ControlException, exactly as the FR3 reflex does.
-      # Values are libfranka's own setDefaultBehavior example set.
-      #
-      # Without these the twin will push arbitrary force into a fixture that
-      # would have reflex-stopped the plant, so anything recorded against it is
-      # a habit that faults on hardware.
-      #
-      # Joint torques in Nm; forces (x,y,z) in N and (R,P,Y) in Nm, checked on
-      # the STIFFNESS-frame wrench (K_F_ext_hat_K), same as hardware.
-      # Uniform 70 N / 50 Nm, set 2026-09-21 from hardware experience rather
-      # than from the sim: on a real Panda, setCollisionBehavior at 100 across
-      # the board ran fine for this kind of contact work, and libfranka's own
-      # force_control.cpp and cartesian_impedance_control.cpp both use 100.
-      # 20 was setDefaultBehavior's free-space demo value, not a contact number.
-      # 30/30/80 was tried in between and still reflexed on ordinary insertion
-      # (Fx 32-35 N), so the anisotropy bought nothing the operator wanted.
-      #
-      # The observer's free-space noise floor is ~6 N p99.9, so 70 N is ~12x it.
-      # This does not trip on estimator noise; it trips on a genuine crash.
-      #
-      # Joint thresholds uniform at 50 Nm, deliberately above the 12 Nm the
-      # wrist can produce -- libfranka's examples do the same at 100, and an
-      # external wrist torque past 12 Nm back-drives the joint regardless.
-      #
-      # THESE MUST MATCH THE REAL ROBOT. The reflex only predicts hardware if
-      # setCollisionBehavior gets the same numbers there.
       collision_lower_torque: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
       collision_upper_torque: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
       #                        Fx    Fy    Fz     Mx    My    Mz
       collision_lower_force:  [70.0, 70.0, 70.0, 50.0, 50.0, 50.0]
       collision_upper_force:  [70.0, 70.0, 70.0, 50.0, 50.0, 50.0]
       collision_reflex_enabled: true
-      # Consecutive 1 kHz ticks a crossing must persist before it trips. The
-      # momentum observer's free-motion noise reaches ~5 N p95 on arm_right
-      # (claude/external-wrench-estimator.md), so a single-sample trip would
-      # fault on estimator noise. 5 ticks = 5 ms, short against any real
-      # contact transient.
       collision_persist_ticks: 5
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
 
-    control_mode: cartesian_impedance   # or: joint_ik | cartesian_impedance
+    control_mode: cartesian_impedance   # or: joint_ik
     ik:
-      kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
-      kp_o:       3                         # task ori gain (1/s)
-      v_lin_max:  0.8                        # m/s  (matches interpolator max_linear_vel)
+      kp_p:       [12.0, 12.0, 12.0]
+      kp_o:       3
+      v_lin_max:  0.8
       v_ang_max:  0.8                        # rad/s
       lambda:     0.01                       # LM damping
-      mu:         0.01                       # posture-term weight; keep << lambda to not attenuate task
-      kp_posture: [2, 2, 2, 2, 2, 2, 2]     # redundancy pull toward q0 - raise to fight bad configs
-      qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]  # FR3 joint vel limits, ~8% buffer below hard limits
-      t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
-      a_max:      15.0                       # rad/s^2 per-joint accel cap
-      gamma:      0.05                       # rad, joint-limit safety buffer
-      wtask:      [1, 1, 1, 1, 1, 1]         # task weights [posx3, orix3]
+      mu:         0.01
+      kp_posture: [2, 2, 2, 2, 2, 2, 2]
+      qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]
+      t_brake:    0.10
+      a_max:      15.0
+      gamma:      0.05
+      wtask:      [1, 1, 1, 1, 1, 1]
 
   - name: arm_right
     type: arm
@@ -189,7 +139,7 @@ devices:
       receive_port: 7002
       frequency: 200
 
-    transmission_absolute:  # see arm_left's transmission_absolute comment
+    transmission_absolute:
       remote_ip: "127.0.0.1"
       send_port: 8012
       receive_port: 7012
@@ -223,7 +173,7 @@ devices:
       eta_lin: 0.9
       eta_rot: 0.9
       ff_force_max: 30.0     # N
-      ff_torque_max: 8.0     # Nm, FR3 wrist joint limit is 12
+      ff_torque_max: 8.0
       kp_null:  [20, 20, 20, 20, 8, 8, 8]
       kd_null:  [2, 2, 2, 2, 1, 1, 1]
       posture:
@@ -263,41 +213,30 @@ devices:
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
 
-    control_mode: cartesian_impedance   # or: joint_ik | cartesian_impedance
+    control_mode: cartesian_impedance   # or: joint_ik
     ik:
-      kp_p:       [12.0, 12.0, 12.0] # task pos gain (1/s)
-      kp_o:       9                        # task ori gain (1/s)
-      v_lin_max:  2.0                        # m/s  (matches interpolator max_linear_vel)
+      kp_p:       [12.0, 12.0, 12.0]
+      kp_o:       9
+      v_lin_max:  2.0
       v_ang_max:  6.0                        # rad/s
       lambda:     0.01                       # LM damping
-      mu:         0.00000001                       # posture-term weight; keep << lambda to not attenuate task
-      kp_posture: [3, 3, 4, 4, 1, 1, 1]     # redundancy pull toward q0 - raise to fight bad configs
+      mu:         0.00000001
+      kp_posture: [3, 3, 4, 4, 1, 1, 1]
       qd_max:     [2.5, 2.5, 2.5, 2.5, 4.0, 4.0, 4.0]  # FR3 limits
-      t_brake:    0.10                       # s, position-limit braking horizon (~5xdt_state)
-      a_max:      80.0                       # rad/s^2 per-joint accel cap
-      gamma:      0.05                       # rad, joint-limit safety buffer
-      wtask:      [1, 1, 1, 1, 1, 1]         # task weights [posx3, orix3]
+      t_brake:    0.10
+      a_max:      80.0
+      gamma:      0.05
+      wtask:      [1, 1, 1, 1, 1, 1]
 
   - name: head
     type: head
     enabled: True
-    # Home-relative channel: pan/tilt arrive as offsets from q0 below, which
-    # head_control.cpp adds on receipt. This is what the VR interface speaks --
-    # it sends the operator's head rotation relative to the origin it captured
-    # at engage, so home-relative is the natural frame there.
     transmission:
       remote_ip: "127.0.0.1"
       send_port: 8003
       receive_port: 7003
       frequency: 200
 
-    # Absolute channel: pan/tilt are joint targets, q0 NOT added. This is what
-    # an autonomous policy speaks, because head.csv logs q and q_cmd in
-    # absolute joint space and that is what a policy trained on them predicts.
-    #
-    # The same split the arms have above. HeadStateMsg is published here too,
-    # so a second process can read head state without taking the interface's
-    # port away from it.
     transmission_absolute:
       remote_ip: "127.0.0.1"
       send_port: 8013

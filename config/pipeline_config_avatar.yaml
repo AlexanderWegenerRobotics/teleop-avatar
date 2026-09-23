@@ -1,15 +1,9 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Simulation-side keys
-# ─────────────────────────────────────────────────────────────────────────────
 enabled:        true
-stereo:         true          # set true to switch to left+right eye streams
+stereo:         true
 stream_fps:     20
 stream_width:   1280
 stream_height:  960
 
-# Which MuJoCo cameras to render and write to shared memory.
-# In mono mode (stereo: false) only entries with eye: "mono" are active.
-# In stereo mode (stereo: true) only entries with eye: "left" or "right" are active.
 stream_cameras:
   - camera:   "head_head_cam"
     shm_name: "avatar_cam"
@@ -31,18 +25,9 @@ stream_cameras:
     width:    640
     height:   480
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Pipeline process (avatar_pipeline binary)
-# ─────────────────────────────────────────────────────────────────────────────
-
-# UDP port on which this process listens for episode_start / episode_end
 episode_listener_port: 7100
 
-# Camera channel entries.  The "eye" tag controls which entries are loaded:
-#   stereo: false  ->  only eye: "mono" channels are started
-#   stereo: true   ->  only eye: "left" and eye: "right" channels are started
 cameras:
-  # ── Mono channel (active when stereo: false) ────────────────────────────
   - name:         "head_cam"
     eye:          "mono"
     source_type:  "mujoco"
@@ -70,7 +55,6 @@ cameras:
       width:      640
       height:     480
 
-  # ── PiP camera ─────────────────
   - name:         "wrist_cam_right"
     eye:          "aux"
     source_type:  "mujoco"
@@ -125,18 +109,14 @@ cameras:
       width:      320
       height:     240
 
-  # ── Stereo combined channel (active when stereo: true) ──────────────────
-  # Reads both eye shm buffers in the same poll iteration and composites them
-  # side-by-side (left|right) into a single 2560×960 stream on one port.
-  # This guarantees temporal sync and correlated compression artifacts.
   - name:              "head_cam_stereo"
     eye:               "stereo"
     source_type:       "mujoco"
-    shm_name:          "avatar_cam_left"       # left eye (primary)
+    shm_name:          "avatar_cam_left"
     stereo_combined:   true
-    stereo_partner_shm: "avatar_cam_right"     # right eye (composited alongside)
+    stereo_partner_shm: "avatar_cam_right"
     fps:               20
-    source_width:      960                    # single-eye width (source)
+    source_width:      960
     source_height:     720
     realsense_serial:  ""
 
@@ -147,9 +127,9 @@ cameras:
       feedback_port:      5005
       status_port:        5007
       status_interval_ms: 500
-      bitrate_kbps:       6000 
+      bitrate_kbps:       6000
       fec_percentage:     10
-      width:              2560    # 2 × single-eye width
+      width:              2560
       height:             960
 
     log:

@@ -1,14 +1,10 @@
 avatar:
-  # Avatar control-loop rate. Also the orchestrator's tick rate: tick_id is
-  # stamped once per iteration and LiveSource paces on it, so this is the
-  # command rate. Independent of rendering.fps, which now only clocks
-  # frame_id (camera frames, gaze join, policy inference).
   loop_rate_hz: 100
   transmission:
-    send_port:    8900   # base: avatar.transmission.send_port    (8000)
-    receive_port: 7900   # base: avatar.transmission.receive_port (7000)
+    send_port:    8900
+    receive_port: 7900
   pipeline_logger:
-    port: 8100            # base: avatar.pipeline_logger.port (7100)
+    port: 8100
 
 devices:
   - name: arm

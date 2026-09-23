@@ -14,7 +14,7 @@ devices:
     root_body: "link0"
     urdf_ee_name: "palm_link"
     gripper_actuator: "actuator8"
-  
+
   - name: hand_left
     model_path: "../models/mujoco/robots/allegro_hand/allegro_hand_right_A.xml"
     root_body: "link_0_0"
@@ -71,20 +71,6 @@ objects:
       position: [0.8, 0.0, 0.6]
       orientation: [1, 0, 0, 0]
 
-  #- name: box_2
-  #  type: dynamic
-  #  model_path: "../models/mujoco/props/box_green.xml"
-  #  pose:
-  #    position: [0.8, 0.3, 0.6]
-  #    orientation: [1, 0, 0, 0]
-
-  #- name: box_3
-  #  type: dynamic
-  #  model_path: "../models/mujoco/props/box_blue.xml"
-  #  pose:
-  #    position: [0.8, -0.3, 0.6]
-  #    orientation: [1, 0, 0, 0]
-
   - name: target_right
     type: mocap
     model_path: "../models/mujoco/props/target_frame.xml"
@@ -124,10 +110,6 @@ objects:
     pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
-
-
-
-
 
 cameras:
   - name: workspace_overview_1

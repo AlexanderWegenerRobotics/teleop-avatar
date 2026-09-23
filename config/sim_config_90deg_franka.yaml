@@ -14,7 +14,7 @@ devices:
     root_body: "link0"
     urdf_ee_name: "fr3_hand"
     gripper_actuator: "actuator8"
-  
+
   - name: hand_left
     model_path: "../models/mujoco/robots/franka_fr3/hand.xml"
     root_body: "hand"
@@ -29,7 +29,7 @@ devices:
     root_body: "camera_mount"
     attach_to: "arm_left_fr3_link7"
     attach_offset:
-      position: [0, -0.0, 0.107] 
+      position: [0, -0.0, 0.107]
       orientation: [0.9239, 0, 0, -0.3827]
 
   - name: arm_right
@@ -53,7 +53,7 @@ devices:
     root_body: "camera_mount"
     attach_to: "arm_right_fr3_link7"
     attach_offset:
-      position: [0, 0.0, 0.107] 
+      position: [0, 0.0, 0.107]
       orientation: [0.9239, 0, 0, -0.3827]
 
   - name: head
@@ -88,20 +88,6 @@ objects:
     pose:
       position: [0.8, 0.0, 0.6]
       orientation: [1, 0, 0, 0]
-
-  #- name: box_2
-  #  type: dynamic
-  #  model_path: "../models/mujoco/props/box_green.xml"
-  #  pose:
-  #    position: [0.8, 0.3, 0.6]
-  #    orientation: [1, 0, 0, 0]
-
-  #- name: box_3
-  #  type: dynamic
-  #  model_path: "../models/mujoco/props/box_blue.xml"
-  #  pose:
-  #    position: [0.8, -0.3, 0.6]
-  #    orientation: [1, 0, 0, 0]
 
   - name: target_right
     type: mocap
@@ -163,8 +149,6 @@ objects:
     pose:
       position: [0, -1.5, 0]
       orientation: [0.7071, 0, 0, 0.7071]
-
-
 
 cameras:
   - name: workspace_overview_1
