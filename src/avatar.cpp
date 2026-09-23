@@ -310,6 +310,16 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             std::cout << "[AVATAR-INFO]: Episode restart (" << label << ")" << std::endl;
         });
 
+        // HUD readouts from the orchestrator (inference time, agreement). The
+        // interface is this channel's only peer, so the avatar relays them.
+        cmd_channel_->registerHandler("policy_status", [this](const ReliableEnvelope& env, const msgpack::object& payload) {
+            msgpack::sbuffer buf;
+            msgpack::pack(buf, payload);
+            std::lock_guard<std::mutex> lock(policy_status_mtx_);
+            policy_status_buf_.assign(buf.data(), buf.size());
+            policy_status_pending_ = true;
+        });
+
         cmd_channel_->registerHandler("gaze_sample", [this](const ReliableEnvelope& env, const msgpack::object& payload) {
             if (!intention_buffer_) return;
             GazeSampleMsg gaze;
@@ -591,6 +601,7 @@ void Avatar::start(){
             // running without intention recognition still has an operator who
             // needs the pill to be true.
             publishAuthorityChanges();
+            relayPolicyStatus();
 
             if (intention_buffer_) {
                 StateSnapshot snap;
@@ -1056,6 +1067,18 @@ void Avatar::publishAuthorityChanges() {
         pk.pack(std::string("authority")); pk.pack(static_cast<uint8_t>(now));
         cmd_channel_->send("authority_state", buf, true);
     }
+}
+
+void Avatar::relayPolicyStatus() {
+    if (!cmd_channel_) return;
+    msgpack::sbuffer buf;
+    {
+        std::lock_guard<std::mutex> lock(policy_status_mtx_);
+        if (!policy_status_pending_) return;
+        buf.write(policy_status_buf_.data(), policy_status_buf_.size());
+        policy_status_pending_ = false;
+    }
+    cmd_channel_->send("policy_status", buf, false);
 }
 
 void Avatar::sendDeviceEvent(const std::string& device, const std::string& event) {

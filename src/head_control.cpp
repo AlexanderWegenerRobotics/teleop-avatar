@@ -35,12 +35,14 @@ HeadControl::HeadControl(const YAML::Node& device_config, const std::string& ses
         transmission_ = std::make_unique<HeadStream>(stream_cfg);
     }
 
-    // Absolute-target channel, mirroring arm_control.cpp's transmission_absolute.
-    // Same struct, own port; pan/tilt arrive as joint targets rather than as
-    // offsets from q0_. HeadStateMsg is published on this channel too (see
-    // runStateHandler), which is what lets the orchestrator read head state at
-    // all -- the head's transmission is point-to-point, so with the VR
-    // interface connected it owns transmission_'s port exclusively.
+    // Second command channel, mirroring arm_control.cpp's transmission_absolute.
+    // Same struct, same ABSOLUTE joint-target semantics as transmission_ above
+    // -- the split is about PEERS, not frames: each transport has one remote
+    // peer, so the interface and an autonomous policy need one each.
+    //
+    // HeadStateMsg is published here too (see runStateHandler), which is what
+    // lets a second process read head state at all; before this channel
+    // existed the orchestrator's head socket received nothing, ever.
     if (device_config["transmission_absolute"]) {
         UdpStreamConfig stream_cfg;
         stream_cfg.transport.remote_ip   = device_config["transmission_absolute"]["remote_ip"].as<std::string>();
@@ -97,21 +99,33 @@ void HeadControl::runStateHandler(){
 
     while(bRunning){
 
-        // Home-relative channel (the VR interface). q0_ is added here, which is
-        // the only place in this file that knows about the offset at all.
+        // BOTH channels carry ABSOLUTE joint targets. q0_ is not added to
+        // either; in this file it now means one thing only -- the pose homing
+        // drives to.
+        //
+        // The two channels exist because the transport is point-to-point: one
+        // remote peer each, so two senders need two channels. That is the same
+        // reason the arms have two. It is NOT a frame distinction, and it was
+        // briefly treated as one, which cost two separate bugs in one evening:
+        // the policy's absolute prediction went out on a channel that added
+        // q0 (neck 23 degrees low), and then the interface's re-anchored head
+        // target did the same and ratcheted a further 0.4 rad down on every
+        // single takeover.
+        //
+        // The interface has an absolute target too: it re-anchors on the
+        // measured neck pose at handover and adds the operator's HMD delta to
+        // it, so what it sends is a joint angle, not an offset.
         if (transmission_ && transmission_->hasNew()) {
             const HeadCommandMsg m = transmission_->getRecvData();
             q_target_pending(0) = static_cast<double>(m.pan);
             q_target_pending(1) = static_cast<double>(m.tilt);
-            q_target_pending += q0_;
             has_cmd = true;
         }
 
-        // Absolute channel (an autonomous policy). Taken as joint targets, no
-        // offset. Read second on purpose: if both channels somehow deliver in
-        // the same tick, two processes are commanding the head at once, which
-        // is a handover bug elsewhere -- and of the two, the absolute sender is
-        // the one that believes it holds the robot.
+        // Read second on purpose: if both channels deliver in the same tick,
+        // two processes are commanding the head at once, which is a handover
+        // bug elsewhere -- and of the two, the policy is the one that only
+        // sends while it believes it holds the robot.
         if (transmission_absolute_ && transmission_absolute_->hasNew()) {
             const HeadCommandMsg m = transmission_absolute_->getRecvData();
             q_target_pending(0) = static_cast<double>(m.pan);

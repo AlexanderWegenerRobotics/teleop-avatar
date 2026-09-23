@@ -1,5 +1,6 @@
 #include <yaml-cpp/yaml.h>
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -72,6 +73,8 @@ private:
     // watchdog above all, which is exactly the case where the interface must
     // not go on believing it holds the arm.
     void publishAuthorityChanges();
+    // Forwards the orchestrator's latest policy_status to the interface.
+    void relayPolicyStatus();
     void markEpisodeStart();
     void markEpisodeEnd(const std::string& reason);
     void processResetAllCompletion();
@@ -95,6 +98,10 @@ private:
     // published, so the first pass always sends one and the HUD starts correct
     // rather than starting at a guess.
     std::unordered_map<std::string, CommandAuthority> published_authority_;
+    // Latest policy_status payload from the orchestrator, packed, awaiting relay.
+    std::mutex  policy_status_mtx_;
+    std::string policy_status_buf_;
+    bool        policy_status_pending_ = false;
 
     std::string      session_id_;
     std::string      log_base_dir_;
