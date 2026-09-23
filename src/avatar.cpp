@@ -171,6 +171,18 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             ArmControl* arm = getArm(dev_name);
             if (!arm) return;
 
+            // A reset takes the arm away from whoever held it. The policy must
+            // not keep commanding an arm that is recovering to home -- it would
+            // be fighting the recovery plan with a target from before the fault,
+            // and the operator asked for this arm to stop, not to change hands.
+            //
+            // HOLD rather than HUMAN: the reset is a request to make the arm
+            // safe, not a request to drive it. Whoever wants it next says so.
+            // Only if authority was already in use -- a reset in an ordinary
+            // session must not switch enforcement on behind the operator's back.
+            if (arm->getAuthority() != CommandAuthority::UNSET)
+                arm->setAuthority(CommandAuthority::HOLD, "arm_reset");
+
             arm->recovery().requestRecovery(RecoveryTrigger::OPERATOR_RESET, arm->getQ0());
 
             auto rec_it = device_records_.find(dev_name);
@@ -204,6 +216,37 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             }
 
             std::cout << "[AVATAR-INFO]: Resume confirmed for " << dev_name << std::endl;
+        });
+
+        // Payload: {"authority": uint8, "source": string, ["device": string]}.
+        // Omitting "device" addresses every arm, which is what the orchestrator
+        // does; the interface names one, because the clutch is per hand.
+        cmd_channel_->registerHandler("authority_request", [this](const ReliableEnvelope& env, const msgpack::object& payload) {
+            std::map<std::string, msgpack::object> fields;
+            payload.convert(fields);
+
+            auto auth_it = fields.find("authority");
+            if (auth_it == fields.end()) return;
+            const uint8_t raw = auth_it->second.as<uint8_t>();
+            // Unknown value: keep whatever the arm already holds. Falling back
+            // to a default here would let a malformed packet open a gate.
+            if (raw > static_cast<uint8_t>(CommandAuthority::HOLD)) {
+                std::cout << "[AVATAR-WARN]: authority_request with unknown authority "
+                          << static_cast<int>(raw) << " ignored" << std::endl;
+                return;
+            }
+            const CommandAuthority requested = static_cast<CommandAuthority>(raw);
+
+            std::string source = "unknown";
+            if (auto s_it = fields.find("source"); s_it != fields.end())
+                source = s_it->second.as<std::string>();
+
+            if (auto d_it = fields.find("device"); d_it != fields.end()) {
+                applyAuthorityRequest(getArm(d_it->second.as<std::string>()), requested, source);
+            } else {
+                for (ArmControl* arm : arm_instances)
+                    applyAuthorityRequest(arm, requested, source);
+            }
         });
 
         cmd_channel_->registerHandler("reset_all", [this](const ReliableEnvelope& env, const msgpack::object& payload) {
@@ -542,6 +585,13 @@ void Avatar::start(){
                 }
             }
 
+            // Outside the intention_buffer_ block below on purpose. The
+            // orchestrator's copy of authority rides SceneObjectsMsg, which the
+            // intention pipeline builds; the interface's does not, and a rig
+            // running without intention recognition still has an operator who
+            // needs the pill to be true.
+            publishAuthorityChanges();
+
             if (intention_buffer_) {
                 StateSnapshot snap;
                 snap.frame_id    = sim_->getFrameId();
@@ -696,6 +746,21 @@ ArmControl* Avatar::getArm(const std::string& name) {
     return nullptr;
 }
 
+void Avatar::applyAuthorityRequest(ArmControl* arm, CommandAuthority requested, const std::string& source) {
+    if (!arm) return;
+
+    const bool from_operator = (source == "operator");
+    if (requested != CommandAuthority::HOLD && !from_operator
+        && arm->getAuthority() == CommandAuthority::HUMAN) {
+        std::cout << "[AVATAR-INFO]: " << arm->getDeviceName() << " refused "
+                  << toString(requested) << " from " << source
+                  << " -- operator holds HUMAN" << std::endl;
+        return;
+    }
+
+    arm->setAuthority(requested, source);
+}
+
 void Avatar::markEpisodeStart() {
     for (auto& arm : arm_instances)  arm->markEpisodeStart();
     for (auto& head : head_instances) head->markEpisodeStart();
@@ -747,6 +812,11 @@ void Avatar::sendSceneObjects(const StateSnapshot& snap) {
         slot.half_extents = {static_cast<float>(s.half_extents.x()), static_cast<float>(s.half_extents.y()), static_cast<float>(s.half_extents.z())};
         msg.slots.push_back(std::move(slot));
     }
+    for (const ArmControl* arm : arm_instances)
+        msg.authority[arm->getDeviceName()] = static_cast<uint8_t>(arm->getAuthority());
+    msg.state     = static_cast<uint8_t>(state_.load());
+    msg.head_pan  = snap.head_pan;
+    msg.head_tilt = snap.head_tilt;
     msgpack::sbuffer buf;
     msgpack::pack(buf, msg);
     sockaddr_in dst{};
@@ -967,6 +1037,27 @@ void Avatar::processResetAllCompletion() {
     std::cout << "[AVATAR-INFO]: Global reset complete, awaiting engagement." << std::endl;
 }
 
+void Avatar::publishAuthorityChanges() {
+    if (!cmd_channel_) return;
+    for (ArmControl* arm : arm_instances) {
+        const std::string dev = arm->getDeviceName();
+        const CommandAuthority now = arm->getAuthority();
+
+        auto it = published_authority_.find(dev);
+        if (it != published_authority_.end() && it->second == now) continue;
+        published_authority_[dev] = now;
+
+        // Packed field by field: the values are not the same type, so a
+        // std::map<string, X> cannot carry both.
+        msgpack::sbuffer buf;
+        msgpack::packer<msgpack::sbuffer> pk(&buf);
+        pk.pack_map(2);
+        pk.pack(std::string("device"));    pk.pack(dev);
+        pk.pack(std::string("authority")); pk.pack(static_cast<uint8_t>(now));
+        cmd_channel_->send("authority_state", buf, true);
+    }
+}
+
 void Avatar::sendDeviceEvent(const std::string& device, const std::string& event) {
     msgpack::sbuffer buf;
     msgpack::pack(buf, std::map<std::string, std::string>{{"device", device}, {"event", event}});
@@ -975,6 +1066,18 @@ void Avatar::sendDeviceEvent(const std::string& device, const std::string& event
 
 void Avatar::updateStateMachine(SysState cmd_state){
     if (reset_all_pending_.load()) return;
+
+    // Remembered across the switch so that LEAVING ENGAGED -- by any route:
+    // idle, pause, stop, or anything added later -- parks every arm in HOLD.
+    //
+    // Outside ENGAGED nothing may command the arms anyway, so the policy is not
+    // being stopped so much as told. What this prevents is the policy silently
+    // still holding authority when the operator re-engages: the arms would come
+    // back under a policy that has been predicting against a frozen or homing
+    // robot for however long the pause lasted. After this, re-engaging leaves
+    // every arm in HOLD and the operator hands them over deliberately with
+    // RESUME -- which is the conscious re-enable the whole mode is built on.
+    const SysState state_before = state_.load();
 
     if(cmd_state == SysState::STOP){
         state_ = SysState::STOP;
@@ -1043,6 +1146,16 @@ void Avatar::updateStateMachine(SysState cmd_state){
 
         default:
             break;
+    }
+
+    if (state_before == SysState::ENGAGED && state_.load() != SysState::ENGAGED) {
+        for (ArmControl* arm : arm_instances) {
+            // UNSET means authority is not in use in this session; switching
+            // enforcement on here would gate an ordinary teleoperation run at
+            // the worst possible moment.
+            if (arm->getAuthority() != CommandAuthority::UNSET)
+                arm->setAuthority(CommandAuthority::HOLD, "left_engaged");
+        }
     }
 }
 

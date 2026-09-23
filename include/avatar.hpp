@@ -45,6 +45,33 @@ private:
     void requestAllDevices(SysState state);
     void sendDeviceEvent(const std::string& device, const std::string& event);
     ArmControl* getArm(const std::string& name);
+    // Arbitrates one authority_request against what an arm already holds, then
+    // applies it. The rule, in order:
+    //
+    //   1. HOLD from any source wins immediately. It is the only request that
+    //      cannot make the robot move, so there is never a reason to refuse it.
+    //   2. Otherwise the operator outranks the orchestrator.
+    //   3. Therefore an orchestrator request for POLICY is refused while the
+    //      operator holds HUMAN -- the operator hands the arm back explicitly,
+    //      and a policy that has decided it is ready again cannot take it out
+    //      from under a hand that is mid-correction.
+    //
+    // `source` is the requester's own label ("operator" / "orchestrator"), so a
+    // misbehaving client could claim to be the operator. That is acceptable:
+    // both clients are already trusted to command the arms directly, so this
+    // arbitrates cooperating processes rather than being a security boundary.
+    void applyAuthorityRequest(ArmControl* arm, CommandAuthority requested, const std::string& source);
+    // Sends an authority_state to the interface for any arm whose authority has
+    // changed since the last call. Edge-driven rather than per-tick because the
+    // interface sits on the RELIABLE channel, where re-asserting at loop rate
+    // would be one ack per arm per tick; the orchestrator gets the per-tick
+    // re-assert instead, inside SceneObjectsMsg, where a drop costs 10 ms.
+    //
+    // Driven from the loop rather than from applyAuthorityRequest so it also
+    // catches the transitions ArmControl makes by itself -- the staleness
+    // watchdog above all, which is exactly the case where the interface must
+    // not go on believing it holds the arm.
+    void publishAuthorityChanges();
     void markEpisodeStart();
     void markEpisodeEnd(const std::string& reason);
     void processResetAllCompletion();
@@ -64,6 +91,10 @@ private:
     std::shared_ptr<DeviceRegistry> device_registry_;
     std::unordered_map<std::string, DeviceRecord> device_records_;
     std::atomic<bool> reset_all_pending_{false};
+    // Last authority published to the interface, per device name. Absent = never
+    // published, so the first pass always sends one and the HUD starts correct
+    // rather than starting at a guess.
+    std::unordered_map<std::string, CommandAuthority> published_authority_;
 
     std::string      session_id_;
     std::string      log_base_dir_;

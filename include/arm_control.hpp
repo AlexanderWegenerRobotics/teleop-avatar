@@ -55,6 +55,24 @@ public:
     ArmRecovery& recovery() { return recovery_; }
     Vector7 getQ0() const { return q0_; }
     void reOrigin();
+
+    // ── Command authority ───────────────────────────────────────────────────
+    // Which channel may move THIS arm. See CommandAuthority in common.hpp.
+    // Called from the avatar's authority_request handler (cmd_channel_ receive
+    // thread); read by the state thread every cycle and by the control thread
+    // once per log row, hence the atomic.
+    //
+    // Entering HUMAN re-origins first and opens the VR gate second, so the
+    // operator's first packet is composed against where the policy actually
+    // left the arm rather than against where they last let go of it.
+    void setAuthority(CommandAuthority requested, const std::string& source);
+    CommandAuthority getAuthority() const { return authority_.load(std::memory_order_relaxed); }
+    // Commands that arrived on a channel that did not hold authority and were
+    // therefore discarded. The only way to tell "the gate is working" from "the
+    // sender stopped"; without them every gate test is eyeballed.
+    uint64_t getDroppedVrCommands()  const { return dropped_vr_cmds_.load(std::memory_order_relaxed); }
+    uint64_t getDroppedAbsCommands() const { return dropped_abs_cmds_.load(std::memory_order_relaxed); }
+
     void markEpisodeStart() { if (logger_) logger_->markEpisodeStart(); }
     void markEpisodeEnd(const std::string& reason) { if (logger_) logger_->markEpisodeEnd(reason); }
     void restartLogger(const std::string& path);
@@ -139,6 +157,11 @@ private:
     void resetPostureFromMeasured();
     void applyGripper(bool close);
     void updateGraspConfirmation(double width);
+    // Drops an arm to HOLD when the channel that holds authority has gone
+    // quiet. Without it, an interface that dies mid-HUMAN leaves this arm
+    // claimed by a process that no longer exists, and the policy can never take
+    // it back. Runs once per state-thread cycle; no-op while UNSET or HOLD.
+    void updateAuthorityWatchdog();
 
 private:
     std::string name_;
@@ -196,6 +219,20 @@ private:
     // interface's own initial state, so the window before the first command is
     // not mistaken for active demonstration.
     std::atomic<bool>   clutch_active_{true};
+    // ── Command authority (see common.hpp) ──────────────────────────────────
+    std::atomic<CommandAuthority> authority_{CommandAuthority::UNSET};
+    std::atomic<uint64_t> dropped_vr_cmds_{0};
+    std::atomic<uint64_t> dropped_abs_cmds_{0};
+    // timestamp_ns() of the last command accepted on the AUTHORITATIVE channel,
+    // or of the last authority change. 0 = nothing yet, which the watchdog
+    // treats as "not started" rather than "infinitely stale".
+    std::atomic<uint64_t> authority_last_cmd_ns_{0};
+    // How long the authoritative channel may go quiet before the arm drops to
+    // HOLD. 250 ms is five orchestrator ticks (20 Hz) or thirty VR commands
+    // (120 Hz) -- long enough that neither sender trips it in normal operation,
+    // short enough that a dead sender does not keep the arm for a whole episode.
+    // Overridable via control.authority_stale_ms.
+    double              authority_stale_ms_{250.0};
     std::atomic<bool>   grasp_allowed_{false};
     std::atomic<bool>   gripper_busy_{false};
     bool                gripper_close_applied_{true};

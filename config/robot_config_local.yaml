@@ -281,10 +281,27 @@ devices:
   - name: head
     type: head
     enabled: True
+    # Home-relative channel: pan/tilt arrive as offsets from q0 below, which
+    # head_control.cpp adds on receipt. This is what the VR interface speaks --
+    # it sends the operator's head rotation relative to the origin it captured
+    # at engage, so home-relative is the natural frame there.
     transmission:
       remote_ip: "127.0.0.1"
       send_port: 8003
       receive_port: 7003
+      frequency: 200
+
+    # Absolute channel: pan/tilt are joint targets, q0 NOT added. This is what
+    # an autonomous policy speaks, because head.csv logs q and q_cmd in
+    # absolute joint space and that is what a policy trained on them predicts.
+    #
+    # The same split the arms have above. HeadStateMsg is published here too,
+    # so a second process can read head state without taking the interface's
+    # port away from it.
+    transmission_absolute:
+      remote_ip: "127.0.0.1"
+      send_port: 8013
+      receive_port: 7013
       frequency: 200
 
     base_pose:

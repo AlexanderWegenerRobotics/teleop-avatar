@@ -34,6 +34,21 @@ HeadControl::HeadControl(const YAML::Node& device_config, const std::string& ses
         stream_cfg.send_rate_hz          = device_config["transmission"]["frequency"].as<int>();
         transmission_ = std::make_unique<HeadStream>(stream_cfg);
     }
+
+    // Absolute-target channel, mirroring arm_control.cpp's transmission_absolute.
+    // Same struct, own port; pan/tilt arrive as joint targets rather than as
+    // offsets from q0_. HeadStateMsg is published on this channel too (see
+    // runStateHandler), which is what lets the orchestrator read head state at
+    // all -- the head's transmission is point-to-point, so with the VR
+    // interface connected it owns transmission_'s port exclusively.
+    if (device_config["transmission_absolute"]) {
+        UdpStreamConfig stream_cfg;
+        stream_cfg.transport.remote_ip   = device_config["transmission_absolute"]["remote_ip"].as<std::string>();
+        stream_cfg.transport.remote_port = device_config["transmission_absolute"]["send_port"].as<int>();
+        stream_cfg.transport.bind_port   = device_config["transmission_absolute"]["receive_port"].as<int>();
+        stream_cfg.send_rate_hz          = device_config["transmission_absolute"]["frequency"].as<int>();
+        transmission_absolute_ = std::make_unique<HeadStream>(stream_cfg);
+    }
     logger_ = std::make_unique<DataLogger<HeadLogEntry>>("../log/" + name_ + "_log.csv", headLogHeader, headLogRow, session_id);
 }
 
@@ -52,6 +67,7 @@ void HeadControl::start(){
     state_thread = std::thread(&HeadControl::runStateHandler, this);
     set_realtime(state_thread, 5);
     if (transmission_) transmission_->start();
+    if (transmission_absolute_) transmission_absolute_->start();
     logger_->start();
     logger_->enable(true);
     startTime_ = std::chrono::high_resolution_clock::now();
@@ -63,6 +79,7 @@ void HeadControl::stop(){
     if (control_thread.joinable()) control_thread.join();
     if (state_thread.joinable()) state_thread.join();
     if (transmission_) transmission_->stop();
+    if (transmission_absolute_) transmission_absolute_->stop();
 }
 
 void HeadControl::runStateHandler(){
@@ -72,12 +89,33 @@ void HeadControl::runStateHandler(){
     SysState prev_state = state_;
     Vector2 q_current = Vector2::Zero();
     bool has_cmd = false;
-    HeadCommandMsg cmd;
+    // Always ABSOLUTE joint space, whichever channel it came from. Both
+    // channels are normalized here, at arrival, so there is exactly one
+    // representation downstream and the planner below cannot be handed a
+    // target whose frame it has to guess.
+    Vector2 q_target_pending = Vector2::Zero();
 
     while(bRunning){
 
+        // Home-relative channel (the VR interface). q0_ is added here, which is
+        // the only place in this file that knows about the offset at all.
         if (transmission_ && transmission_->hasNew()) {
-            cmd = transmission_->getRecvData();
+            const HeadCommandMsg m = transmission_->getRecvData();
+            q_target_pending(0) = static_cast<double>(m.pan);
+            q_target_pending(1) = static_cast<double>(m.tilt);
+            q_target_pending += q0_;
+            has_cmd = true;
+        }
+
+        // Absolute channel (an autonomous policy). Taken as joint targets, no
+        // offset. Read second on purpose: if both channels somehow deliver in
+        // the same tick, two processes are commanding the head at once, which
+        // is a handover bug elsewhere -- and of the two, the absolute sender is
+        // the one that believes it holds the robot.
+        if (transmission_absolute_ && transmission_absolute_->hasNew()) {
+            const HeadCommandMsg m = transmission_absolute_->getRecvData();
+            q_target_pending(0) = static_cast<double>(m.pan);
+            q_target_pending(1) = static_cast<double>(m.tilt);
             has_cmd = true;
         }
 
@@ -92,16 +130,12 @@ void HeadControl::runStateHandler(){
         }
         else if (state_ == SysState::ENGAGED) {
             if (has_cmd) {
-                Vector2 q_target;
-                q_target(0) = static_cast<double>(cmd.pan);
-                q_target(1) = static_cast<double>(cmd.tilt);
-                q_target += q0_;
-                interpolator_.planJoint(interpolator_.getCurrentJoint(), q_target, ProfileType::LINEAR);
+                interpolator_.planJoint(interpolator_.getCurrentJoint(), q_target_pending, ProfileType::LINEAR);
                 has_cmd = false;
             }
         }
 
-        if (transmission_) {
+        if (transmission_ || transmission_absolute_) {
             Vector2 q, dq;
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
@@ -112,7 +146,12 @@ void HeadControl::runStateHandler(){
             HeadStateMsg state_msg{};
             state_msg.pan   = static_cast<float>(q(0));
             state_msg.tilt  = static_cast<float>(q(1));
-            transmission_->setSendData(state_msg);
+            // Published on BOTH channels, as the arms do. Each transport has a
+            // single remote peer, so a second listener can only be served by a
+            // second channel -- without this the orchestrator can never see
+            // head state while the VR interface is connected.
+            if (transmission_) transmission_->setSendData(state_msg);
+            if (transmission_absolute_) transmission_absolute_->setSendData(state_msg);
         }
 
         prev_state = state_;
@@ -168,8 +207,9 @@ void HeadControl::updateStateMachine(SysState cmd_state){
         default:
             break;
     }
-    if (state_ != prev && transmission_) {
-        transmission_->setState(state_);
+    if (state_ != prev) {
+        if (transmission_) transmission_->setState(state_);
+        if (transmission_absolute_) transmission_absolute_->setState(state_);
     }
 }
 

@@ -24,6 +24,42 @@ enum class GraspState : uint8_t {
     LOST = 2
 };
 
+// Which command channel is allowed to move an arm. PER ARM, deliberately: the
+// clutch is already per-arm at the interface, so the operator can correct one
+// hand while the policy keeps driving the other.
+//
+// The avatar owns this. It is the only process both the VR interface and the
+// orchestrator talk to, and the only place transmission_ and
+// transmission_absolute_ physically converge, so it is the only place that can
+// ENFORCE a mutex rather than politely request one.
+//
+// Values match EControlAuthority (teleop_vr_interface Public/Shared/AvatarTypes.h)
+// and the `authority` column in arm.csv, so one vocabulary runs end to end.
+//
+// UNSET is not a fourth mode, it is the absence of the feature: until someone
+// sends an authority_request for this arm, both channels behave exactly as they
+// did before authority existed. Without it, switching enforcement on would
+// break every existing autonomous and playback run -- they never ask for
+// authority, so a HUMAN default would gate the policy out and a POLICY default
+// would gate the operator out. The first request latches enforcement on for the
+// session and it never returns to UNSET, because returning would re-open both
+// gates at exactly the moment something has gone wrong.
+enum class CommandAuthority : uint8_t {
+    POLICY = 0,   // transmission_absolute_ only (orchestrator)
+    HUMAN  = 1,   // transmission_ only (VR interface)
+    HOLD   = 2,   // neither; the arm holds its last target
+    UNSET  = 255  // unclaimed; both channels behave as they did before
+};
+
+inline const char* toString(CommandAuthority a) {
+    switch (a) {
+        case CommandAuthority::POLICY: return "POLICY";
+        case CommandAuthority::HUMAN:  return "HUMAN";
+        case CommandAuthority::HOLD:   return "HOLD";
+        default:                       return "UNSET";
+    }
+}
+
 enum class DeviceId : uint8_t {
     LEFT_ARM  = 1,
     RIGHT_ARM = 2,

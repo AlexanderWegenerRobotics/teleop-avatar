@@ -97,6 +97,23 @@ struct ArmLogEntry {
     // ENGAGED), and 0 until the first command arrives. Flat runs mean commands
     // stopped being applied, not that they stopped arriving.
     uint32_t               applied_cmd_sequence;
+    // CommandAuthority for THIS arm (common.hpp): 0 POLICY, 1 HUMAN, 2 HOLD,
+    // 255 UNSET. Appended rather than slotted in beside clutch so a positional
+    // reader of an older file still lines up.
+    //
+    // 255 for the whole file means authority was never requested -- an ordinary
+    // teleoperation or autonomous session, recorded exactly as before. Any
+    // other value means the arm was under explicit authority, and the column is
+    // then the label a DAgger filter cuts on: which segments the operator drove
+    // and which the policy did.
+    //
+    // Cross-check it against `clutch`. The two are produced by different
+    // mechanisms -- this one by the avatar's gate, that one by a byte the
+    // interface put on the wire -- so HUMAN rows must carry clutch 0 and POLICY
+    // rows clutch 1. Rows where they disagree mean the two sides disagreed
+    // about who had the robot, and the labels on that segment cannot be
+    // trusted for training.
+    uint8_t                authority;
 };
 
 // One row per state-thread tick (~200 Hz), written by runStateHandler.
@@ -344,7 +361,7 @@ inline std::string armLogHeader() {
     h += "grasp_state;";
     for (int i = 0; i < 7;  ++i) h += "q_null_ref_" + std::to_string(i) + ";";
     h += "posture_s;posture_cost;posture_margin;posture_swivel;";
-    h += "state;cmd_valid;log_src;grasp_cmd;clutch;applied_cmd_sequence\n";
+    h += "state;cmd_valid;log_src;grasp_cmd;clutch;applied_cmd_sequence;authority\n";
     return h;
 }
 
@@ -373,7 +390,8 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     r += std::to_string(e.log_src) + ";";
     r += std::to_string(e.grasp_cmd) + ";";
     r += std::to_string(e.clutch) + ";";
-    r += std::to_string(e.applied_cmd_sequence) + "\n";
+    r += std::to_string(e.applied_cmd_sequence) + ";";
+    r += std::to_string(e.authority) + "\n";
     return r;
 }
 

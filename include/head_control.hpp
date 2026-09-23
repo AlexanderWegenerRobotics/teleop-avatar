@@ -43,6 +43,22 @@ public:
     Interpolator interpolator_;
     using HeadStream = UdpStream<HeadCommandMsg, HeadStateMsg>;
     std::unique_ptr<HeadStream> transmission_;
+    // Second, optional channel on its own port -- same HeadCommandMsg struct,
+    // unchanged, but pan/tilt are read as ABSOLUTE joint targets instead of
+    // transmission_'s home-relative semantics (which add q0_ on arrival).
+    //
+    // The same split the arms already have (transmission_absolute in
+    // arm_control.hpp), for the same reason: the VR interface naturally speaks
+    // deltas from an origin it captured, while an autonomous policy predicts
+    // absolute joint targets, because absolute is what the logs it trained on
+    // record (head.csv's q/q_cmd are post-q0_). Converting between the two in
+    // the sender meant duplicating q0 into another repo's config, where
+    // nothing could notice it drifting -- and on 2026-09-23 it was simply
+    // missing, so q0 was applied twice and the neck sat 23 degrees too low.
+    //
+    // Config-gated (transmission_absolute in the head's device_config), so a
+    // config without it behaves exactly as before.
+    std::unique_ptr<HeadStream> transmission_absolute_;
     std::unique_ptr<DataLogger<HeadLogEntry>> logger_;
     std::chrono::high_resolution_clock::time_point startTime_;
 

@@ -150,6 +150,12 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         torque_rate_margin_ = device_config["control"]["torque_rate_margin"].as<double>();
     torque_rate_margin_ = std::clamp(torque_rate_margin_, 0.05, 1.0);
 
+    // Authority staleness watchdog; see authority_stale_ms_. Floored well above
+    // one state-thread period so a single late packet can never reclaim an arm.
+    if (device_config["control"]["authority_stale_ms"])
+        authority_stale_ms_ = device_config["control"]["authority_stale_ms"].as<double>();
+    authority_stale_ms_ = std::max(authority_stale_ms_, 50.0);
+
     kp_joint_ = yamlToVector<7>(device_config["control"]["kp_joint"]);
     kd_joint_ = yamlToVector<7>(device_config["control"]["kd_joint"]);
 
@@ -502,6 +508,7 @@ ArmLogEntry ArmControl::buildArmLogEntry(const franka::RobotState& rs,
     e.grasp_cmd     = desired_gripper_closed_.load() ? 1 : 0;
     e.clutch        = clutch_active_.load() ? 1 : 0;
     e.applied_cmd_sequence = applied_cmd_seq_.load(std::memory_order_relaxed);
+    e.authority     = static_cast<uint8_t>(authority_.load(std::memory_order_relaxed));
 
     std::copy(rs.q.begin(),     rs.q.end(),     e.q.begin());
     std::copy(rs.dq.begin(),    rs.dq.end(),    e.dq.begin());
@@ -566,18 +573,58 @@ void ArmControl::runStateHandler(){
 
     while(bRunning){
 
+        // ── Command authority gate ───────────────────────────────────────────
+        // Both channels are drained every cycle so a non-authoritative sender
+        // cannot back up its socket, but only the authoritative one is allowed
+        // to reach the target OR the gripper.
+        //
+        // The gripper matters as much as the pose and is a separate code path:
+        // desired_gripper_closed_ was stored unconditionally from whichever
+        // packet arrived last, independently of applyOperatorCommand's
+        // pose-priority decision. So a VR-only cycle set the gripper from the
+        // operator's grip toggle even while the absolute channel was driving
+        // the arm. Gating the pose alone would leave that in place.
+        //
+        // While UNSET nothing is gated and this is exactly the previous
+        // behaviour -- see CommandAuthority in common.hpp for why that matters.
+        const CommandAuthority auth = authority_.load(std::memory_order_relaxed);
+        const bool enforce     = (auth != CommandAuthority::UNSET);
+        const bool vr_allowed  = !enforce || auth == CommandAuthority::HUMAN;
+        const bool abs_allowed = !enforce || auth == CommandAuthority::POLICY;
+
         if (transmission_ && transmission_->hasNew()) {
-            cmd = transmission_->getRecvData();
-            has_cmd = true;
-            desired_gripper_closed_.store(cmd.gripper > 0.5f);
-            clutch_active_.store(cmd.clutch != 0);
+            const ArmCommandMsg m = transmission_->getRecvData();
+            // Clutch is a property of the OPERATOR, not of whoever holds the
+            // arm, so it is recorded from the VR stream whether or not that
+            // stream is driving. That is what makes the log self-checking:
+            // authority HUMAN must coincide with clutch 0, and any row where it
+            // does not means the interface and the avatar disagree about who
+            // has the robot.
+            clutch_active_.store(m.clutch != 0);
+            if (vr_allowed) {
+                cmd = m;
+                has_cmd = true;
+                desired_gripper_closed_.store(m.gripper > 0.5f);
+                authority_last_cmd_ns_.store(timestamp_ns(), std::memory_order_relaxed);
+            } else {
+                dropped_vr_cmds_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         if (transmission_absolute_ && transmission_absolute_->hasNew()) {
-            cmd_abs = transmission_absolute_->getRecvData();
-            has_cmd_abs = true;
-            desired_gripper_closed_.store(cmd_abs.gripper > 0.5f);
-            clutch_active_.store(cmd_abs.clutch != 0);
+            const ArmCommandMsg m = transmission_absolute_->getRecvData();
+            // Only while unenforced, to keep pre-authority runs byte-identical.
+            // Once enforcement is on, the line above is the single writer.
+            if (!enforce) clutch_active_.store(m.clutch != 0);
+            if (abs_allowed) {
+                cmd_abs = m;
+                has_cmd_abs = true;
+                desired_gripper_closed_.store(m.gripper > 0.5f);
+                authority_last_cmd_ns_.store(timestamp_ns(), std::memory_order_relaxed);
+            } else {
+                dropped_abs_cmds_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
+        updateAuthorityWatchdog();
 
         // ── Early wake ───────────────────────────────────────────────────────
         // A command landed before the periodic deadline. Push it straight
@@ -755,6 +802,27 @@ void ArmControl::runStateHandler(){
             // difference it against its own send timestamp (see common.hpp).
             state_msg.applied_cmd_sequence = applied_cmd_seq_.load(std::memory_order_relaxed);
             transmission_->setSendData(state_msg);
+            // Publish the SAME state on the absolute channel as well.
+            //
+            // Every outbound channel here is point-to-point: UdpTransport holds
+            // one remote_ip/remote_port from the config and sends there. So
+            // transmission_ can serve exactly one client, and the VR interface
+            // and the orchestrator both need arm state -- the interface to know
+            // the arm is alive at all, the orchestrator because ArmStateMsg IS
+            // the policy's proprio.
+            //
+            // With both running they collided on transmission_'s send_port and
+            // whichever process bound it first starved the other. The symptom is
+            // not subtle but it is very indirect: the interface reports the
+            // avatar as not alive, stays OFFLINE, and locks START and ENGAGE.
+            //
+            // transmission_absolute_ already exists for the orchestrator (it is
+            // how absolute world-frame commands come IN), it already carries the
+            // same ArmStateMsg type, and it has its own ports. So the two
+            // clients get a channel each and nothing has to learn to fan out.
+            // Costs one 117-byte datagram per state tick to a port nobody may be
+            // listening on, which UDP discards.
+            if (transmission_absolute_) transmission_absolute_->setSendData(state_msg);
         }
 
         const bool grasp_allowed = (state_ == SysState::ENGAGED || state_ == SysState::PAUSED);
@@ -975,6 +1043,7 @@ void ArmControl::updateRecovery() {
         state_ = SysState::RECOVERING;
         recovery_start_time_ = std::chrono::steady_clock::now();
         if (transmission_) transmission_->setState(state_);
+        if (transmission_absolute_) transmission_absolute_->setState(state_);
         std::cout << "[INFO]: " << name_ << " recovery motion started." << std::endl;
         return;
     }
@@ -1015,6 +1084,7 @@ void ArmControl::updateRecovery() {
                 recovery_.setMode(RecoveryMode::NONE);
                 state_ = SysState::AWAITING;
                 if (transmission_) transmission_->setState(state_);
+                if (transmission_absolute_) transmission_absolute_->setState(state_);
                 std::cout << "[INFO]: " << name_ << " recovery complete, awaiting engagement." << std::endl;
             }
             break;
@@ -1087,6 +1157,7 @@ void ArmControl::updateStateMachine(SysState cmd_state){
     }
     if (state_ != prev && transmission_) {
         transmission_->setState(state_);
+        if (transmission_absolute_) transmission_absolute_->setState(state_);
     }
 }
 
@@ -1253,6 +1324,7 @@ void ArmControl::runControlHandler(){
     auto enterFaultAndWaitForReset = [this, &last_fault_code]() {
         state_ = SysState::FAULT;
         if (transmission_) transmission_->setState(state_, last_fault_code);
+        if (transmission_absolute_) transmission_absolute_->setState(state_, last_fault_code);
         std::cout << "[WARN] " << name_
                   << ": control loop faulted - holding in FAULT until an operator reset "
                      "(arm_reset / reset_all)." << std::endl;
@@ -1355,6 +1427,7 @@ void ArmControl::runControlHandler(){
             // operator-reset path that FAULT triggers. It restores itself
             // below once control() is successfully re-entered.
             if (transmission_) transmission_->setState(SysState::RECOVERING, last_fault_code);
+            if (transmission_absolute_) transmission_absolute_->setState(SysState::RECOVERING, last_fault_code);
 
             try {
                 robot->automaticErrorRecovery();
@@ -1373,6 +1446,7 @@ void ArmControl::runControlHandler(){
                 // RECOVERING published above so the interface stops warning,
                 // then fall through and re-enter control().
                 if (transmission_) transmission_->setState(state_);
+                if (transmission_absolute_) transmission_absolute_->setState(state_);
             }
         } catch (const franka::Exception& e) {
             // Non-control franka errors (e.g. connection-level) aren't something a
@@ -1839,6 +1913,66 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 void ArmControl::reOrigin() {
     std::lock_guard<std::mutex> lock(state_mtx);
     T_origin_ = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
+}
+
+void ArmControl::setAuthority(CommandAuthority requested, const std::string& source) {
+    const CommandAuthority prev = authority_.load(std::memory_order_relaxed);
+    if (prev == requested) {
+        // A repeat is a heartbeat, not a transition. Stamping it here is what
+        // lets the interface hold an arm through a quiet stretch without the
+        // watchdog reclaiming it.
+        authority_last_cmd_ns_.store(timestamp_ns(), std::memory_order_relaxed);
+        return;
+    }
+
+    // Re-anchor BEFORE opening the VR gate, never after. T_origin_ is what the
+    // operator's delta composes against; if a packet were applied between the
+    // store and the re-origin it would compose against the old origin and step
+    // the arm by exactly the distance the policy moved it.
+    //
+    // reOrigin() latches the MEASURED pose, so it silently discards the
+    // commanded-minus-measured tracking error. That error is bounded by
+    // safety.max_target_lead (0.05 m), and it collapses toward zero while the
+    // arm decelerates -- which is the argument for passing through HOLD rather
+    // than going POLICY -> HUMAN directly.
+    if (requested == CommandAuthority::HUMAN) reOrigin();
+
+    authority_.store(requested, std::memory_order_relaxed);
+    // ZERO, not now(). 0 means "the new holder has not sent anything yet", which
+    // updateAuthorityWatchdog skips entirely: the countdown starts only once a
+    // command has actually been accepted on the newly-authoritative channel.
+    //
+    // Stamping now() here deadlocked the handover, and the event log showed it
+    // exactly. RESUME granted POLICY; the orchestrator had not sent an absolute
+    // command yet, because it does not send until it SEES POLICY; 250 ms later
+    // the watchdog took the arm back to HOLD. Every subsequent press reported
+    // "from=HOLD" and nothing ever stuck.
+    //
+    // The watchdog's actual job -- a holder that WAS sending and then died must
+    // lose the arm -- is unaffected. A holder that has never sent keeps an arm
+    // it is not moving, and the operator can still take it with the trigger.
+    authority_last_cmd_ns_.store(0, std::memory_order_relaxed);
+
+    std::cout << "[AVATAR-INFO]: " << name_ << " authority " << toString(prev)
+              << " -> " << toString(requested) << " (" << source << ")" << std::endl;
+}
+
+void ArmControl::updateAuthorityWatchdog() {
+    const CommandAuthority auth = authority_.load(std::memory_order_relaxed);
+    // UNSET means the feature is not in use; HOLD is already the safe state.
+    if (auth != CommandAuthority::HUMAN && auth != CommandAuthority::POLICY) return;
+
+    const uint64_t last = authority_last_cmd_ns_.load(std::memory_order_relaxed);
+    if (last == 0) return;
+
+    const uint64_t now = timestamp_ns();
+    if (now <= last) return;
+    if ((now - last) * 1e-6 <= authority_stale_ms_) return;
+
+    authority_.store(CommandAuthority::HOLD, std::memory_order_relaxed);
+    authority_last_cmd_ns_.store(now, std::memory_order_relaxed);
+    std::cout << "[AVATAR-WARN]: " << name_ << " authority " << toString(auth)
+              << " -> HOLD (no command for >" << authority_stale_ms_ << " ms)" << std::endl;
 }
 
 void ArmControl::latchOriginForEngage(SysState from) {
