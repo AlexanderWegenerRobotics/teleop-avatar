@@ -49,8 +49,8 @@ devices:
     q0: [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
     #max_torque: [87, 87, 87, 87, 12, 12, 12]
     #max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
-    max_torque: [50, 50, 50, 50, 10, 10, 10]
-    max_torque_rate: [600, 600, 600, 600, 600, 600, 600]
+    max_torque: [70, 70, 70, 70, 10, 10, 10]
+    max_torque_rate: [900, 900, 900, 900, 900, 900, 900]
     q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
     q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
     dq_max: [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]
@@ -72,10 +72,12 @@ devices:
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
 
     control:
-      kp_joint: [600, 600, 600, 600, 250, 150, 50]
-      kd_joint: [50,  50,  50,  50,  30,  25,  15]
-      kp_cart: [1000, 1000, 1000, 125, 125, 125]
-      kd_cart: [50, 50, 50, 15, 15, 15]
+      kp_joint: [600, 600, 600, 600, 200, 150, 50]
+      kd_joint: [50,  50,  50,  50,  18,  25,  15]
+      #kp_cart: [1000, 1000, 1000, 125, 125, 125]
+      #kd_cart: [50, 50, 50, 15, 15, 15]
+      kp_cart: [600, 600, 600, 50, 50, 50]
+      kd_cart: [35, 35, 35, 12, 12, 12]
       eta_lin: 0.9
       eta_rot: 0.9
       ff_force_max: 30.0     # N
@@ -103,8 +105,8 @@ devices:
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 0.5 #1.0
-      max_command_angular_velocity: 1.0 #4.0
+      max_command_velocity: 0.8  #1.0
+      max_command_angular_velocity: 2.0 #4.0
       max_command_acceleration: 5.0          # m/s^2
       max_command_angular_acceleration: 25.0 # rad/s^2
       max_target_lead: 0.05

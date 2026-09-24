@@ -93,20 +93,9 @@ private:
     MotionGenerator motion_gen_;
     using ArmStream = UdpStream<ArmCommandMsg, ArmStateMsg>;
     std::unique_ptr<ArmStream> transmission_;
-    // Second, optional channel on its own port -- same ArmCommandMsg struct,
-    // unchanged, but interpreted as an absolute world-frame pose (see
-    // worldAbsoluteToBase) instead of transmission_'s delta-from-origin/VR
-    // semantics. Config-gated (transmission_absolute in device_config) so
-    // nothing sending on the existing port/struct is affected.
     std::unique_ptr<ArmStream> transmission_absolute_;
     std::unique_ptr<DataLogger<ArmLogEntry>> logger_;
-    // Written from the STATE thread, so it survives everything that kills the
-    // control thread. See ArmStateTraceEntry in data_logger.hpp for why
-    // arm.csv alone is not sufficient.
     std::unique_ptr<DataLogger<ArmStateTraceEntry>> state_trace_;
-    // Bumped every time robot->control() is entered. A jump in this column
-    // with no corresponding gap in arm.csv means a fault was caught and
-    // retried silently; the pair of them tells the whole story.
     std::atomic<uint32_t> control_loop_entries_{0};
     std::atomic<uint32_t> fault_streak_{0};
     std::chrono::high_resolution_clock::time_point startTime_;
@@ -115,29 +104,14 @@ private:
 private:
     void runControlHandler();
     void runStateHandler();
-    // Single definition of an arm log row, shared by the two writers so they
-    // can never drift apart. log_src = 0 is the control callback and fills the
-    // command columns from motion_gen_; log_src = 1 is the state-thread
-    // fallback, which runs only while the control loop is down and therefore
-    // reports no command and no torque.
-    ArmLogEntry buildArmLogEntry(const franka::RobotState& rs,
-                                 const Vector7& tau_cmd,
-                                 uint8_t log_src);
-    // Command -> target pose, extracted from the ENGAGED tick so the state
-    // thread can also run it on an early wake (see waitForCommandOrDeadline)
-    // without dragging the rest of the tick -- state machine, telemetry,
-    // gripper, trace -- up to the command rate.
-    void applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommandMsg& cmd_abs,
-                              bool& has_cmd, bool& has_cmd_abs,
-                              Eigen::Quaterniond& prev_cmd_quat);
-    // Sleep until the periodic deadline, or return early the moment a command
-    // lands. Called with the deadline the state thread is pacing to.
+    ArmLogEntry buildArmLogEntry(const franka::RobotState& rs, const Vector7& tau_cmd, uint8_t log_src);
+    void applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommandMsg& cmd_abs, bool& has_cmd, bool& has_cmd_abs, Eigen::Quaterniond& prev_cmd_quat);
     void waitForCommandOrDeadline(const std::chrono::steady_clock::time_point& deadline);
-    // Fired from the UdpStream receive threads. Keep it allocation-free.
     void notifyCommandArrived();
     Vector7 jointImpedanceControl(const franka::RobotState& rs);
     Vector7 cartesianImpedanceControl(const franka::RobotState& rs);
     Eigen::Matrix<double, 6, 1> feedforwardWrench(const Eigen::Matrix<double, 6, 1>& v_ref) const;
+    Eigen::Matrix<double, 6, 1> filteredReferenceVelocity();
     void updateStateMachine(SysState cmd_state);
     void updateRecovery();
     bool isHome();
@@ -147,20 +121,10 @@ private:
     void applySelfCollisionFilter(Eigen::Isometry3d& T_target);
     void validateTargetPose(Eigen::Isometry3d& T_target);
     Vector7 jointLimitAvoidanceTorque(const Vector7& q, const Vector7& dq);
-    // On every ENGAGED entry: hold target and T_origin_ become one and the same
-    // pose, matching the interface zeroing its deltas on Engage. From PAUSED the
-    // arm has been floating, so the measured pose is used; otherwise the current
-    // hold target, which is what the arm is already being pulled to.
     void latchOriginForEngage(SysState from);
-    // Re-seed the posture reference from the measured configuration. Called on
-    // every entry into a state that uses the nullspace reference.
     void resetPostureFromMeasured();
     void applyGripper(bool close);
     void updateGraspConfirmation(double width);
-    // Drops an arm to HOLD when the channel that holds authority has gone
-    // quiet. Without it, an interface that dies mid-HUMAN leaves this arm
-    // claimed by a process that no longer exists, and the policy can never take
-    // it back. Runs once per state-thread cycle; no-op while UNSET or HOLD.
     void updateAuthorityWatchdog();
 
 private:
@@ -173,35 +137,13 @@ private:
     Vector7 q0_, q_min_, q_max_;
     Vector7 tau_max_;
     Vector7 tau_rate_max_;
-    // Fraction of max_torque_rate the limiter is allowed to actually use. This is
-    // headroom against host jitter, not a physical constant: at 1.0 we command
-    // exactly the FCI limit and any timing wobble reads as a violation. Tunable
-    // per deployment via control.torque_rate_margin rather than baked in.
     double  torque_rate_margin_{0.9};
-    // CPU cores for this arm's two threads (see rt_thread.hpp). Defaults preserve
-    // the previous hard-coded layout; overridable via the rt: block because core 0
-    // is where most Linux hosts land their IRQs.
+
     int     rt_control_core_{0};
     int     rt_state_core_{1};
     mutable std::mutex state_mtx;
     franka::RobotState current_state;
-    // Wall clock at which runControlHandler last wrote current_state. Written
-    // ONLY by the control thread, under state_mtx, and copied verbatim into
-    // outgoing ArmStateMsg headers as sample_time_ns.
-    //
-    // The 200 Hz state thread publishes telemetry independently of the 1 kHz
-    // control thread. If the control thread stops -- fault, recovery, or the
-    // blocking wait in enterFaultAndWaitForReset -- publishing continues with
-    // fresh send timestamps and increasing sequence numbers, so nothing
-    // downstream can tell that the payload has stopped changing. This stamp
-    // is the one field that goes stale, and it is what the operator interface
-    // alarms on. See MsgHeader in common.hpp.
     std::atomic<uint64_t> state_sample_ns_{0};
-    // header.sequence of the last operator command actually acted on, echoed
-    // in outgoing ArmStateMsg so the interface can measure round-trip latency
-    // on a single clock. Written by the state thread, read by the same thread;
-    // atomic only because the value crosses into the transmission snapshot.
-    // 0 until the first command is consumed.
     std::atomic<uint32_t> applied_cmd_seq_{0};
     std::unique_ptr<franka::Model> franka_owned_model_;
     Eigen::Isometry3d T_origin_;
@@ -213,25 +155,11 @@ private:
     std::chrono::steady_clock::time_point recovery_defer_start_;
     std::atomic<double> gripper_width_{0.0};
     std::atomic<bool>   desired_gripper_closed_{false};
-    // Latest ArmCommandMsg::clutch. Logged only -- nothing in the control path
-    // acts on it, because a clutched operator still sends a valid held pose and
-    // the avatar should keep tracking it. Defaults to clutched, matching the
-    // interface's own initial state, so the window before the first command is
-    // not mistaken for active demonstration.
     std::atomic<bool>   clutch_active_{true};
-    // ── Command authority (see common.hpp) ──────────────────────────────────
     std::atomic<CommandAuthority> authority_{CommandAuthority::UNSET};
     std::atomic<uint64_t> dropped_vr_cmds_{0};
     std::atomic<uint64_t> dropped_abs_cmds_{0};
-    // timestamp_ns() of the last command accepted on the AUTHORITATIVE channel,
-    // or of the last authority change. 0 = nothing yet, which the watchdog
-    // treats as "not started" rather than "infinitely stale".
     std::atomic<uint64_t> authority_last_cmd_ns_{0};
-    // How long the authoritative channel may go quiet before the arm drops to
-    // HOLD. 250 ms is five orchestrator ticks (20 Hz) or thirty VR commands
-    // (120 Hz) -- long enough that neither sender trips it in normal operation,
-    // short enough that a dead sender does not keep the arm for a whole episode.
-    // Overridable via control.authority_stale_ms.
     double              authority_stale_ms_{250.0};
     std::atomic<bool>   grasp_allowed_{false};
     std::atomic<bool>   gripper_busy_{false};
@@ -247,12 +175,6 @@ private:
     std::atomic<GraspState> grasp_state_{GraspState::OPEN};
 
     ControlMode control_mode_ = ControlMode::CARTESIAN_IMPEDANCE;
-
-    // ── State-thread rate ────────────────────────────────────────────────────
-    // One source of truth for the loop period AND the dt handed to stepIk. Those
-    // were independently hardcoded (200 Hz period, dt = 1/500), so the IK
-    // reference integrated at 40% of the commanded velocity. Overridable via
-    // rt.state_rate_hz.
     double state_rate_hz_{200.0};
 
     // ── Early-wake plumbing ──────────────────────────────────────────────────
@@ -262,21 +184,13 @@ private:
 
 private:
     Vector7 kp_joint_, kd_joint_, kp_joint_limit_, kd_joint_limit_;
-    // Reduced-stiffness gains used only by the IDLE hold. Softer than kp_joint_
-    // so that a bad latch fails gently during hardware bringup.
     Vector7 kp_idle_, kd_idle_;
-    // False until the IDLE hold target has actually been latched from a real
-    // robot state. Guards jointImpedanceControl against running with an empty or
-    // stale motion_gen_ joint buffer -- getCurrentJoint() returns ZERO when the
-    // buffer is empty, which would command a full-speed move to q = 0.
     std::atomic<bool> idle_hold_valid_{false};
     Eigen::Matrix<double, 6, 1> kp_cart_, kd_cart_;
-    // Velocity feedforward ratio: F += eta * kd * v_ref, so the steady-state lag
-    // becomes (1 - eta) * kd/kp. Separate per block because the rotational
-    // feedforward saturates the FR3 wrist long before the translational one does.
-    // Both default to 0, i.e. the previous position-only behaviour.
     double eta_lin_{0.0}, eta_rot_{0.0};
     double ff_force_max_{30.0}, ff_torque_max_{8.0};
+    double ff_filter_hz_{20.0};
+    Eigen::Matrix<double, 6, 1> v_ref_filt_ = Eigen::Matrix<double, 6, 1>::Zero();
     Vector7 kp_null_, kd_null_;
 
     // ── Nullspace posture ────────────────────────────────────────────────────

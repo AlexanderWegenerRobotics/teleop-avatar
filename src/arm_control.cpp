@@ -182,6 +182,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     if (ctrl["eta_rot"])       eta_rot_       = ctrl["eta_rot"].as<double>();
     if (ctrl["ff_force_max"])  ff_force_max_  = ctrl["ff_force_max"].as<double>();
     if (ctrl["ff_torque_max"]) ff_torque_max_ = ctrl["ff_torque_max"].as<double>();
+    if (ctrl["ff_filter_hz"])  ff_filter_hz_  = ctrl["ff_filter_hz"].as<double>();
     eta_lin_ = std::clamp(eta_lin_, 0.0, 1.0);
     eta_rot_ = std::clamp(eta_rot_, 0.0, 1.0);
     if (eta_lin_ > 0.0 || eta_rot_ > 0.0)
@@ -1215,7 +1216,12 @@ void ArmControl::runControlHandler(){
                     break;
             }
 
-            ctrl_torque = tau_prev_ + (ctrl_torque - tau_prev_).cwiseMax(-tau_rate_step).cwiseMin(tau_rate_step);
+#ifdef WITH_FRANKA
+            const Vector7 tau_base = Eigen::Map<const Vector7>(robot_state.tau_J_d.data());
+#else
+            const Vector7 tau_base = tau_prev_;
+#endif
+            ctrl_torque = tau_base + (ctrl_torque - tau_base).cwiseMax(-tau_rate_step).cwiseMin(tau_rate_step);
             ctrl_torque = ctrl_torque.cwiseMax(-tau_max_).cwiseMin(tau_max_);
             tau_prev_ = ctrl_torque;
 
@@ -1255,6 +1261,7 @@ void ArmControl::runControlHandler(){
     // measured pose stops the impedance error from being large to begin with.
     auto rearmFromMeasuredState = [this, &tau_prev_]() {
         tau_prev_.setZero();
+        v_ref_filt_.setZero();
 
         Vector7 q, recovery_goal;
         Eigen::Isometry3d T_ee;
@@ -1391,7 +1398,11 @@ void ArmControl::runControlHandler(){
             // in arm.csv means a fault was absorbed without the operator ever
             // being told.
             control_loop_entries_.fetch_add(1, std::memory_order_relaxed);
+#ifdef WITH_FRANKA
+            robot->control(control_callback, true);
+#else
             robot->control(control_callback);
+#endif
             break;  // clean stop: control_callback set motion_finished from ArmControl::stop()
         } catch (const franka::ControlException& e) {
             const auto now = std::chrono::steady_clock::now();
@@ -1535,7 +1546,7 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Matrix<double, 6, 1> ee_vel = J * dq;
 
     Eigen::Matrix<double, 6, 1> F = kp_cart_.cwiseProduct(error) - kd_cart_.cwiseProduct(ee_vel)
-                                  + feedforwardWrench(motion_gen_.getCurrentCartesianVelocity());
+                                  + feedforwardWrench(filteredReferenceVelocity());
     Vector7 tau_task = J.transpose() * F;
 
     auto mass_array = model->mass(rs);
@@ -1564,6 +1575,14 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
             tau_vel_damp(i) = -80.0 * excess * (dq(i) > 0 ? 1.0 : -1.0);
     }
     return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq) + tau_vel_damp;
+}
+
+Eigen::Matrix<double, 6, 1> ArmControl::filteredReferenceVelocity() {
+    const Eigen::Matrix<double, 6, 1> v = motion_gen_.getCurrentCartesianVelocity();
+    if (ff_filter_hz_ <= 0.0) return v_ref_filt_ = v;
+    const double a = 1.0 - std::exp(-2.0 * M_PI * ff_filter_hz_ * 1e-3);
+    v_ref_filt_ += a * (v - v_ref_filt_);
+    return v_ref_filt_;
 }
 
 Eigen::Matrix<double, 6, 1> ArmControl::feedforwardWrench(
