@@ -16,6 +16,7 @@ cameras:
     eye:          "mono"
     source_type:  "v4l2"
     v4l2_device:  "/dev/video6"
+    v4l2_format:  "mjpeg"
     shm_name:     "avatar_cam"
     fps:           30
     source_width:  1280
