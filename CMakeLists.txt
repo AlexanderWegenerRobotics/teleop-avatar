@@ -292,6 +292,12 @@ if(BUILD_STREAMER)
     if(UNIX AND NOT APPLE)
         target_sources(avatar_pipeline PRIVATE src/pipeline/v4l2_source.cpp)
         target_compile_definitions(avatar_pipeline PRIVATE WITH_V4L2)
+        pkg_check_modules(TURBOJPEG libturbojpeg)
+        if(TURBOJPEG_FOUND)
+            target_compile_definitions(avatar_pipeline PRIVATE WITH_TURBOJPEG)
+            target_include_directories(avatar_pipeline PRIVATE ${TURBOJPEG_INCLUDE_DIRS})
+            target_link_libraries(avatar_pipeline PRIVATE ${TURBOJPEG_LIBRARIES})
+        endif()
     endif()
 
     target_include_directories(avatar_pipeline PRIVATE

@@ -67,6 +67,7 @@ static CameraChannelConfig parseCameraConfig(const YAML::Node& n) {
     c.shm_name         = n["shm_name"].as<std::string>("");
     c.realsense_serial = n["realsense_serial"].as<std::string>("");
     c.v4l2_device      = n["v4l2_device"].as<std::string>("/dev/video0");
+    c.v4l2_format      = n["v4l2_format"].as<std::string>("yuyv");
     c.fps              = n["fps"].as<int>(30);
     c.source_width     = n["source_width"].as<int>(640);
     c.source_height    = n["source_height"].as<int>(480);

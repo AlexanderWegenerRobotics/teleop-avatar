@@ -15,6 +15,10 @@
 #include <stdexcept>
 #include <vector>
 
+#ifdef WITH_TURBOJPEG
+#include <turbojpeg.h>
+#endif
+
 static int xioctl(int fd, unsigned long req, void* arg) {
     // ioctl wrapper that retries on EINTR.
     int r;
@@ -46,11 +50,17 @@ static void yuyvToRgb(const uint8_t* yuyv, uint8_t* rgb, int width, int height) 
     }
 }
 
-V4L2Source::V4L2Source(const std::string& device, int width, int height, int fps)
-    : device_(device), width_(width), height_(height), fps_(fps)
+V4L2Source::V4L2Source(const std::string& device, int width, int height, int fps,
+                       const std::string& format)
+    : device_(device), width_(width), height_(height), fps_(fps), mjpeg_(format == "mjpeg")
 {
+#ifndef WITH_TURBOJPEG
+    if (mjpeg_)
+        throw std::runtime_error("[V4L2Source] v4l2_format mjpeg needs libturbojpeg (apt install libturbojpeg0-dev, rebuild)");
+#endif
     std::cout << "[V4L2Source] configured " << device_
-              << " " << width_ << "x" << height_ << " @ " << fps_ << "fps" << std::endl;
+              << " " << width_ << "x" << height_ << " @ " << fps_ << "fps "
+              << (mjpeg_ ? "MJPEG" : "YUYV") << std::endl;
 }
 
 V4L2Source::~V4L2Source() {
@@ -68,19 +78,32 @@ void V4L2Source::initDevice() {
     fmt.type                = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width       = static_cast<uint32_t>(width_);
     fmt.fmt.pix.height      = static_cast<uint32_t>(height_);
-    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+    fmt.fmt.pix.pixelformat = mjpeg_ ? V4L2_PIX_FMT_MJPEG : V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix.field       = V4L2_FIELD_NONE;
     if (xioctl(fd_, VIDIOC_S_FMT, &fmt) < 0)
         throw std::runtime_error("[V4L2Source] VIDIOC_S_FMT failed: " + std::string(strerror(errno)));
 
     width_  = static_cast<int>(fmt.fmt.pix.width);
     height_ = static_cast<int>(fmt.fmt.pix.height);
+    if (fmt.fmt.pix.pixelformat != (mjpeg_ ? V4L2_PIX_FMT_MJPEG : V4L2_PIX_FMT_YUYV))
+        throw std::runtime_error("[V4L2Source] requested pixel format not supported by " + device_);
 
     v4l2_streamparm parm{};
     parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     parm.parm.capture.timeperframe.numerator   = 1;
     parm.parm.capture.timeperframe.denominator = static_cast<uint32_t>(fps_);
     xioctl(fd_, VIDIOC_S_PARM, &parm);
+    if (xioctl(fd_, VIDIOC_G_PARM, &parm) == 0 && parm.parm.capture.timeperframe.numerator > 0) {
+        const double actual = static_cast<double>(parm.parm.capture.timeperframe.denominator) /
+                              parm.parm.capture.timeperframe.numerator;
+        if (static_cast<int>(actual + 0.5) != fps_)
+            std::cout << "[V4L2Source] WARNING: device runs at " << actual << " fps, requested " << fps_ << std::endl;
+    }
+
+    v4l2_control prio{};
+    prio.id    = V4L2_CID_EXPOSURE_AUTO_PRIORITY;
+    prio.value = 0;
+    xioctl(fd_, VIDIOC_S_CTRL, &prio);
 
     v4l2_requestbuffers req{};
     req.count  = 4;
@@ -119,6 +142,9 @@ void V4L2Source::initDevice() {
         throw std::runtime_error("[V4L2Source] VIDIOC_STREAMON failed");
 
     rgb_buf_.resize(static_cast<size_t>(width_) * height_ * 3);
+#ifdef WITH_TURBOJPEG
+    if (mjpeg_ && !tj_) tj_ = tjInitDecompress();
+#endif
 
     // Sample the CLOCK_MONOTONIC -> CLOCK_REALTIME offset once. VIDIOC_DQBUF gives us
     // a monotonic-clock timestamp per buffer; this offset lets us convert it into
@@ -146,6 +172,9 @@ void V4L2Source::uninitDevice() {
     close(fd_);
     fd_        = -1;
     n_buffers_ = 0;
+#ifdef WITH_TURBOJPEG
+    if (tj_) { tjDestroy(static_cast<tjhandle>(tj_)); tj_ = nullptr; }
+#endif
 }
 
 void V4L2Source::start(FrameCallback cb) {
@@ -189,13 +218,41 @@ void V4L2Source::run() {
             continue;
         }
 
+        for (;;) {
+            fd_set more;
+            FD_ZERO(&more);
+            FD_SET(fd_, &more);
+            timeval zero{};
+            if (select(fd_ + 1, &more, nullptr, nullptr, &zero) <= 0) break;
+            v4l2_buffer newer{};
+            newer.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            newer.memory = V4L2_MEMORY_MMAP;
+            if (xioctl(fd_, VIDIOC_DQBUF, &newer) < 0) break;
+            xioctl(fd_, VIDIOC_QBUF, &buf);
+            buf = newer;
+        }
+
         // buf.timestamp is CLOCK_MONOTONIC-based; translate to system_clock domain.
         int64_t buf_ts_ns = static_cast<int64_t>(buf.timestamp.tv_sec) * 1000000000LL +
                             static_cast<int64_t>(buf.timestamp.tv_usec) * 1000LL;
         uint64_t capture_time_ns = static_cast<uint64_t>(buf_ts_ns + clock_offset_ns_);
 
-        yuyvToRgb(static_cast<const uint8_t*>(buffers_[buf.index]), rgb_buf_.data(), width_, height_);
-        cb_(rgb_buf_.data(), static_cast<uint32_t>(width_), static_cast<uint32_t>(height_), capture_time_ns);
+        bool ok = true;
+        if (mjpeg_) {
+#ifdef WITH_TURBOJPEG
+            ok = tjDecompress2(static_cast<tjhandle>(tj_),
+                               static_cast<const unsigned char*>(buffers_[buf.index]), buf.bytesused,
+                               rgb_buf_.data(), width_, 0, height_, TJPF_RGB, TJFLAG_FASTDCT) == 0;
+            if (!ok && !decode_warned_) {
+                decode_warned_ = true;
+                std::cerr << "[V4L2Source] MJPEG decode failed: " << tjGetErrorStr2(static_cast<tjhandle>(tj_)) << std::endl;
+            }
+#endif
+        } else {
+            yuyvToRgb(static_cast<const uint8_t*>(buffers_[buf.index]), rgb_buf_.data(), width_, height_);
+        }
+        if (ok)
+            cb_(rgb_buf_.data(), static_cast<uint32_t>(width_), static_cast<uint32_t>(height_), capture_time_ns);
         xioctl(fd_, VIDIOC_QBUF, &buf);
     }
 }

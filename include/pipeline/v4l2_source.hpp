@@ -8,7 +8,8 @@
 
 class V4L2Source : public CameraSource {
 public:
-    V4L2Source(const std::string& device, int width, int height, int fps);
+    V4L2Source(const std::string& device, int width, int height, int fps,
+               const std::string& format = "yuyv");
     ~V4L2Source();
 
     void     start(FrameCallback cb) override;
@@ -25,6 +26,9 @@ private:
     int         width_;
     int         height_;
     int         fps_;
+    bool        mjpeg_ = false;
+    void*       tj_    = nullptr;
+    bool        decode_warned_ = false;
 
     int           fd_      = -1;
     void*         buffers_[4]{};

@@ -44,7 +44,8 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
             config_.v4l2_device,
             config_.source_width,
             config_.source_height,
-            config_.fps);
+            config_.fps,
+            config_.v4l2_format);
     #endif
     } else {
         source_ = std::make_unique<MuJoCoSource>(config_.shm_name, config_.fps);
