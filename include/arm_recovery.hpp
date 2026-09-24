@@ -54,6 +54,21 @@ public:
         resume_requested_.store(true);
     }
 
+    bool hasPending() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        return pending_.valid;
+    }
+
+    bool abort() {
+        if (!hasPending() && mode_.load() == RecoveryMode::NONE) return false;
+        abort_requested_.store(true);
+        return true;
+    }
+
+    bool consumeAbort() {
+        return abort_requested_.exchange(false);
+    }
+
     bool isActive() const {
         return mode_.load() != RecoveryMode::NONE;
     }
@@ -121,5 +136,6 @@ private:
     std::atomic<bool>   notify_pending_{false};
     std::atomic<bool>   notified_{false};
     std::atomic<bool>   resume_requested_{false};
+    std::atomic<bool>   abort_requested_{false};
     Vector7 target_q_ = Vector7::Zero();
 };

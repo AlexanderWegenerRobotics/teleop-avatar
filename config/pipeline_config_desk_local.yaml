@@ -14,12 +14,12 @@ episode_listener_port: 7100
 cameras:
   - name:         "desk_cam"
     eye:          "mono"
-    source_type:  "mujoco"
+    source_type:  "v4l2"
+    v4l2_device:  "/dev/video6"
     shm_name:     "avatar_cam"
-    fps:           20
+    fps:           30
     source_width:  1280
-    source_height: 960
-    realsense_serial: ""
+    source_height: 720
 
     stream:
       enabled:            true
@@ -31,7 +31,7 @@ cameras:
       bitrate_kbps:       4000
       fec_percentage:     10
       width:              1280
-      height:             960
+      height:             720
 
     log:
       enabled:    true

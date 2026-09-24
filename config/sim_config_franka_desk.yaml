@@ -6,10 +6,10 @@ simulation:
   timestep: 0.001
   control_frequency: 1000
   model_path: "../models/mujoco/scenes/world_scene.xml"
-  task_config: "../config/tasks/sorting.yaml"
+  task_config: "../config/tasks/FMB_board_1.yaml"
 
 devices:
-  - name: arm
+  - name: arm_left
     model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"
     urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
     root_body: "link0"
@@ -18,11 +18,11 @@ devices:
     #urdf_ee_name: "fr3_link8"
     gripper_actuator: "actuator8"
 
-  - name: hand_arm
+  - name: hand_left
     model_path: "../models/mujoco/robots/franka_fr3/hand.xml"
     root_body: "hand"
     gripper_actuator: "actuator8"
-    attach_to: "arm_fr3_link7"
+    attach_to: "arm_left_fr3_link7"
     attach_offset:
       position: [0, 0, 0.107]
       orientation: [0.9239, 0, 0, -0.3827]
@@ -70,10 +70,10 @@ cameras:
     pos: [0.3, 0.3, 1.9]
     look_at: [0.0, 0.0, 0.4]
     fovy: 90
-
+  
   - name: desk_cam
     enabled: True
     type: fixed
-    pos: [1.6, -1.1, 1.35]
-    look_at: [0.35, 0.0, 0.95]
+    pos: [0.0, -0.45, 1.50]
+    look_at: [0.70, 0.05, 0.72]
     fovy: 60

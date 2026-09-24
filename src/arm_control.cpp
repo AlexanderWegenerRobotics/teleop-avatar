@@ -985,6 +985,20 @@ void ArmControl::applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommand
 }
 
 void ArmControl::updateRecovery() {
+    if (recovery_.consumeAbort() && state_ != SysState::FAULT) {
+        recovery_.consumePending();
+        recovery_deferred_ = false;
+        if (state_ == SysState::RECOVERING) {
+            recovery_.setMode(RecoveryMode::NONE);
+            idle_hold_valid_.store(false, std::memory_order_release);
+            state_ = SysState::IDLE;
+            if (transmission_) transmission_->setState(state_);
+            if (transmission_absolute_) transmission_absolute_->setState(state_);
+            std::cout << "[INFO]: " << name_ << " recovery aborted, holding in IDLE." << std::endl;
+        }
+        return;
+    }
+
     RecoveryRequest req = recovery_.consumePending();
     if (req.valid) {
         Vector7 q_current, dq_current;
@@ -1100,6 +1114,13 @@ void ArmControl::updateStateMachine(SysState cmd_state){
     SysState prev = state_;
     if(cmd_state == SysState::STOP){
         state_ = SysState::STOP;
+    }
+    if (state_ == SysState::FAULT) {
+        if (cmd_state == SysState::HOMING && !recovery_.isActive() && !recovery_.hasPending()) {
+            recovery_.requestRecovery(RecoveryTrigger::OPERATOR_RESET, q0_);
+            std::cout << "[INFO]: " << name_ << " homing requested while faulted - recovering to q0." << std::endl;
+        }
+        return;
     }
     switch (state_) {
         case SysState::IDLE:

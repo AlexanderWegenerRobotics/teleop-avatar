@@ -25,7 +25,7 @@ avatar:
     frequency: 100
 
 devices:
-  - name: arm
+  - name: arm_left
     type: arm
     enabled: True
     franka_ip: "192.168.3.100"
@@ -137,3 +137,10 @@ devices:
       a_max:      15.0
       gamma:      0.05
       wtask:      [1, 1, 1, 1, 1, 1]
+
+  - name: hand_left
+    type: gripper
+    enabled: True
+    base_pose:
+      position: [0, 0, 0]
+      orientation: [1, 0, 0, 0]

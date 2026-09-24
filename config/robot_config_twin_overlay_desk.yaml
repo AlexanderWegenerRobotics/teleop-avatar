@@ -7,7 +7,7 @@ avatar:
     port: 8100
 
 devices:
-  - name: arm
+  - name: arm_left
     transmission:
       send_port:    8901   # base: 8001
       receive_port: 7901   # base: 7001

@@ -496,6 +496,13 @@ void Avatar::start(){
     auto loop_start_time = std::chrono::high_resolution_clock::now();
 
     SysState prev_state = SysState::IDLE;
+    SysState prev_cmd_state = cmd_requested_.load();
+    auto abortRecoveries = [this]() {
+        bool any = reset_all_pending_.exchange(false);
+        for (auto& arm : arm_instances)
+            any = arm->recovery().abort() || any;
+        if (any) std::cout << "[AVATAR-INFO]: Stop requested, arm recovery aborted." << std::endl;
+    };
     state_ = SysState::IDLE;
     if (cmd_channel_) cmd_channel_->setState(SysState::IDLE);
     auto last_heartbeat = std::chrono::steady_clock::now();
@@ -509,10 +516,14 @@ void Avatar::start(){
         if (reconciler_) reconciler_->applyPendingCorrection();
 
         SysState cmd_state = cmd_requested_.load();
+        if ((cmd_state == SysState::IDLE || cmd_state == SysState::STOP) && cmd_state != prev_cmd_state)
+            abortRecoveries();
+        prev_cmd_state = cmd_state;
 
         if (cmd_channel_ && !cmd_channel_->isAlive()) {
             if (state_ != SysState::IDLE && state_ != SysState::OFFLINE) {
                 std::cout << "[AVATAR-WARN]: Operator connection lost, reverting to IDLE." << std::endl;
+                abortRecoveries();
                 requestAllDevices(SysState::IDLE);
                 state_ = SysState::IDLE;
                 cmd_requested_.store(SysState::IDLE);

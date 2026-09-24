@@ -19,7 +19,7 @@ avatar:
     beta: 0.1
 
 devices:
-  - name: arm
+  - name: arm_left
     type: arm
     enabled: True
     franka_ip: "172.16.0.2"
@@ -46,7 +46,7 @@ devices:
       - [1,  0,  0]
       - [0, -1,  0]
       - [0,  0, -1]
-    q0: [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+    q0: [0.0, -0.4, 0.0, -2.4, 0.0, 2.0, 0.785]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
     q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
@@ -58,21 +58,21 @@ devices:
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
       kp_idle:  [240, 240, 240, 240, 100,  60,  20]
       kd_idle:  [32,  32,  32,  32,  19,  16,   9]
-      kp_cart: [1000, 1000, 1000, 125, 125, 125]
-      kd_cart: [50, 50, 50, 15, 15, 15]
+      kp_cart: [800, 800, 800, 40, 40, 40]
+      kd_cart: [40, 40, 40, 12, 12, 12]
       eta_lin: 0.9
       eta_rot: 0.9
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0     # Nm
-      kp_null: [20, 20, 20, 20, 8, 8, 8]
-      kd_null: [2, 2, 2, 2, 1, 1, 1]
+      kp_null: [40, 40, 40, 40, 8, 8, 8]
+      kd_null: [3, 3, 3, 3, 1, 1, 1]
       posture:
         enabled: true
         window_rad: 0.30
         samples: 7
         lead_rad: 0.15
         filter_tau_s: 0.20
-        margin_rad: 0.30
+        margin_rad: 0.25
         manip_floor: 0.0
         swivel_offset_deg: 0.0
         k_height: 0.0
@@ -118,3 +118,10 @@ devices:
       a_max:      15.0
       gamma:      0.05
       wtask:      [1, 1, 1, 1, 1, 1]
+
+  - name: hand_left
+    type: gripper
+    enabled: True
+    base_pose:
+      position: [0, 0, 0]
+      orientation: [1, 0, 0, 0]
