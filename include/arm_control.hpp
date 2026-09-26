@@ -113,6 +113,11 @@ private:
     Vector7 cartesianImpedanceControl(const franka::RobotState& rs);
     Eigen::Matrix<double, 6, 1> feedforwardWrench(const Eigen::Matrix<double, 6, 1>& v_ref) const;
     Eigen::Matrix<double, 6, 1> filteredReferenceVelocity();
+    // Joint friction model (sigmoid form, supervisor's model / Gaz et al. 2019):
+    // tau_f(dq) = fp1 / (1 + exp(-fp2 (dq + fp3))) - fp1 / (1 + exp(-fp2 fp3)).
+    // Zero at dq = 0, saturating at roughly +-fp1/2. Returns the torque needed
+    // to overcome friction, so it is ADDED to the command.
+    Vector7 frictionTorque(const Vector7& dq) const;
     void updateStateMachine(SysState cmd_state);
     void updateRecovery();
     bool isHome();
@@ -194,6 +199,32 @@ private:
     double eta_lin_{0.0}, eta_rot_{0.0};
     double ff_force_max_{30.0}, ff_torque_max_{8.0};
     double ff_filter_hz_{20.0};
+
+    // ── Joint friction feedforward ───────────────────────────────────────────
+    // Config: control.friction (see robot_config_*.yaml). Off unless enabled.
+    // Default source is the REFERENCE joint velocity dq_ref = J_pinv * v_ref
+    // (the same filtered reference twist the eta feedforward uses), not the
+    // measured dq: compensating on measured velocity is positive velocity
+    // feedback (moving faster -> more push -> faster), which the wrist, already
+    // prone to a limit cycle, does not need. On the reference it can only push
+    // along the commanded motion and adds nothing to the closed loop.
+    // fp1..fp3 defaults are the Panda identification (Gaz et al. 2019), handed
+    // over as the starting point; FR3 friction is similar but not identical,
+    // hence scale.
+    struct FrictionConfig {
+        bool    enabled      = false;
+        bool    use_measured = false;   // source: "reference" (default) | "measured"
+        double  scale        = 0.5;
+        Vector7 mask         = (Vector7() << 1, 1, 1, 1, 0, 0, 0).finished();
+        Vector7 max_torque   = (Vector7() << 2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0).finished();
+        Vector7 fp1 = (Vector7() << 0.54615, 0.87224, 0.64068, 1.2794, 0.83904, 0.30301, 0.56489).finished();
+        Vector7 fp2 = (Vector7() << 5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336).finished();
+        Vector7 fp3 = (Vector7() << 0.039533, 0.025882, -0.04607, 0.036194, 0.026226, -0.021047, 0.0035526).finished();
+    } friction_cfg_;
+    // Written by the control thread in cartesianImpedanceControl, zeroed every
+    // control tick before the state switch, read by buildArmLogEntry on the same
+    // thread (log_src 0). Never touched by the state thread.
+    Vector7 tau_friction_ = Vector7::Zero();
     Eigen::Matrix<double, 6, 1> v_ref_filt_ = Eigen::Matrix<double, 6, 1>::Zero();
     Vector7 kp_null_, kd_null_;
 

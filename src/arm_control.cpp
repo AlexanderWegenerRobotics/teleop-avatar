@@ -183,6 +183,23 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     if (ctrl["ff_force_max"])  ff_force_max_  = ctrl["ff_force_max"].as<double>();
     if (ctrl["ff_torque_max"]) ff_torque_max_ = ctrl["ff_torque_max"].as<double>();
     if (ctrl["ff_filter_hz"])  ff_filter_hz_  = ctrl["ff_filter_hz"].as<double>();
+    if (ctrl["friction"]) {
+        const YAML::Node f = ctrl["friction"];
+        if (f["enabled"])    friction_cfg_.enabled      = f["enabled"].as<bool>();
+        if (f["source"])     friction_cfg_.use_measured = (f["source"].as<std::string>() == "measured");
+        if (f["scale"])      friction_cfg_.scale        = std::clamp(f["scale"].as<double>(), 0.0, 1.5);
+        if (f["joint_mask"]) friction_cfg_.mask         = yamlToVector<7>(f["joint_mask"]);
+        if (f["max_torque"]) friction_cfg_.max_torque   = yamlToVector<7>(f["max_torque"]).cwiseAbs();
+        if (f["fp1"])        friction_cfg_.fp1          = yamlToVector<7>(f["fp1"]);
+        if (f["fp2"])        friction_cfg_.fp2          = yamlToVector<7>(f["fp2"]);
+        if (f["fp3"])        friction_cfg_.fp3          = yamlToVector<7>(f["fp3"]);
+        if (friction_cfg_.enabled)
+            std::cout << "[INFO] " << name_ << ": friction feedforward ON, source="
+                      << (friction_cfg_.use_measured ? "measured dq" : "reference dq")
+                      << " scale=" << friction_cfg_.scale
+                      << " mask=[" << friction_cfg_.mask.transpose() << "]"
+                      << " clamp=[" << friction_cfg_.max_torque.transpose() << "] Nm" << std::endl;
+    }
     eta_lin_ = std::clamp(eta_lin_, 0.0, 1.0);
     eta_rot_ = std::clamp(eta_rot_, 0.0, 1.0);
     if (eta_lin_ > 0.0 || eta_rot_ > 0.0)
@@ -543,6 +560,10 @@ ArmLogEntry ArmControl::buildArmLogEntry(const franka::RobotState& rs,
     // instead of guessing at one. Zero in fallback rows, which is literally
     // true -- no control loop is running to command anything.
     Eigen::Map<Vector7>(e.tau_cmd.data()) = tau_cmd;
+    // Friction feedforward contained in tau_cmd (pre rate-limit). Zero in
+    // fallback rows and whenever the feature is off.
+    if (log_src == 0)
+        Eigen::Map<Vector7>(e.tau_friction.data()) = tau_friction_;
 
     // posture_snap_ is written by the control thread every tick. Reading it
     // from the state thread would be a race for no benefit, and it is stale by
@@ -1227,6 +1248,7 @@ void ArmControl::runControlHandler(){
                 state_sample_ns_.store(timestamp_ns(), std::memory_order_relaxed);
             }
             Vector7 ctrl_torque = Vector7::Zero();
+            tau_friction_.setZero();   // only cartesianImpedanceControl sets it
 
             switch(state_){
                 case SysState::HOMING:
@@ -1588,8 +1610,10 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
 
     Eigen::Matrix<double, 6, 1> ee_vel = J * dq;
 
+    // Evaluated once per tick: filteredReferenceVelocity() advances the filter state.
+    const Eigen::Matrix<double, 6, 1> v_ref = filteredReferenceVelocity();
     Eigen::Matrix<double, 6, 1> F = kp_cart_.cwiseProduct(error) - kd_cart_.cwiseProduct(ee_vel)
-                                  + feedforwardWrench(filteredReferenceVelocity());
+                                  + feedforwardWrench(v_ref);
     Vector7 tau_task = J.transpose() * F;
 
     auto mass_array = model->mass(rs);
@@ -1609,6 +1633,16 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     const Vector7& q_null_ref = posture_snap_.valid ? posture_snap_.q_ref : q0_;
     Vector7 tau_null = N * (kp_null_.cwiseProduct(q_null_ref - q) - kd_null_.cwiseProduct(dq));
 
+    // Joint friction feedforward. dq_ref maps the reference twist into joint
+    // space with the same (damped, dynamically consistent) inverse used for the
+    // nullspace projector above; it is zero whenever the reference holds, so
+    // AWAITING and a clutched/idle operator get no friction torque at all.
+    if (friction_cfg_.enabled) {
+        const Vector7 dq_src = friction_cfg_.use_measured ? Vector7(dq) : Vector7(J_pinv * v_ref);
+        const Vector7 tf = friction_cfg_.scale * frictionTorque(dq_src).cwiseProduct(friction_cfg_.mask);
+        tau_friction_ = tf.cwiseMax(-friction_cfg_.max_torque).cwiseMin(friction_cfg_.max_torque);
+    }
+
     static const Vector7 kMaxDq = (Vector7() << 2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610).finished();
     static const double kVelDampOnset = 0.05;
     Vector7 tau_vel_damp = Vector7::Zero();
@@ -1617,7 +1651,19 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
         if (excess > 0.0)
             tau_vel_damp(i) = -80.0 * excess * (dq(i) > 0 ? 1.0 : -1.0);
     }
-    return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq) + tau_vel_damp;
+    return tau_task + tau_null + tau_coriolis + jointLimitAvoidanceTorque(q, dq) + tau_vel_damp
+         + tau_friction_;
+}
+
+Vector7 ArmControl::frictionTorque(const Vector7& dq) const {
+    const FrictionConfig& c = friction_cfg_;
+    Vector7 tau;
+    for (int i = 0; i < 7; ++i) {
+        const double s  = 1.0 / (1.0 + std::exp(-c.fp2(i) * (dq(i) + c.fp3(i))));
+        const double s0 = 1.0 / (1.0 + std::exp(-c.fp2(i) * c.fp3(i)));
+        tau(i) = c.fp1(i) * (s - s0);
+    }
+    return tau;
 }
 
 Eigen::Matrix<double, 6, 1> ArmControl::filteredReferenceVelocity() {

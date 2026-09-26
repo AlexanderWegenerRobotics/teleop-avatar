@@ -114,6 +114,11 @@ struct ArmLogEntry {
     // about who had the robot, and the labels on that segment cannot be
     // trusted for training.
     uint8_t                authority;
+    // Joint friction feedforward added to the command this tick (Nm), i.e. the
+    // part of tau_cmd that came from control.friction. Appended after authority
+    // for the same reason authority was: positional readers of older files keep
+    // lining up. All zeros when friction feedforward is disabled.
+    std::array<double, 7>  tau_friction;
 };
 
 // One row per state-thread tick (~200 Hz), written by runStateHandler.
@@ -361,7 +366,8 @@ inline std::string armLogHeader() {
     h += "grasp_state;";
     for (int i = 0; i < 7;  ++i) h += "q_null_ref_" + std::to_string(i) + ";";
     h += "posture_s;posture_cost;posture_margin;posture_swivel;";
-    h += "state;cmd_valid;log_src;grasp_cmd;clutch;applied_cmd_sequence;authority\n";
+    h += "state;cmd_valid;log_src;grasp_cmd;clutch;applied_cmd_sequence;authority;";
+    for (int i = 0; i < 7;  ++i) h += "tau_friction_" + std::to_string(i) + (i < 6 ? ";" : "\n");
     return h;
 }
 
@@ -391,7 +397,8 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     r += std::to_string(e.grasp_cmd) + ";";
     r += std::to_string(e.clutch) + ";";
     r += std::to_string(e.applied_cmd_sequence) + ";";
-    r += std::to_string(e.authority) + "\n";
+    r += std::to_string(e.authority) + ";";
+    for (int i = 0; i < 7; ++i) r += std::to_string(e.tau_friction[i]) + (i < 6 ? ";" : "\n");
     return r;
 }
 

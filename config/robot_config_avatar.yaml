@@ -74,6 +74,19 @@ devices:
       eta_rot: 0.0
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0
+      friction:
+        # Joint friction feedforward (sigmoid model). Off by default.
+        # tau_f = fp1/(1+exp(-fp2*(dq+fp3))) - fp1/(1+exp(-fp2*fp3)), added to tau_cmd.
+        # fp1..fp3: Panda identification (Gaz et al. 2019) as a starting point;
+        # scale down for the FR3 until identified. Logged as tau_friction_0..6.
+        enabled: false
+        source: reference        # reference (J_pinv * v_ref, no feedback) | measured (dq)
+        scale: 0.5
+        joint_mask: [1, 1, 1, 1, 0, 0, 0]      # wrist off until the limit cycle is fixed
+        max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]   # Nm clamp per joint
+        fp1: [0.54615, 0.87224, 0.64068, 1.2794, 0.83904, 0.30301, 0.56489]
+        fp2: [5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336]
+        fp3: [0.039533, 0.025882, -0.04607, 0.036194, 0.026226, -0.021047, 0.0035526]
       kp_null: [20, 20, 20, 20, 8, 8, 8]
       kd_null: [2, 2, 2, 2, 1, 1, 1]
       posture:
@@ -169,6 +182,19 @@ devices:
       eta_rot: 0.0
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0
+      friction:
+        # Joint friction feedforward (sigmoid model). Off by default.
+        # tau_f = fp1/(1+exp(-fp2*(dq+fp3))) - fp1/(1+exp(-fp2*fp3)), added to tau_cmd.
+        # fp1..fp3: Panda identification (Gaz et al. 2019) as a starting point;
+        # scale down for the FR3 until identified. Logged as tau_friction_0..6.
+        enabled: false
+        source: reference        # reference (J_pinv * v_ref, no feedback) | measured (dq)
+        scale: 0.5
+        joint_mask: [1, 1, 1, 1, 0, 0, 0]      # wrist off until the limit cycle is fixed
+        max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]   # Nm clamp per joint
+        fp1: [0.54615, 0.87224, 0.64068, 1.2794, 0.83904, 0.30301, 0.56489]
+        fp2: [5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336]
+        fp3: [0.039533, 0.025882, -0.04607, 0.036194, 0.026226, -0.021047, 0.0035526]
       kp_null:  [20, 20, 20, 20, 8, 8, 8]
       kd_null:  [2, 2, 2, 2, 1, 1, 1]
       posture:
