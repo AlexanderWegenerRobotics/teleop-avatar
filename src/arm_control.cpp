@@ -428,6 +428,19 @@ void ArmControl::start(){
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     state_thread = std::thread(&ArmControl::runStateHandler, this);
     set_realtime(state_thread, rt_state_core_);
+#ifdef WITH_FRANKA
+    if (gripper) {
+        gripper_thread = std::thread([this]() {
+            while (bRunning) {
+                try {
+                    gripper_width_.store(gripper->readOnce().width);
+                } catch (const franka::Exception&) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
+        });
+    }
+#endif
     // Wake the state thread the moment a command lands rather than letting it
     // sit until the next periodic tick. Must be set before start() -- the
     // callback is read unlocked on the receive thread.
@@ -451,6 +464,7 @@ void ArmControl::stop(){
     notifyCommandArrived();
     if (control_thread.joinable()) control_thread.join();
     if (state_thread.joinable()) state_thread.join();
+    if (gripper_thread.joinable()) gripper_thread.join();
     if (transmission_) transmission_->stop();
     if (transmission_absolute_) transmission_absolute_->stop();
 }
@@ -830,8 +844,12 @@ void ArmControl::runStateHandler(){
         grasp_allowed_.store(grasp_allowed);
         applyGripper(grasp_allowed && desired_gripper_closed_.load());
 
+#ifdef WITH_FRANKA
+        const double width = gripper_width_.load();
+#else
         const double width = gripper ? gripper->readOnce().width : 0.0;
         gripper_width_.store(width);
+#endif
         updateGraspConfirmation(width);
 
         // ── state trace ───────────────────────────────────────────────────────

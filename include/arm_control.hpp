@@ -86,6 +86,7 @@ public:
 private:
     std::thread control_thread;
     std::thread state_thread;
+    std::thread gripper_thread;
     std::mutex data_mtx;
     std::atomic<bool> bRunning;
     std::atomic<SysState> state_{SysState::OFFLINE};
