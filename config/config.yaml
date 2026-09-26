@@ -2,9 +2,9 @@ role: avatar
 
 avatar_config:
   sim_config: "../config/sim_config_franka.yaml"
-  robot_config: "../config/robot_config_local.yaml"
-  streamer_config: "../config/pipeline_config_local.yaml"
-
+  robot_config: "../config/robot_config_desk_remote.yaml"
+  streamer_config: "../config/pipeline_config_desk_remote.yaml"
+  
 twin_config:
   sim_config: "../config/sim_config_twin_franka_desk.yaml"
   robot_config: "../config/robot_config_desk_remote.yaml"

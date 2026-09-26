@@ -38,6 +38,8 @@ devices:
     gripper:
       grasp_confirm_tolerance_m: 0.005
       grasp_confirm_time_s: 0.050
+      grasp_force_n: 40
+      grasp_speed: 0.1
 
     base_pose:
       position: [0.2, 0, 0.703]

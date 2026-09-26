@@ -348,6 +348,10 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
             grasp_confirm_tolerance_m_ = gripper_cfg["grasp_confirm_tolerance_m"].as<double>();
         if (gripper_cfg["grasp_confirm_time_s"])
             grasp_confirm_time_s_ = gripper_cfg["grasp_confirm_time_s"].as<double>();
+        if (gripper_cfg["grasp_force_n"])
+            grasp_force_n_ = gripper_cfg["grasp_force_n"].as<double>();
+        if (gripper_cfg["grasp_speed"])
+            grasp_speed_ = gripper_cfg["grasp_speed"].as<double>();
     }
 
     // ── Thread placement ────────────────────────────────────────────────────
@@ -2079,13 +2083,28 @@ void ArmControl::applyGripper(bool close) {
     if (!gripper) { gripper_close_applied_ = close; return; }
     if (close == gripper_close_applied_) return;
 #ifdef WITH_FRANKA
+    if (!close && gripper_busy_.load()) {
+        if (!gripper_stop_sent_.exchange(true)) {
+            std::thread([this]() {
+                try { gripper->stop(); } catch (const franka::Exception&) {}
+            }).detach();
+        }
+        return;
+    }
     if (gripper_busy_.exchange(true)) return;
-    const double width = close ? 0.0 : kGripperMaxWidth;
-    std::thread([this, close, width]() {
+    gripper_stop_sent_.store(false);
+    std::thread([this, close]() {
         try {
-            if (close) gripper->grasp(width, 0.1, 40.0);
-            else       gripper->move(width, 0.1);
-        } catch (...) {}
+            if (close) {
+                if (!gripper->grasp(0.0, grasp_speed_, grasp_force_n_, kGripperMaxWidth, kGripperMaxWidth))
+                    std::cout << "[WARN] " << name_ << ": grasp ended without holding (stopped or no contact)" << std::endl;
+            } else {
+                gripper->move(kGripperMaxWidth, grasp_speed_);
+            }
+        } catch (const franka::Exception& e) {
+            std::cout << "[WARN] " << name_ << ": gripper " << (close ? "grasp" : "open")
+                      << " failed: " << e.what() << std::endl;
+        }
         gripper_busy_.store(false);
     }).detach();
     gripper_close_applied_ = close;

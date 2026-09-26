@@ -164,7 +164,10 @@ private:
     double              authority_stale_ms_{250.0};
     std::atomic<bool>   grasp_allowed_{false};
     std::atomic<bool>   gripper_busy_{false};
+    std::atomic<bool>   gripper_stop_sent_{false};
     bool                gripper_close_applied_{true};
+    double              grasp_force_n_{40.0};
+    double              grasp_speed_{0.1};
 
     double              grasp_confirm_tolerance_m_{0.008};
     double              grasp_confirm_time_s_{0.020};
