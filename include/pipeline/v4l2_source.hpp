@@ -8,8 +8,9 @@
 
 class V4L2Source : public CameraSource {
 public:
+    // exposure_100us: 0 = keep auto-exposure, >0 = manual exposure in 100 us units.
     V4L2Source(const std::string& device, int width, int height, int fps,
-               const std::string& format = "yuyv");
+               const std::string& format = "yuyv", int exposure_100us = 0);
     ~V4L2Source();
 
     void     start(FrameCallback cb) override;
@@ -27,6 +28,7 @@ private:
     int         height_;
     int         fps_;
     bool        mjpeg_ = false;
+    int         exposure_100us_ = 0;
     void*       tj_    = nullptr;
     bool        decode_warned_ = false;
 

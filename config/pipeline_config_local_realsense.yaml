@@ -1,0 +1,43 @@
+enabled:        true
+stereo:         false
+stream_fps:     30
+stream_width:   1280
+stream_height:  720
+
+stream_cameras:
+  - camera:   "head_cam"
+    shm_name: "avatar_cam"
+    eye:      "mono"
+
+episode_listener_port: 7100
+
+cameras:
+  - name:         "head_cam"
+    eye:          "mono"
+    source_type:  "realsense"
+    realsense_serial: ""
+    shm_name:     "avatar_cam"
+    fps:           30
+    source_width:  1280
+    source_height: 720
+    auto_exposure: false
+    exposure:      100
+    gain:          64
+
+    stream:
+      enabled:            true
+      host:               "127.0.0.1"
+      port:               5004
+      feedback_port:      5005
+      status_port:        5007
+      status_interval_ms: 500
+      bitrate_kbps:       4000
+      fec_percentage:     10
+      width:              1280
+      height:             720
+
+    log:
+      enabled:    false
+      output_dir: "logs"
+      width:      640
+      height:     480

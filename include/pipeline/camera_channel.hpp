@@ -21,6 +21,13 @@ struct CameraChannelConfig {
     int         fps             = 30;
     int         source_width    = 640;       // realsense/v4l2 only (mujoco reads from shm)
     int         source_height   = 480;
+    // realsense/v4l2 only. 0 = leave auto-exposure on. >0 = manual exposure in
+    // 100 us units (V4L2_CID_EXPOSURE_ABSOLUTE / RealSense RGB exposure), e.g. 100 = 10 ms.
+    // Auto-exposure priority is always turned off, so the camera never drops fps
+    // to lengthen exposure.
+    int         exposure_100us  = 0;
+    bool        auto_exposure   = true;
+    int         gain            = -1;
 
     // ── Stereo-combined mode ──────────────────────────────────────────────
     // When true, this channel reads shm_name (left) AND stereo_partner_shm

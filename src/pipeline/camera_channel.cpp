@@ -34,7 +34,10 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
             config_.realsense_serial,
             config_.source_width,
             config_.source_height,
-            config_.fps);
+            config_.fps,
+            config_.exposure_100us,
+            config_.auto_exposure,
+            config_.gain);
     #else
         throw std::runtime_error("Built without RealSense support. Rebuild with -DBUILD_WITH_REALSENSE=ON");
     #endif
@@ -45,7 +48,8 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
             config_.source_width,
             config_.source_height,
             config_.fps,
-            config_.v4l2_format);
+            config_.v4l2_format,
+            config_.auto_exposure ? 0 : config_.exposure_100us);
     #endif
     } else {
         source_ = std::make_unique<MuJoCoSource>(config_.shm_name, config_.fps);

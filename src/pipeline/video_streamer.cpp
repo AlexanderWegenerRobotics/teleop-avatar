@@ -135,7 +135,12 @@ void VideoStreamer::buildPipeline() {
             " ! rtph264pay pt=96 config-interval=1"
             " ! rtpulpfecenc name=fec percentage=" + std::to_string(config_.fec_percentage) +
             " ! udpsink host=" + config_.host +
-            " port="           + std::to_string(config_.port);
+            " port="           + std::to_string(config_.port) +
+            // Send as soon as a packet exists. With the default sync=true the sink
+            // schedules buffers against the pipeline clock using PTS, and our PTS is a
+            // frame counter (frame_count_/fps), not capture time -- if frames ever
+            // arrive faster than nominal fps, the sink would start holding them back.
+            " sync=false async=false";
 
         std::string tail = config_.log_enabled
             ? std::string(
@@ -188,6 +193,23 @@ void VideoStreamer::buildPipeline() {
     encoder_ = gst_bin_get_by_name(GST_BIN(pipeline_), "encoder");
     if (!encoder_)
         throw std::runtime_error("Failed to get encoder element from pipeline");
+
+    // Low-latency encoder switches, set only where the element exposes them so an
+    // older nvcodec build still constructs the pipeline (a bad property in the
+    // gst_parse_launch string would fail the GPU build and fall back to x264 CPU).
+    {
+        GObjectClass* klass = G_OBJECT_GET_CLASS(encoder_);
+        if (g_object_class_find_property(klass, "zerolatency")) {
+            g_object_set(encoder_, "zerolatency", TRUE, nullptr);
+            std::cout << "[INFO] Encoder: zerolatency=true" << std::endl;
+        }
+        if (g_object_class_find_property(klass, "bframes")) {
+            g_object_set(encoder_, "bframes", 0u, nullptr);
+        }
+        if (g_object_class_find_property(klass, "rc-lookahead")) {
+            g_object_set(encoder_, "rc-lookahead", 0u, nullptr);
+        }
+    }
 
     fec_ = gst_bin_get_by_name(GST_BIN(pipeline_), "fec");
     if (!fec_)

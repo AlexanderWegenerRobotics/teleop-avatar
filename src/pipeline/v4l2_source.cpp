@@ -51,8 +51,9 @@ static void yuyvToRgb(const uint8_t* yuyv, uint8_t* rgb, int width, int height) 
 }
 
 V4L2Source::V4L2Source(const std::string& device, int width, int height, int fps,
-                       const std::string& format)
-    : device_(device), width_(width), height_(height), fps_(fps), mjpeg_(format == "mjpeg")
+                       const std::string& format, int exposure_100us)
+    : device_(device), width_(width), height_(height), fps_(fps), mjpeg_(format == "mjpeg"),
+      exposure_100us_(exposure_100us)
 {
 #ifndef WITH_TURBOJPEG
     if (mjpeg_)
@@ -104,6 +105,23 @@ void V4L2Source::initDevice() {
     prio.id    = V4L2_CID_EXPOSURE_AUTO_PRIORITY;
     prio.value = 0;
     xioctl(fd_, VIDIOC_S_CTRL, &prio);
+
+    // Optional manual exposure. V4L2_CID_EXPOSURE_ABSOLUTE is defined in 100 us units.
+    // Long auto-exposure in dim light shifts the image ~exposure/2 into the past.
+    if (exposure_100us_ > 0) {
+        v4l2_control ae{};
+        ae.id    = V4L2_CID_EXPOSURE_AUTO;
+        ae.value = V4L2_EXPOSURE_MANUAL;
+        if (xioctl(fd_, VIDIOC_S_CTRL, &ae) < 0)
+            std::cout << "[V4L2Source] WARNING: cannot switch to manual exposure: " << strerror(errno) << std::endl;
+        v4l2_control ex{};
+        ex.id    = V4L2_CID_EXPOSURE_ABSOLUTE;
+        ex.value = exposure_100us_;
+        if (xioctl(fd_, VIDIOC_S_CTRL, &ex) < 0)
+            std::cout << "[V4L2Source] WARNING: cannot set exposure " << exposure_100us_ << ": " << strerror(errno) << std::endl;
+        else
+            std::cout << "[V4L2Source] manual exposure " << exposure_100us_ * 100 << " us" << std::endl;
+    }
 
     v4l2_requestbuffers req{};
     req.count  = 4;
@@ -197,6 +215,15 @@ uint32_t V4L2Source::height() const { return static_cast<uint32_t>(height_); }
 
 void V4L2Source::run() {
     // Dequeue frames, convert YUYV→RGB, forward via callback.
+
+    // Periodic report: kernel buffer timestamp -> dequeued here, plus decode/convert
+    // time. For uvcvideo the buffer timestamp is the driver's estimate of frame start
+    // (or first-packet arrival), so exposure before it is still not included.
+    constexpr int kReportEvery = 150;              // ~5 s at 30 fps
+    int      n = 0;
+    double   sum_dq_ms = 0.0, max_dq_ms = 0.0, sum_cv_ms = 0.0;
+    int64_t  first_ts_ns = 0;
+
     while (bRunning_) {
         fd_set fds;
         FD_ZERO(&fds);
@@ -237,6 +264,10 @@ void V4L2Source::run() {
                             static_cast<int64_t>(buf.timestamp.tv_usec) * 1000LL;
         uint64_t capture_time_ns = static_cast<uint64_t>(buf_ts_ns + clock_offset_ns_);
 
+        timespec dq_mono{};
+        clock_gettime(CLOCK_MONOTONIC, &dq_mono);
+        const int64_t dq_ns = static_cast<int64_t>(dq_mono.tv_sec) * 1000000000LL + dq_mono.tv_nsec;
+
         bool ok = true;
         if (mjpeg_) {
 #ifdef WITH_TURBOJPEG
@@ -251,6 +282,25 @@ void V4L2Source::run() {
         } else {
             yuyvToRgb(static_cast<const uint8_t*>(buffers_[buf.index]), rgb_buf_.data(), width_, height_);
         }
+        {
+            timespec cv_mono{};
+            clock_gettime(CLOCK_MONOTONIC, &cv_mono);
+            const int64_t cv_ns = static_cast<int64_t>(cv_mono.tv_sec) * 1000000000LL + cv_mono.tv_nsec;
+            const double dq_ms = (dq_ns - buf_ts_ns) / 1e6;
+            sum_dq_ms += dq_ms;
+            if (dq_ms > max_dq_ms) max_dq_ms = dq_ms;
+            sum_cv_ms += (cv_ns - dq_ns) / 1e6;
+            if (n == 0) first_ts_ns = buf_ts_ns;
+            if (++n >= kReportEvery) {
+                const double span_s = (buf_ts_ns - first_ts_ns) / 1e9;
+                std::cout << "[V4L2Source] buffer ts -> dequeue mean " << sum_dq_ms / n
+                          << " ms  max " << max_dq_ms
+                          << " | " << (mjpeg_ ? "mjpeg decode" : "yuyv->rgb") << " " << sum_cv_ms / n << " ms"
+                          << " | fps " << (span_s > 0 ? (n - 1) / span_s : 0.0) << std::endl;
+                n = 0; sum_dq_ms = 0.0; max_dq_ms = 0.0; sum_cv_ms = 0.0;
+            }
+        }
+
         if (ok)
             cb_(rgb_buf_.data(), static_cast<uint32_t>(width_), static_cast<uint32_t>(height_), capture_time_ns);
         xioctl(fd_, VIDIOC_QBUF, &buf);

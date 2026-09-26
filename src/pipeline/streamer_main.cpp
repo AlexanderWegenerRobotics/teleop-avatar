@@ -71,6 +71,9 @@ static CameraChannelConfig parseCameraConfig(const YAML::Node& n) {
     c.fps              = n["fps"].as<int>(30);
     c.source_width     = n["source_width"].as<int>(640);
     c.source_height    = n["source_height"].as<int>(480);
+    c.exposure_100us   = n["exposure"] ? n["exposure"].as<int>() : n["exposure_100us"].as<int>(0);
+    c.auto_exposure    = n["auto_exposure"] ? n["auto_exposure"].as<bool>() : (c.exposure_100us <= 0);
+    c.gain             = n["gain"].as<int>(-1);
     c.stereo_combined    = n["stereo_combined"].as<bool>(false);
     c.stereo_partner_shm = n["stereo_partner_shm"].as<std::string>("");
 
