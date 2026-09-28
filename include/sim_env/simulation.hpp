@@ -242,6 +242,20 @@ private:
     mjData*          snap_[2]    = {nullptr, nullptr};
     std::atomic<int> snap_write_ {0};
     std::atomic<int> snap_read_  {1};
+
+    // Render/stream threads must NOT run mjv_updateScene on snap_[]: it calls
+    // mj_markStack/mj_freeStack, i.e. it WRITES the mjData's stack pointers.
+    // Two renderers on the same snapshot, or a renderer on a buffer that
+    // swapSnapshots() is overwriting (it recycles a buffer every 2 ms), corrupt
+    // those pointers -> ACCESS_VIOLATION in mj_markStack (mujoco.dll+0xAC3FC,
+    // 3.3.0). Each renderer therefore owns a private mjData and copies the
+    // latest snapshot into it under snap_mtx_ once per frame (latchSnapshot).
+    // snap_mtx_ is only ever taken inside data_mtx (physics) or alone
+    // (renderers), so there is no lock-order inversion.
+    std::mutex snap_mtx_;
+    mjData*    render_data_ = nullptr;   // owned by the rendering thread
+    mjData*    stream_data_ = nullptr;   // owned by the streaming thread
+    void latchSnapshot(mjData* dst);
     int  render_fps_ = 20;
     void buildCameraList();
     void initRendering();
@@ -280,6 +294,15 @@ private:
         std::vector<int>   geom_ids;
         std::vector<std::array<mjtNum, 3>> original_geom_size;
         std::vector<std::array<mjtNum, 3>> original_geom_pos;
+        // Collision bounding volumes. MuJoCo computes these at compile time
+        // from geom_size and never refreshes them; if they are not scaled
+        // with the geometry, a body scaled > 1 has bounds smaller than its
+        // geoms and broad/mid-phase culls real contacts (fingers close into
+        // the parcel, grasp slips, parcel drops).
+        std::vector<mjtNum>                original_geom_rbound;
+        std::vector<std::array<mjtNum, 6>> original_geom_aabb;   // center[3], half-size[3]
+        int                                bvh_adr = -1;
+        std::vector<std::array<mjtNum, 6>> original_bvh_aabb;    // body BVH nodes
     };
     std::unordered_map<std::string, BodyScaleCache> body_scale_cache_;
 };

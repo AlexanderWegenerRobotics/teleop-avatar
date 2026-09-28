@@ -29,9 +29,22 @@ for %%C in (Release Debug) do (
 )
 
 rem --- add MuJoCo DLL to PATH if not already there ---
-if exist "C:\dev\mujoco-3.3.0\bin\mujoco.dll" (
-    set "PATH=C:\dev\mujoco-3.3.0\bin;%PATH%"
+rem Must match the MuJoCo the exe was built against (MUJOCO_ROOT in CMake);
+rem Simulation refuses to start on a header/DLL version mismatch.
+if exist "C:\dev\mujoco-3.14.0\bin\mujoco.dll" (
+    set "PATH=C:\dev\mujoco-3.14.0\bin;%PATH%"
 )
+
+rem --- GStreamer for avatar_pipeline.exe ---
+rem The streamer is built against the official MSVC GStreamer, but a conda env
+rem that ships its own gstreamer (teleop_sim does) puts that one first on PATH.
+rem The streamer then loads conda's GStreamer and plugin set, which has no
+rem h264parse, and the pipeline fails to build. The PS monitor below pins the
+rem streamer process (only) to this root; avatar.exe keeps the env's PATH.
+set "GST_ROOT="
+if defined GSTREAMER_1_0_ROOT_MSVC_X86_64 set "GST_ROOT=%GSTREAMER_1_0_ROOT_MSVC_X86_64%"
+if not defined GST_ROOT if exist "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin" set "GST_ROOT=C:\Program Files\gstreamer\1.0\msvc_x86_64"
+if defined GST_ROOT if "!GST_ROOT:~-1!"=="\" set "GST_ROOT=!GST_ROOT:~0,-1!"
 
 rem --- sanity checks ---
 if not defined AVATAR (
@@ -68,6 +81,7 @@ del "%PS_FILE%" 2>nul
 >>"%PS_FILE%" echo $logErr      = '%LOG_ERR%'
 >>"%PS_FILE%" echo $crashLog    = '%CRASH_LOG%'
 >>"%PS_FILE%" echo $roleArg     = '%ROLE_ARG%'
+>>"%PS_FILE%" echo $gstRoot     = '%GST_ROOT%'
 >>"%PS_FILE%" echo.
 >>"%PS_FILE%" echo $avatarParams = @{
 >>"%PS_FILE%" echo     FilePath               = $avatarExe
@@ -84,6 +98,17 @@ del "%PS_FILE%" 2>nul
 >>"%PS_FILE%" echo Write-Host "[LAUNCH]: avatar PID=$avPid"
 >>"%PS_FILE%" echo.
 >>"%PS_FILE%" echo Start-Sleep -Seconds 2
+>>"%PS_FILE%" echo.
+>>"%PS_FILE%" echo if ^($gstRoot -ne ''^) {
+>>"%PS_FILE%" echo     $env:PATH = "$gstRoot\bin;$env:PATH"
+>>"%PS_FILE%" echo     $env:GST_PLUGIN_SYSTEM_PATH_1_0 = "$gstRoot\lib\gstreamer-1.0"
+>>"%PS_FILE%" echo     $env:GST_PLUGIN_PATH_1_0 = $null
+>>"%PS_FILE%" echo     $env:GST_PLUGIN_PATH = $null
+>>"%PS_FILE%" echo     $env:GST_REGISTRY_1_0 = "$env:LOCALAPPDATA\gstreamer-1.0\registry.msvc_x86_64.bin"
+>>"%PS_FILE%" echo     Write-Host "[LAUNCH]: streamer uses GStreamer at $gstRoot"
+>>"%PS_FILE%" echo } else {
+>>"%PS_FILE%" echo     Write-Host '[WARN]: MSVC GStreamer not found - streamer uses whatever GStreamer is on PATH'
+>>"%PS_FILE%" echo }
 >>"%PS_FILE%" echo.
 >>"%PS_FILE%" echo $streamerParams = @{
 >>"%PS_FILE%" echo     FilePath         = $streamerExe

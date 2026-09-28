@@ -90,7 +90,7 @@ if(BUILD_WITH_MUJOCO)
         if(DEFINED ENV{MUJOCO_ROOT})
             set(MUJOCO_ROOT "$ENV{MUJOCO_ROOT}")
         elseif(WIN32)
-            set(MUJOCO_ROOT "C:/dev/mujoco-3.3.0")
+            set(MUJOCO_ROOT "C:/dev/mujoco-3.14.0")
         else()
             # Mac and Linux share the same convention from the original dev setup
             set(MUJOCO_ROOT "$ENV{HOME}/Workspace/tools/mujoco")

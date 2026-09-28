@@ -41,6 +41,16 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
     objects_ = std::move(scene.objects);
     cameras_ = std::move(scene.cameras);
 
+    // An exe built against one MuJoCo and run with another's DLL (PATH picks
+    // whichever mujoco.dll it finds first) compiles, links and then misbehaves
+    // at runtime: struct layouts and contact behaviour differ between releases.
+    // Refuse to start instead.
+    if (mj_version() != mjVERSION_HEADER)
+        throw std::runtime_error("MuJoCo version mismatch: built against "
+            + std::to_string(mjVERSION_HEADER) + " headers but loaded mujoco.dll "
+            + mj_versionString() + ". Fix PATH (launch.bat) or MUJOCO_ROOT.");
+    std::cout << "[SIM-INFO] MuJoCo " << mj_versionString() << std::endl;
+
     char err[2000] = {};
     model = mj_loadXML(scene.xml_path.string().c_str(), nullptr, err, sizeof(err));
     if (!model)
@@ -357,6 +367,7 @@ void Simulation::run_rendering() {
         return;
     }
 
+    render_data_ = mj_makeData(model);
     bRenderingIsRunning = true;
 
     auto frame_duration = std::chrono::microseconds(1000000 / render_fps_);
@@ -370,6 +381,8 @@ void Simulation::run_rendering() {
 
     mjv_freeScene(&scn_);
     mjr_freeContext(&con_);
+    mj_deleteData(render_data_);
+    render_data_ = nullptr;
     bRenderingIsRunning = false;
 }
 
@@ -385,8 +398,9 @@ void Simulation::renderFrame() {
     int cell_w = win_w / cols;
     int cell_h = win_h / rows;
 
-    int r        = snap_read_.load(std::memory_order_acquire);
-    mjData* snap = snap_[r];
+    // Private copy: mjv_updateScene writes the mjData stack (see header).
+    latchSnapshot(render_data_);
+    mjData* snap = render_data_;
 
     for (int i = 0; i < ncam; ++i) {
         int col = i % cols;
@@ -411,11 +425,20 @@ void Simulation::renderFrame() {
 }
 
 void Simulation::swapSnapshots() {
+    std::lock_guard<std::mutex> lock(snap_mtx_);   // see latchSnapshot()
     int w = snap_write_.load(std::memory_order_relaxed);
     mj_copyData(snap_[w], model, data);
     int next = 1 - w;
     snap_write_.store(next, std::memory_order_release);
     snap_read_.store(w,    std::memory_order_release);
+}
+
+// Copy the latest published snapshot into a renderer-private mjData. Holding
+// snap_mtx_ means swapSnapshots() cannot be writing either buffer meanwhile,
+// so the copy is consistent; the physics thread waits at most one copy.
+void Simulation::latchSnapshot(mjData* dst) {
+    std::lock_guard<std::mutex> lock(snap_mtx_);
+    mj_copyData(dst, model, snap_[snap_read_.load(std::memory_order_acquire)]);
 }
 
 
@@ -459,8 +482,9 @@ void Simulation::renderStreamFrame() {
     if (stream_cameras_.empty() || shm_writers_.empty()) return;
 
     // Latch the snapshot once — all cameras render from the same physics state.
-    int r = snap_read_.load(std::memory_order_acquire);
-    mjData* snap = snap_[r];
+    // Private copy: mjv_updateScene writes the mjData stack (see header).
+    latchSnapshot(stream_data_);
+    mjData* snap = stream_data_;
 
     mjr_setBuffer(mjFB_OFFSCREEN, &stream_con_);
 
@@ -523,6 +547,7 @@ void Simulation::run_streaming() {
         return;
     }
 
+    stream_data_ = mj_makeData(model);
     bStreamingIsRunning = true;
 
     auto period = std::chrono::microseconds(1000000 / stream_fps_);
@@ -545,6 +570,8 @@ void Simulation::run_streaming() {
 
     mjv_freeScene(&stream_scn_);
     mjr_freeContext(&stream_con_);
+    mj_deleteData(stream_data_);
+    stream_data_ = nullptr;
     if (offscreen_window_) {
         glfwDestroyWindow(offscreen_window_);
         offscreen_window_ = nullptr;
@@ -901,6 +928,18 @@ void Simulation::setBodyScale(const std::string& bodyName, double scale) {
                 model->geom_pos[g * 3 + 1],
                 model->geom_pos[g * 3 + 2]
             });
+            cache.original_geom_rbound.push_back(model->geom_rbound[g]);
+            std::array<mjtNum, 6> aabb;
+            for (int j = 0; j < 6; ++j) aabb[j] = model->geom_aabb[g * 6 + j];
+            cache.original_geom_aabb.push_back(aabb);
+        }
+        cache.bvh_adr = model->body_bvhadr[body_id];
+        if (cache.bvh_adr >= 0) {
+            for (int n = 0; n < model->body_bvhnum[body_id]; ++n) {
+                std::array<mjtNum, 6> node;
+                for (int j = 0; j < 6; ++j) node[j] = model->bvh_aabb[(cache.bvh_adr + n) * 6 + j];
+                cache.original_bvh_aabb.push_back(node);
+            }
         }
         body_scale_cache_[bodyName] = std::move(cache);
     }
@@ -914,7 +953,15 @@ void Simulation::setBodyScale(const std::string& bodyName, double scale) {
             model->geom_size[g * 3 + j] = cache.original_geom_size[i][j] * scale;
             model->geom_pos [g * 3 + j] = cache.original_geom_pos [i][j] * scale;
         }
+        // Bounding volumes must follow the geometry (see BodyScaleCache).
+        // Uniform scaling about the body origin scales centre and half-size alike.
+        model->geom_rbound[g] = cache.original_geom_rbound[i] * scale;
+        for (int j = 0; j < 6; ++j)
+            model->geom_aabb[g * 6 + j] = cache.original_geom_aabb[i][j] * scale;
     }
+    for (size_t n = 0; n < cache.original_bvh_aabb.size(); ++n)
+        for (int j = 0; j < 6; ++j)
+            model->bvh_aabb[(cache.bvh_adr + n) * 6 + j] = cache.original_bvh_aabb[n][j] * scale;
 
     // Scale inertial properties: mass ~ scale^3, diagonal inertia ~ scale^5.
     double s3 = scale * scale * scale;
