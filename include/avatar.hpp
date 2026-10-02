@@ -114,6 +114,7 @@ private:
         std::string color;
         std::string model_path;
         double fixed_x = 0, fixed_y = 0, fixed_z = 0;
+        double fixed_qw = 1, fixed_qx = 0, fixed_qy = 0, fixed_qz = 0;  // pose.orientation (w,x,y,z)
     };
 
     struct SpawnedObject {
@@ -123,6 +124,11 @@ private:
         double x = 0, y = 0, z = 0;
         double yaw   = 0.0;   // Z-axis rotation (radians)
         double scale = 1.0;   // uniform size scale factor
+        // Full spawn orientation (w,x,y,z). When set it wins over yaw -- the
+        // server sends it in spawn mode "fixed" so non-upright task-config
+        // poses survive a reset.
+        bool   has_quat = false;
+        double qw = 1, qx = 0, qy = 0, qz = 0;
     };
 
     struct EpisodeConfig {

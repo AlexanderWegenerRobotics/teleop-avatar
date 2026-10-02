@@ -175,6 +175,27 @@ struct ArmStateMsg {
     // 0 = no command consumed yet (e.g. not ENGAGED). Treat as unknown rather
     // than as zero latency.
     uint32_t applied_cmd_sequence;
+    // Network-delay echo. applied_cmd_sequence above measures command-to-
+    // effect: its round trip includes up to one control tick plus up to one
+    // state period (5 ms at 200 Hz) that the command spends waiting INSIDE the
+    // avatar, so halving it overstates the network by a few ms, and it only
+    // advances while a command is actually consumed.
+    //
+    // These two let the interface separate the wire from the avatar:
+    //   echo_cmd_sequence  header.sequence of the newest ArmCommandMsg this
+    //                      stream has RECEIVED (consumed or not)
+    //   echo_hold_us       microseconds between that command arriving at the
+    //                      avatar's socket and THIS packet being sent, taken
+    //                      on the avatar's clock
+    // so, entirely on the interface's clock,
+    //   network_rtt = (recv_time - send_time(echo_cmd_sequence)) - echo_hold_us
+    //   network one-way delay = network_rtt / 2
+    // Neither host's clock offset enters. Filled by UdpStream::doSend at the
+    // moment of sending, so the hold includes the send-thread wait.
+    //
+    // 0 / 0 = nothing received yet. Treat as unknown, not as zero delay.
+    uint32_t echo_cmd_sequence;
+    uint32_t echo_hold_us;
 };
  
 struct HeadCommandMsg {
@@ -202,7 +223,7 @@ struct HeadStateMsg {
 // why it was the one place a field could move silently.
 static_assert(sizeof(MsgHeader)      == 23,  "MsgHeader size mismatch");
 static_assert(sizeof(ArmCommandMsg)  == 56,  "ArmCommandMsg size mismatch");
-static_assert(sizeof(ArmStateMsg)    == 117, "ArmStateMsg size mismatch");
+static_assert(sizeof(ArmStateMsg)    == 125, "ArmStateMsg size mismatch");  // 117 -> 125: + echo_cmd_sequence, echo_hold_us
 static_assert(sizeof(HeadCommandMsg) == 31,  "HeadCommandMsg size mismatch");
 static_assert(sizeof(HeadStateMsg)   == 31,  "HeadStateMsg size mismatch");
 

@@ -1,6 +1,14 @@
 # Task: FMB Board 1 assembly
 
+# spawn.mode: fixed -> episode_config_server puts every role=object body back at
+# its pose below (scale 1.0) on startup and on every home/episode_restart.
+# The ranges below are only used in mode: random.
+#
+# body_name must be the <body name="..."> inside model_path: the Avatar resets
+# and logs the MuJoCo body "<name>_<body_name>" (e.g. peg_1_1_peg_v1_1).
+
 spawn:
+  mode: fixed
   x_range: [0.45, 0.78]
   y_range: [-0.30, 0.30]
   z: 0.725
@@ -24,7 +32,7 @@ objects:
     type: dynamic
     role: fixture
     color: grey
-    body_name: enviroment_fixture
+    body_name: environment_fixture
     model_path: "../models/mujoco/props/enviroment_fixture.xml"
     pose:
       position: [0.68, 0.3, 0.7]
@@ -34,7 +42,7 @@ objects:
     type: dynamic
     role: object
     color: blue
-    body_name: peg_v1_hook
+    body_name: peg_v1_1
     model_path: "../models/mujoco/props/board_1/peg_v1_1.xml"
     pose:
       position: [0.6, 0.15, 0.715]
@@ -44,7 +52,7 @@ objects:
     type: dynamic
     role: object
     color: blue
-    body_name: peg_v1_hook
+    body_name: peg_v1_1
     model_path: "../models/mujoco/props/board_1/peg_v1_1.xml"
     pose:
       position: [0.6, -0.15, 0.715]
@@ -56,7 +64,7 @@ objects:
     type: dynamic
     role: object
     color: red
-    body_name: peg_v1_bar
+    body_name: peg_v1_3
     model_path: "../models/mujoco/props/board_1/peg_v1_3.xml"
     pose:
       position: [0.55, 0.0, 0.715]
@@ -66,7 +74,7 @@ objects:
     type: dynamic
     role: object
     color: red
-    body_name: peg_v1_bar
+    body_name: peg_v1_3
     model_path: "../models/mujoco/props/board_1/peg_v1_3.xml"
     pose:
       position: [0.86, 0.20, 0.715]
@@ -76,7 +84,7 @@ objects:
     type: dynamic
     role: object
     color: blue
-    body_name: peg_v1_bow
+    body_name: peg_v1_4
     model_path: "../models/mujoco/props/board_1/peg_v1_4.xml"
     pose:
       position: [0.86, -0.20, 0.715]

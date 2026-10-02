@@ -12,7 +12,9 @@ Protocol (msgpack over UDP):
       "color_bin_mapping": str,      # JSON, e.g. '{"red":"bin_1","blue":"bin_2"}'
       "objects": [
           {"name": str, "color": str, "model_path": str, "x": float, "y": float, "z": float,
-           "yaw": float, "scale": float},
+           "yaw": float, "scale": float,
+           "quat": [w, x, y, z]},   # optional; full orientation, wins over yaw
+          ...
           ...
       ],
       "lighting": {...}
@@ -24,6 +26,13 @@ and the Avatar reads them directly from the (merged) sim_config at startup.
 Spawn parameters are read from the task config's "spawn:" block (if present),
 falling back to the defaults below.  This means each task can define its own
 randomization ranges without touching this script.
+
+Spawn modes (task config "spawn: mode:", overridable with --spawn-mode):
+  random  (default)  role=object bodies get random x/y/yaw/scale  -- parcel sorting
+  fixed              role=object bodies go back to their pose: from the task
+                     config, scale 1.0, full orientation sent as "quat"  -- FMB
+Either way the Avatar applies the response on startup and on every
+episode_restart (home button), so "fixed" is what puts the pegs back.
 """
 
 import argparse
@@ -54,7 +63,10 @@ DEFAULT_SPAWN = {
     "min_bin_dist":    0.20,
     "yaw_range":       [0.0, 2 * math.pi],
     "scale_range":     [0.90, 1.10],
+    "mode":            "random",   # "random" | "fixed"
 }
+
+SPAWN_MODES = ("random", "fixed")
 
 MODE_WEIGHTS = {0: 0.5, 1: 0.5}
 
@@ -104,14 +116,34 @@ def resolve_merged_config(sim_config_path: str) -> tuple[dict, dict]:
     return sim_cfg, spawn_params
 
 
+def _default_pose(obj: dict):
+    """(position, quat_wxyz) from the object's pose: block, or (None, None)."""
+    pose = obj.get("pose") or {}
+    pos  = pose.get("position")
+    quat = pose.get("orientation") or [1.0, 0.0, 0.0, 0.0]
+    if pos is None:
+        return None, None
+    n = math.sqrt(sum(float(c) ** 2 for c in quat)) or 1.0
+    return [float(c) for c in pos], [float(c) / n for c in quat]
+
+
+def _yaw_from_quat(q) -> float:
+    """Z-yaw of a wxyz quaternion (what the scene log records as spawn_yaw)."""
+    w, x, y, z = q
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
 def build_object_defs(sim_cfg: dict) -> list:
     objects = []
     for obj in sim_cfg.get("objects", []):
         if obj.get("role") == "object":
+            pos, quat = _default_pose(obj)
             objects.append({
                 "name":       obj["name"],
                 "color":      obj.get("color", "unknown"),
                 "model_path": obj.get("model_path", ""),
+                "default_pos":  pos,
+                "default_quat": quat,
             })
     if not objects:
         log.warning("No objects with role=object found — check your task config.")
@@ -187,6 +219,39 @@ def sample_positions(n, bin_positions, spawn, rng):
     return positions
 
 
+def _sample_mode(rng):
+    modes   = list(MODE_WEIGHTS.keys())
+    weights = list(MODE_WEIGHTS.values())
+    return rng.choices(modes, weights=weights, k=1)[0]
+
+
+def fixed_episode(all_objects, bin_mapping, n_objects, rng):
+    """Every role=object body back at its task-config pose, unscaled.
+
+    Scale is pinned to 1.0 on purpose: FMB pegs are built to a 1-2 mm
+    clearance, and the random-mode 0.9-1.1 scale would make them unassemblable.
+    Lighting stays seeded-random (it does not touch the physics).
+    """
+    spawned = []
+    for obj in all_objects[:n_objects]:
+        pos, quat = obj["default_pos"], obj["default_quat"]
+        spawned.append({
+            "name":       obj["name"],
+            "color":      obj["color"],
+            "model_path": obj["model_path"],
+            "x": pos[0], "y": pos[1], "z": pos[2],
+            "yaw":   _yaw_from_quat(quat),
+            "scale": 1.0,
+            "quat":  quat,
+        })
+    return {
+        "mode":              _sample_mode(rng),
+        "color_bin_mapping": json.dumps(bin_mapping),
+        "objects":           spawned,
+        "lighting":          sample_lighting(rng),
+    }
+
+
 def sample_episode(all_objects, bin_mapping, bin_positions, n_objects, spawn, rng):
     active    = all_objects[:n_objects]
     positions = sample_positions(len(active), bin_positions, spawn, rng)
@@ -205,12 +270,8 @@ def sample_episode(all_objects, bin_mapping, bin_positions, n_objects, spawn, rn
             "scale": rng.uniform(*scale_range),
         })
 
-    modes   = list(MODE_WEIGHTS.keys())
-    weights = list(MODE_WEIGHTS.values())
-    mode    = rng.choices(modes, weights=weights, k=1)[0]
-
     return {
-        "mode":              mode,
+        "mode":              _sample_mode(rng),
         "color_bin_mapping": json.dumps(bin_mapping),
         "objects":           spawned,
         "lighting":          sample_lighting(rng),
@@ -341,11 +402,24 @@ def build_model_paths(sim_cfg: dict) -> dict:
 # Server
 # ---------------------------------------------------------------------------
 
-def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=True):
+def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=True,
+        spawn_mode_override=None):
     sim_cfg, spawn = resolve_merged_config(sim_config_path)
     all_objects    = build_object_defs(sim_cfg)
     bin_mapping    = build_bin_mapping(sim_cfg)
     bin_positions  = build_bin_positions(sim_cfg)
+
+    spawn_mode = spawn_mode_override or spawn.get("mode", "random")
+    if spawn_mode not in SPAWN_MODES:
+        log.error("Unknown spawn mode %r (expected one of %s)", spawn_mode, SPAWN_MODES)
+        sys.exit(1)
+    spawn["mode"] = spawn_mode
+    if spawn_mode == "fixed":
+        missing = [o["name"] for o in all_objects if o["default_pos"] is None]
+        if missing:
+            log.error("spawn mode 'fixed' needs pose.position for every role=object; missing: %s",
+                      missing)
+            sys.exit(1)
 
     # --- replay mode: serve recorded scenes in order, one per request --------
     replay_queue = []
@@ -372,6 +446,8 @@ def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=Tr
     n_objects = min(n_objects, len(all_objects))
 
     log.info("Loaded %d pickable objects, will spawn %d per episode.", len(all_objects), n_objects)
+    log.info("Spawn mode: %s%s", spawn_mode,
+             "  (objects reset to task-config poses, scale 1.0)" if spawn_mode == "fixed" else "")
     log.info("Bin mapping: %s", bin_mapping)
     log.info("Bin positions (exclusion zone): %s", bin_positions)
     log.info("Spawn params: %s", spawn)
@@ -407,7 +483,11 @@ def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=Tr
                 else:
                     seed    = random.randint(0, 2**31 - 1)
                     rng     = random.Random(seed)
-                    episode = sample_episode(all_objects, bin_mapping, bin_positions, n_objects, spawn, rng)
+                    if spawn_mode == "fixed":
+                        episode = fixed_episode(all_objects, bin_mapping, n_objects, rng)
+                    else:
+                        episode = sample_episode(all_objects, bin_mapping, bin_positions,
+                                                 n_objects, spawn, rng)
                     episode["seed"] = seed
 
                 sock.sendto(msgpack.packb(episode), addr)
@@ -454,6 +534,12 @@ if __name__ == "__main__":
              "Defaults to all objects defined in the task config.",
     )
     parser.add_argument(
+        "--spawn-mode", choices=SPAWN_MODES, default=None,
+        help="Override the task config's spawn.mode. 'random' randomizes "
+             "role=object poses (parcels); 'fixed' puts them back at their "
+             "task-config poses every episode (FMB).",
+    )
+    parser.add_argument(
         "--replay", nargs="+", metavar="EPISODE_DIR", default=None,
         help="Replay recorded episodes instead of randomizing: serve each "
              "folder's exact recorded scene (positions, yaw, scale, lighting, "
@@ -479,4 +565,5 @@ if __name__ == "__main__":
     replay = args.replay
     if args.replay_root and args.episodes:
         replay = [str(Path(args.replay_root) / str(e).zfill(3)) for e in args.episodes]
-    run(args.sim_config, args.n_objects, replay_folders=replay, replay_loop=not args.no_loop)
+    run(args.sim_config, args.n_objects, replay_folders=replay, replay_loop=not args.no_loop,
+        spawn_mode_override=args.spawn_mode)

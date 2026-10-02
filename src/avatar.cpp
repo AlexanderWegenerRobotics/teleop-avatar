@@ -350,8 +350,27 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             auto p = obj["pose"]["position"].as<std::vector<double>>();
             def.fixed_x = p[0]; def.fixed_y = p[1]; def.fixed_z = p[2];
         }
+        if (obj["pose"] && obj["pose"]["orientation"]) {
+            auto q = obj["pose"]["orientation"].as<std::vector<double>>();
+            if (q.size() == 4) {
+                def.fixed_qw = q[0]; def.fixed_qx = q[1]; def.fixed_qy = q[2]; def.fixed_qz = q[3];
+            }
+        }
         if (role == "object") object_defs_.push_back(def);
         else if (role == "bin") bin_defs_.push_back(def);
+    }
+
+    // A body_name that doesn't match the <body> in model_path fails silently
+    // everywhere downstream (no reset, no scene.csv pose, no intention slot),
+    // so say it once, loudly, at startup.
+    if (const mjModel* m = sim_->mjModelPtr()) {
+        for (const auto& def : object_defs_) {
+            if (mj_name2id(m, mjOBJ_BODY, def.mujoco_body.c_str()) < 0)
+                std::cerr << "[AVATAR-WARN]: object '" << def.name << "': MuJoCo body '"
+                          << def.mujoco_body << "' not found -- check body_name in the task config"
+                          << " (must be <name>_<body in model_path>). It will not be reset or logged."
+                          << std::endl;
+        }
     }
 
     std::unordered_map<std::string, YAML::Node> sim_devs;
@@ -913,6 +932,8 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
         so.color      = def.color;
         so.model_path = def.model_path;
         so.x = def.fixed_x; so.y = def.fixed_y; so.z = def.fixed_z;
+        so.has_quat = true;
+        so.qw = def.fixed_qw; so.qx = def.fixed_qx; so.qy = def.fixed_qy; so.qz = def.fixed_qz;
         cfg.objects.push_back(so);
     }
 
@@ -945,6 +966,13 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
             so.z          = o.at("z").as<double>();
             so.yaw        = o.count("yaw")   ? o.at("yaw").as<double>()   : 0.0;
             so.scale      = o.count("scale") ? o.at("scale").as<double>() : 1.0;
+            if (o.count("quat")) {
+                auto q = o.at("quat").as<std::vector<double>>();
+                if (q.size() == 4) {
+                    so.has_quat = true;
+                    so.qw = q[0]; so.qx = q[1]; so.qy = q[2]; so.qz = q[3];
+                }
+            }
             cfg.objects.push_back(so);
         }
 
@@ -1023,9 +1051,11 @@ void Avatar::applyEpisodeConfig(const EpisodeConfig& cfg) {
         auto it = std::find_if(object_defs_.begin(), object_defs_.end(),
             [&](const ObjectDef& d){ return d.name == so.name; });
         if (it == object_defs_.end()) continue;
-        Eigen::Quaterniond q_yaw(Eigen::AngleAxisd(so.yaw, Eigen::Vector3d::UnitZ()));
+        Eigen::Quaterniond q_spawn = so.has_quat
+            ? Eigen::Quaterniond(so.qw, so.qx, so.qy, so.qz).normalized()
+            : Eigen::Quaterniond(Eigen::AngleAxisd(so.yaw, Eigen::Vector3d::UnitZ()));
         sim_->setFreeBodyPose(it->mujoco_body,
-            Eigen::Vector3d(so.x, so.y, so.z), q_yaw);
+            Eigen::Vector3d(so.x, so.y, so.z), q_spawn);
         sim_->setBodyScale(it->mujoco_body, so.scale);
         std::cout << "[AVATAR-INFO]:   " << so.name << " (" << so.color
                   << ") -> (" << so.x << "," << so.y << "," << so.z

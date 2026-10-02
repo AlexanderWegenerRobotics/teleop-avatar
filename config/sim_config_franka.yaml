@@ -1,12 +1,12 @@
 rendering:
-  enabled: true
+  enabled: false
   fps: 15
 
 simulation:
   timestep: 0.001
   control_frequency: 1000
   model_path: "../models/mujoco/scenes/world_scene.xml"
-  task_config: "../config/tasks/sorting.yaml"
+  task_config: "../config/tasks/FMB_board_1.yaml"
 
   ground_truth_wrench:
     enabled: true

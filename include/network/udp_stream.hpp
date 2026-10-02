@@ -8,9 +8,18 @@
 #include <functional>
 #include <type_traits>
 #include <utility>
+#include <algorithm>
 
 #include "udp_transport.hpp"
 #include "common.hpp"
+
+// True for send types that carry the network-delay echo (ArmStateMsg, see
+// common.hpp). doSend fills those two fields; every other stream is untouched.
+template<typename T, typename = void>
+struct HasCmdEcho : std::false_type {};
+template<typename T>
+struct HasCmdEcho<T, std::void_t<decltype(std::declval<T&>().echo_cmd_sequence),
+                                 decltype(std::declval<T&>().echo_hold_us)>> : std::true_type {};
 
 struct UdpStreamConfig {
     TransportConfig transport;
@@ -112,8 +121,28 @@ private:
 
     void doSend() {
         std::lock_guard<std::mutex> lock(send_mtx_);
+        const uint64_t now_ns = timestamp_ns();
         send_msg_.header.sequence = ++send_seq_;
-        send_msg_.header.timestamp_ns = timestamp_ns();
+        send_msg_.header.timestamp_ns = now_ns;
+        if constexpr (HasCmdEcho<TSend>::value) {
+            // Echo the newest command RECEIVED and how long it has been here,
+            // so the peer can take this side's dwell out of its round trip
+            // (common.hpp, ArmStateMsg). Stamped now, not in setSendData, so
+            // the send-thread wait is part of the hold rather than of the
+            // "network". seq and its arrival time are read under the same lock
+            // they are written under, so they always belong together.
+            uint32_t echo_seq = 0;
+            uint64_t echo_recv_ns = 0;
+            {
+                std::lock_guard<std::mutex> rlock(recv_mtx_);
+                echo_seq     = last_recv_seq_;
+                echo_recv_ns = last_recv_ns_;
+            }
+            send_msg_.echo_cmd_sequence = echo_seq;
+            send_msg_.echo_hold_us = (echo_seq != 0 && echo_recv_ns != 0 && now_ns > echo_recv_ns)
+                ? static_cast<uint32_t>(std::min<uint64_t>((now_ns - echo_recv_ns) / 1000, UINT32_MAX))
+                : 0;
+        }
         send_msg_.header.state = sticky_state_;
         send_msg_.header.fault_code = sticky_fault_;
         transport_.sendTo(&send_msg_, sizeof(TSend));
@@ -143,6 +172,7 @@ private:
                     recv_msg_ = msg;
                     has_new_ = true;
                     last_recv_seq_ = seq;
+                    last_recv_ns_  = timestamp_ns();
                     last_recv_time_ = std::chrono::steady_clock::now();
                     accepted = true;
                 }
@@ -172,6 +202,7 @@ private:
     std::mutex        recv_mtx_;
     TRecv             recv_msg_;
     std::atomic<bool> has_new_{false};
+    uint64_t          last_recv_ns_ = 0;   // timestamp_ns() at acceptance of last_recv_seq_; guarded by recv_mtx_
 
     std::chrono::steady_clock::time_point last_recv_time_;
     std::atomic<uint32_t> last_recv_seq_{0};
