@@ -63,8 +63,6 @@ double PostureOptimizer::swivelAngle(const Vector7& q) const {
     return std::atan2(g.e.dot(g.t), g.e.dot(g.r));
 }
 
-// ---------------------------------------------------------------------------
-
 PostureOptimizer::ArmGeometry PostureOptimizer::geometry(const Vector7& q) const {
     ArmGeometry g;
     if (!kin_.pose) return g;
@@ -127,10 +125,7 @@ Vector7 PostureOptimizer::nullspaceTangent(const Matrix6x7& J) {
     return v;
 }
 
-// Samples q + s*v leave the self-motion manifold at second order in s; one
-// damped Gauss-Newton step on the EE pose error puts them back so the joint
-// margins and the elbow direction are evaluated at the wrist pose that will
-// actually be held.
+// Damped Gauss-Newton on the EE pose error to pull q + s*v back onto the self-motion manifold.
 Vector7 PostureOptimizer::projectToManifold(const Vector7& q_s, const Eigen::Isometry3d& x_ref) const {
     Vector7 q = q_s;
     constexpr double kLambdaSq = 1e-4;
@@ -145,8 +140,6 @@ Vector7 PostureOptimizer::projectToManifold(const Vector7& q_s, const Eigen::Iso
     }
     return q;
 }
-
-// ---------------------------------------------------------------------------
 
 Vector7 PostureOptimizer::update(const Vector7& q, double dt) {
     if (!enabled()) {
@@ -209,8 +202,7 @@ Vector7 PostureOptimizer::update(const Vector7& q, double dt) {
         }
         s_opt = std::clamp(s_opt, s[lo], s[hi]);
     } else {
-        // Already inside the margin: move toward the sample that regains the
-        // most margin, preferring the nearer one when tied.
+        // already inside the margin: go to the sample with the most margin
         for (int k = 0; k < n; ++k) {
             if (mrg[k] > mrg[best] + 1e-9 ||
                 (std::abs(mrg[k] - mrg[best]) <= 1e-9 && std::abs(s[k]) < std::abs(s[best])))

@@ -13,24 +13,13 @@
 #include <string>
 #include <cstring>
 
-// ---------------------------------------------------------------------------
-// PIMPL: HDF5 handles
-// ---------------------------------------------------------------------------
-
 struct VideoLogger::Impl {
     hid_t file_id  = H5I_INVALID_HID;
     hid_t dset_img = H5I_INVALID_HID;
     hid_t dset_ts  = H5I_INVALID_HID;
     hid_t dset_fid = H5I_INVALID_HID;
 
-    // Sidecar timestamps CSV, written alongside the HDF5.
-    //
-    // The timestamps are already in the file as /observations/timestamp_ns, so
-    // this is redundant on its own. It exists for parity: a channel that
-    // streams gets its timestamps as <file>.timestamps.csv from
-    // VideoStreamer::startEncodedLog, and a log-only channel got nothing an
-    // analysis script could read without opening HDF5. Same base name and the
-    // same first three column names, so one loader handles both.
+    // sidecar timestamps CSV, same format as the streamer's encoded log
     std::FILE* ts_csv = nullptr;
 
     hsize_t frame_count = 0;
@@ -45,12 +34,8 @@ struct VideoLogger::Impl {
     }
 };
 
-// ---------------------------------------------------------------------------
-// HDF5 attribute helpers
-// ---------------------------------------------------------------------------
-
 static void writeStrAttr(hid_t loc, const char* name, const std::string& value) {
-    // Use variable-length strings so h5py reads them back without size-zero issues.
+    // variable-length string so h5py reads it correctly
     hid_t atype = H5Tcopy(H5T_C_S1);
     H5Tset_size(atype, H5T_VARIABLE);
     H5Tset_strpad(atype, H5T_STR_NULLTERM);
@@ -69,10 +54,6 @@ static void writeI32Attr(hid_t loc, const char* name, int32_t value) {
     H5Aclose(attr); H5Sclose(space);
 }
 
-// ---------------------------------------------------------------------------
-// 1-D extendable uint64 dataset (timestamps / frame IDs)
-// ---------------------------------------------------------------------------
-
 static hid_t make1DDataset(hid_t file, const char* path) {
     hsize_t init[1]  = {0};
     hsize_t max[1]   = {H5S_UNLIMITED};
@@ -88,11 +69,6 @@ static hid_t make1DDataset(hid_t file, const char* path) {
     return dset;
 }
 
-// ---------------------------------------------------------------------------
-// Constructor / Destructor
-// ---------------------------------------------------------------------------
-
-// Starts the background writer thread.
 VideoLogger::VideoLogger(const LoggerConfig& config)
     : config_(config), impl_(std::make_unique<Impl>())
 {
@@ -100,7 +76,6 @@ VideoLogger::VideoLogger(const LoggerConfig& config)
     writer_  = std::thread(&VideoLogger::writerLoop, this);
 }
 
-// Finalises any open episode and joins the writer thread.
 VideoLogger::~VideoLogger() {
     stopEpisode("destructor");
     running_ = false;
@@ -108,11 +83,6 @@ VideoLogger::~VideoLogger() {
     if (writer_.joinable()) writer_.join();
 }
 
-// ---------------------------------------------------------------------------
-// Episode lifecycle (public: enqueue + signal)
-// ---------------------------------------------------------------------------
-
-// Queues a close (if needed) then an open command for the writer thread.
 void VideoLogger::startEpisode(const std::string& session_id, int episode_index,
                                 const std::string& log_dir) {
     {
@@ -134,7 +104,6 @@ void VideoLogger::startEpisode(const std::string& session_id, int episode_index,
     queue_cv_.notify_one();
 }
 
-// Queues a close command and blocks until the writer has drained and finalised the file.
 void VideoLogger::stopEpisode(const std::string& reason) {
     if (!episode_active_.exchange(false)) return;
 
@@ -151,11 +120,6 @@ void VideoLogger::stopEpisode(const std::string& reason) {
     drain_cv_.wait(lk, [this] { return queue_.empty() && !processing_; });
 }
 
-// ---------------------------------------------------------------------------
-// Frame submission (public: copy + enqueue, drop when full)
-// ---------------------------------------------------------------------------
-
-// Copies the frame into the writer queue, dropping it if the writer is behind.
 void VideoLogger::writeFrame(const uint8_t* rgb, uint32_t src_w, uint32_t src_h,
                               uint64_t timestamp_ns, uint64_t frame_id) {
     if (!episode_active_.load()) return;
@@ -179,11 +143,7 @@ void VideoLogger::writeFrame(const uint8_t* rgb, uint32_t src_w, uint32_t src_h,
     queue_cv_.notify_one();
 }
 
-// ---------------------------------------------------------------------------
-// Writer thread
-// ---------------------------------------------------------------------------
-
-// Pops jobs in order and dispatches them to the HDF5 open/write/close handlers.
+// Writer thread loop, runs open/write/close jobs in order.
 void VideoLogger::writerLoop() {
     while (true) {
         Job job;
@@ -220,7 +180,7 @@ void VideoLogger::writerLoop() {
     }
 }
 
-// Writer thread: creates the HDF5 file and extendable datasets for one episode.
+// Creates the HDF5 file and datasets for one episode.
 void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_index,
                                    const std::string& log_dir) {
     if (impl_->file_id != H5I_INVALID_HID) impl_->close();
@@ -229,7 +189,6 @@ void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_ind
     namespace fs = std::filesystem;
     fs::path dir;
     if (!log_dir.empty()) {
-        // Use the path supplied by the avatar (already created, absolute).
         dir = fs::path(log_dir);
     } else {
         char idx_buf[8];
@@ -240,7 +199,7 @@ void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_ind
     std::string filename = "images_" + config_.camera_name + ".hdf5";
     std::string path = (dir / filename).string();
 
-    // Write with the earliest compatible format so any HDF5 1.8+ reader (h5py, etc.) can open it.
+    // earliest format so HDF5 1.8+ readers can open it
     hid_t fapl = H5Pcreate(H5P_FILE_ACCESS);
     H5Pset_libver_bounds(fapl, H5F_LIBVER_EARLIEST, H5F_LIBVER_LATEST);
     impl_->file_id = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, fapl);
@@ -251,7 +210,6 @@ void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_ind
         return;
     }
 
-    // Groups: /observations/images/
     hid_t obs_grp = H5Gcreate2(impl_->file_id, "/observations",
                                 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     hid_t img_grp = H5Gcreate2(obs_grp, "images",
@@ -259,7 +217,7 @@ void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_ind
     H5Gclose(img_grp);
     H5Gclose(obs_grp);
 
-    // Image dataset: (T, H, W, 3) uint8, chunked+compressed
+    // (T, H, W, 3) uint8, chunked + compressed
     {
         hsize_t H = static_cast<hsize_t>(config_.height);
         hsize_t W = static_cast<hsize_t>(config_.width);
@@ -288,16 +246,13 @@ void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_ind
         }
     }
 
-    // 1-D datasets for metadata
     impl_->dset_ts  = make1DDataset(impl_->file_id, "/observations/timestamp_ns");
     impl_->dset_fid = make1DDataset(impl_->file_id, "/observations/frame_id");
 
-    // File-level attributes
     writeStrAttr(impl_->file_id, "session_id",     session_id);
     writeI32Attr(impl_->file_id, "episode_index",  episode_index);
 
-    // Sidecar CSV. Failing to open it is not fatal -- the same timestamps are
-    // in the HDF5, so an episode still records without it.
+    // not fatal if this fails, timestamps are in the HDF5 too
     {
         std::string ts_path = (dir / ("images_" + config_.camera_name + ".timestamps.csv")).string();
         impl_->ts_csv = std::fopen(ts_path.c_str(), "wb");
@@ -315,7 +270,6 @@ void VideoLogger::openEpisodeImpl(const std::string& session_id, int episode_ind
     std::cout << "[VideoLogger:" << config_.camera_name << "] Episode started -> " << path << std::endl;
 }
 
-// Writer thread: writes closing attributes and closes the HDF5 file.
 void VideoLogger::closeEpisodeImpl(const std::string& reason) {
     if (impl_->file_id == H5I_INVALID_HID) return;
 
@@ -330,7 +284,7 @@ void VideoLogger::closeEpisodeImpl(const std::string& reason) {
     impl_->close();
 }
 
-// Writer thread: crops/resizes one frame and appends it to the open datasets.
+// Crops/resizes one frame and appends it to the datasets.
 void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t src_h,
                                   uint64_t timestamp_ns, uint64_t frame_id) {
     if (impl_->file_id == H5I_INVALID_HID) return;
@@ -342,22 +296,19 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
     uint32_t dst_w = static_cast<uint32_t>(config_.width);
     uint32_t dst_h = static_cast<uint32_t>(config_.height);
 
-    // ── Determine crop window ──────────────────────────────────────────────
     int cx = config_.crop_x, cy = config_.crop_y;
     int cw = config_.crop_w, ch = config_.crop_h;
 
     bool do_crop = (cw > 0 && ch > 0);
 
     if (!do_crop && config_.center_crop) {
-        // Auto center-crop: largest rectangle matching dst aspect ratio.
+        // largest centered rect with dst aspect ratio
         float dst_aspect = static_cast<float>(dst_w) / static_cast<float>(dst_h);
         float src_aspect = static_cast<float>(src_w) / static_cast<float>(src_h);
         if (src_aspect > dst_aspect) {
-            // Source is wider → crop left/right
             ch = static_cast<int>(src_h);
             cw = static_cast<int>(std::round(src_h * dst_aspect));
         } else {
-            // Source is taller → crop top/bottom
             cw = static_cast<int>(src_w);
             ch = static_cast<int>(std::round(src_w / dst_aspect));
         }
@@ -366,9 +317,7 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
         do_crop = true;
     }
 
-    // ── Apply crop (build a row-contiguous crop buffer) ────────────────────
     if (do_crop) {
-        // Clamp to source bounds
         cx = std::max(0, std::min(cx, static_cast<int>(src_w) - 1));
         cy = std::max(0, std::min(cy, static_cast<int>(src_h) - 1));
         cw = std::min(cw, static_cast<int>(src_w) - cx);
@@ -385,7 +334,6 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
         effective_src_h   = static_cast<uint32_t>(ch);
     }
 
-    // ── Resize if needed ───────────────────────────────────────────────────
     if (effective_src_w != dst_w || effective_src_h != dst_h) {
         resize_buf_.resize(dst_w * dst_h * 3);
         resizeFrame(frame, effective_src_w, effective_src_h, resize_buf_.data(), dst_w, dst_h);
@@ -396,7 +344,6 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
     hsize_t H = static_cast<hsize_t>(dst_h);
     hsize_t W = static_cast<hsize_t>(dst_w);
 
-    // ── Extend and write image ─────────────────────────────────────────────
     {
         hsize_t new_dims[4] = {T + 1, H, W, 3};
         H5Dset_extent(impl_->dset_img, new_dims);
@@ -414,7 +361,6 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
         H5Sclose(fspace);
     }
 
-    // ── Extend and write timestamp ─────────────────────────────────────────
     {
         hsize_t new_dims[1] = {T + 1};
         H5Dset_extent(impl_->dset_ts, new_dims);
@@ -432,7 +378,6 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
         H5Sclose(fspace);
     }
 
-    // ── Extend and write frame_id ──────────────────────────────────────────
     {
         hsize_t new_dims[1] = {T + 1};
         H5Dset_extent(impl_->dset_fid, new_dims);
@@ -450,9 +395,7 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
         H5Sclose(fspace);
     }
 
-    // frame_idx is the row index in the HDF5 datasets, so the CSV and the file
-    // are joinable both ways; frame_id is the channel-global counter, which
-    // skips when the writer queue drops a frame.
+    // T = HDF5 row index, frame_id skips when the queue drops frames
     if (impl_->ts_csv) {
         const uint64_t now_ns = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -466,10 +409,6 @@ void VideoLogger::writeFrameImpl(const uint8_t* rgb, uint32_t src_w, uint32_t sr
 
     ++impl_->frame_count;
 }
-
-// ---------------------------------------------------------------------------
-// Resize: area-weighted box filter (correct anti-aliased downscale)
-// ---------------------------------------------------------------------------
 
 void VideoLogger::resizeFrame(const uint8_t* src, uint32_t src_w, uint32_t src_h,
                                uint8_t* dst,       uint32_t dst_w, uint32_t dst_h) {

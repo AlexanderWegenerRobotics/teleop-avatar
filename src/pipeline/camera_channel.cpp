@@ -22,10 +22,8 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
                   << " This channel will receive frames but not process them.\n";
     }
 
-    // ── Source ────────────────────────────────────────────────────────────
     if (config_.stereo_combined) {
-        // Side-by-side stereo: both eyes composited into one 2×width stream.
-        // stream_width is set to 2×single-eye width in the YAML config directly.
+        // stream_width must be set to 2x eye width in the YAML
         source_ = std::make_unique<StereoMuJoCoSource>(
             config_.shm_name, config_.stereo_partner_shm, config_.fps);
     } else if (config_.source_type == "realsense") {
@@ -55,15 +53,13 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
         source_ = std::make_unique<MuJoCoSource>(config_.shm_name, config_.fps);
     }
 
-    // ── Streamer (optional) ───────────────────────────────────────────────
-    // When this channel both streams and logs, the streamer tees its already-encoded
-    // H.264 to a per-episode file (no separate CPU encode/resize/gzip).
+    // if streaming and logging, the streamer logs its encoded H.264 directly
     if (config_.stream_enabled) {
         config_.stream.log_enabled = config_.log_enabled;
         streamer_ = std::make_unique<VideoStreamer>(config_.stream);
     }
 
-    // ── Logger (raw-HDF5 fallback, only for log-only channels with no stream) ──
+    // raw HDF5 logger only for log-only channels
     if (config_.log_enabled && !config_.stream_enabled) {
         LoggerConfig lcfg   = config_.log;
         lcfg.camera_name    = config_.name;
@@ -79,13 +75,9 @@ void CameraChannel::start() {
     source_->start([this](const uint8_t* rgb, uint32_t w, uint32_t h, uint64_t capture_time_ns) {
         const uint64_t frame_id = frame_count_.fetch_add(1, std::memory_order_relaxed);
 
-        // Streamer gets the raw frame — it appends its own timestamp rows internally,
-        // and uses capture_time_ns to log the capture->encode latency leg.
         if (streamer_) streamer_->pushFrame(rgb, w, h, capture_time_ns);
 
-        // Logger gets the clean frame without any embedded timestamp rows. Prefer the
-        // source's real capture_time_ns over a receipt-time stamp; fall back to "now"
-        // only if a source hasn't got a real one yet (shouldn't happen once frames flow).
+        // fall back to now if the source gave no capture time
         if (logger_) {
             const uint64_t ts = capture_time_ns != 0 ? capture_time_ns
                 : static_cast<uint64_t>(
@@ -104,7 +96,6 @@ void CameraChannel::start() {
 void CameraChannel::stop() {
     if (source_)   source_->stop();
     if (streamer_) streamer_->stop();
-    // Logger is closed via episode lifecycle (stopEpisode); force-close here if still active.
     if (logger_ && logger_->isActive())
         logger_->stopEpisode("channel_stop");
 }
@@ -112,7 +103,7 @@ void CameraChannel::stop() {
 void CameraChannel::onEpisodeStart(const std::string& session_id, int episode_index,
                                     const std::string& log_dir) {
     if (!config_.log_enabled) return;
-    if (episode_index == logging_idx_) return;   // duplicate start (boot re-announce); ignore
+    if (episode_index == logging_idx_) return;   // duplicate start
     logging_idx_ = episode_index;
 
     if (streamer_) {

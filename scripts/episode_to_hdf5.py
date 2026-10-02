@@ -1,28 +1,8 @@
 """
-episode_to_hdf5.py  -  Build a synchronized training HDF5 from a logged episode.
+Build a synchronized training HDF5 from a logged episode (video + telemetry resampled onto a fixed-rate grid).
+head_cam_stereo is split into head_cam_left/right; gaze x in full-frame px needs eye_width subtracted for the right eye.
 
-Each episode folder holds video elementary streams (video_<cam>.h264) plus a
-per-frame timestamp sidecar (video_<cam>.timestamps.csv) and telemetry CSVs
-(arm_left.csv, arm_right.csv, head.csv, scene.csv).  Video and telemetry run at
-different, uneven rates, so they are aligned by wall-clock: a fixed-rate master
-grid is built over the overlapping window and every stream is sampled
-nearest-neighbour onto it.
-
-If a video has no sidecar (older logs), the wall-clock is recovered from the two
-marker rows the streamer embeds at the bottom of every frame; failing that, a
-uniform rate from the container is assumed.
-
-head_cam_stereo is a side-by-side stereo stream (left eye: x in [0, W/2),
-right eye: x in [W/2, W)).  It is split at conversion time into head_cam_left
-and head_cam_right.  Gaze pixel coordinates logged in full-frame space must have
-eye_width subtracted from x to map into the right-eye image.
-
-Usage:
-    python episode_to_hdf5.py logs/007                  # one episode -> logs/007/episode.hdf5
-    python episode_to_hdf5.py logs --all                # every NNN/ folder under logs/
-    python episode_to_hdf5.py logs/007 --rate 30 --scale 0.25
-    python episode_to_hdf5.py --overwrite
-    python scripts/episode_to_hdf5.py logs --all --overwrite --jobs -1
+Usage: python episode_to_hdf5.py <logs/007 | logs --all> [--rate 30] [--scale 0.25] [--overwrite] [--jobs -1]
 """
 
 import argparse
@@ -52,8 +32,6 @@ except ImportError:
 
 MARKER_ROWS = 2
 
-
-# ── Video ──────────────────────────────────────────────────────────────────
 
 def probe_dims(path):
     """Returns (width, full_height, fps) of an H.264 elementary stream."""
@@ -125,8 +103,6 @@ def load_video(path, scale):
     return np.asarray(frames), np.asarray(ts, np.int64), np.asarray(fids, np.int64)
 
 
-# ── Telemetry ────────────────────────────────────────────────────────────────
-
 def load_csv(path):
     """Returns (header list, data[N,cols] float, wall_clock_ns[N])."""
     with open(path) as f:
@@ -163,8 +139,6 @@ def col_one(header, data, name):
     return data[:, header.index(name)] if name in header else None
 
 
-# ── Alignment ────────────────────────────────────────────────────────────────
-
 def nearest_idx(stream_ts, grid_ts):
     """For each grid time, index of the nearest stream sample."""
     pos = np.searchsorted(stream_ts, grid_ts)
@@ -172,8 +146,6 @@ def nearest_idx(stream_ts, grid_ts):
     left, right = stream_ts[pos - 1], stream_ts[pos]
     return np.where(np.abs(grid_ts - left) <= np.abs(right - grid_ts), pos - 1, pos)
 
-
-# ── Episode ────────────────────────────────────────────────────────────────
 
 def read_meta(folder):
     """Pulls seed/mode/color_bin_mapping/success from arm_left_meta.csv if present."""
@@ -198,11 +170,7 @@ def read_meta(folder):
 
 
 def load_intent(folder, grid):
-    """
-    Loads intention_log.csv and resamples it onto grid (int64 ns timestamps).
-    Returns a dict of {col_name: array[T]} using nearest-neighbor alignment on
-    timestamp_arrival_ns.  Returns None if the file is absent or unreadable.
-    """
+    """Intention log resampled onto grid (nearest by timestamp_arrival_ns), or None."""
     path = os.path.join(folder, "intention_log.csv")
     if not os.path.exists(path):
         return None
@@ -228,11 +196,7 @@ def load_intent(folder, grid):
 
 
 def load_camera_params(folder, params_path):
-    """
-    Loads camera intrinsics/extrinsics from a JSON file.
-    Searches: explicit path > <folder>/camera_params.json > <folder>/../camera_params.json
-    Returns dict {cam_name: {fx,fy,cx,cy,width,height,T_world_cam[[4,4]]}} or {}.
-    """
+    """Camera params from explicit path, <folder>/ or <folder>/../camera_params.json, else {}."""
     candidates = []
     if params_path:
         candidates.append(params_path)
@@ -367,14 +331,7 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
         for arm, (hdr, data, ts) in arms.items():
             sel = nearest_idx(ts, grid)
             g = obs.create_group(arm)
-            # tau_cmd_ is optional: episodes logged before it was added simply
-            # won't have the columns, and col_group returns None for those.
-            # O_T_EE_world_ / O_T_EE_cmd_world_ (T_base_ * O_T_EE, see data_logger.hpp)
-            # are copied straight through rather than backfilled afterwards: the
-            # world frame is what teleop-policy trains on and what the absolute
-            # command channel expects, so a fresh conversion is usable as-is.
-            # Optional like tau_cmd_ -- absent on episodes logged before the
-            # simulator wrote them, which is why schema_version is unchanged.
+            # tau_cmd_ and O_T_EE*_world_ are optional (missing in older episodes)
             for field, n in (("q_", 7), ("dq_", 7), ("tau_J_", 7), ("tau_cmd_", 7),
                              ("tau_ext_", 7), ("O_T_EE_", 16), ("O_T_EE_world_", 16),
                              ("F_ext_", 6)):

@@ -1,31 +1,7 @@
 """
-compare_gmo_truth.py  --  momentum observer vs MuJoCo ground truth
+Compare momentum observer tau_ext/F_ext against MuJoCo contact truth, truth lag-filtered like the GMO.
 
-Joins <device>_log.csv (the observer's tau_ext / F_ext) against
-<device>_wrench_truth.csv (MuJoCo's exact contact forces) on the sim_time
-column and plots them together.
-
-Two things this script does that a naive overlay does not:
-
-1. It filters the truth through the SAME first-order lag as the observer.
-   The GMO is r += K*(p - p_prev - (tau - tau_model + r)*dt) with K = 50 rad/s,
-   i.e. a ~20 ms lag and about 8 Hz of bandwidth. The truth is instantaneous.
-   Comparing them raw shows the observer's designed bandwidth as if it were
-   error. The dashed trace is the fair comparison.
-
-2. It reconciles the decomposition. tau_contact + tau_friction + tau_limit
-   must equal tau_constraint; a non-zero residual means a sign convention or a
-   constraint type is being mishandled, and nothing else in the plot is
-   trustworthy until it is flat.
-
-Joint space is the primary comparison -- it is what the observer estimates, and
-it carries no frame. F_ext is the observer's tau_ext pushed through a DAMPED
-least-squares inverse of J^T, so disagreement there can be projection error
-rather than observer error.
-
-Usage:
-    python compare_gmo_truth.py <log_dir> [--device arm_left] [--k-gmo 50]
-    python compare_gmo_truth.py build/log --device arm_right --save out.png
+Usage: python compare_gmo_truth.py <log_dir> [--device arm_left] [--k-gmo 50] [--save out.png]
 """
 
 import argparse
@@ -52,7 +28,7 @@ def cols(df, base, n):
 
 
 def first_order(x, t, k):
-    """Same lag the observer has: dy/dt = k*(x - y), integrated on t."""
+    """First-order lag dy/dt = k*(x - y), same as the observer."""
     y = np.zeros_like(x)
     if len(t) == 0:
         return y

@@ -18,25 +18,8 @@
 #include <sys/resource.h>
 #endif
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  set_realtime — pin a thread to a core and, where we own scheduling, raise it
-//  to real-time priority.
-//
-//  Windows                : affinity + THREAD_PRIORITY_TIME_CRITICAL (sim build).
-//  Linux, no libfranka    : affinity + SCHED_FIFO 80. Nobody else sets priority.
-//  Linux + libfranka      : affinity ONLY.
-//  macOS                  : NO affinity (see below) + time-constraint policy.
-//
-//  The Linux+Franka case used to compile to nothing at all, on the assumption
-//  that "libfranka owns RT scheduling". That is only half true: libfranka raises
-//  the priority of whichever thread calls Robot::control(), but it never touches
-//  affinity — and with RealtimeConfig::kIgnore it will silently continue at
-//  SCHED_OTHER if it cannot raise priority at all. So the 1 kHz loop was left
-//  both unpinned and (potentially) non-RT. We still must not call
-//  pthread_setschedparam here or we would be fighting libfranka for the policy,
-//  but pinning is ours to do and is the difference between the control loop
-//  living on a quiet core and sharing one with the network stack.
-// ─────────────────────────────────────────────────────────────────────────────
+// Pin a thread to a core and raise its priority where we own scheduling.
+// With libfranka only affinity is set, libfranka owns the priority.
 inline void set_realtime(std::thread& t, int cpu_core) {
     if (!t.joinable() || cpu_core < 0) return;
 
@@ -47,34 +30,20 @@ inline void set_realtime(std::thread& t, int cpu_core) {
     if (!SetThreadPriority(h, THREAD_PRIORITY_TIME_CRITICAL))
         std::cout << "[WARN] rt: SetThreadPriority(TIME_CRITICAL) failed." << std::endl;
 #elif defined(__APPLE__)
-    // macOS has neither cpu_set_t nor pthread_setaffinity_np. Its nearest
-    // equivalent, THREAD_AFFINITY_POLICY, expresses "these threads share a
-    // cache" rather than "run on core N", and on Apple Silicon it is ignored
-    // outright. There is no way to pin a thread here, so we do not pretend to.
-    //
-    // What macOS does offer is THREAD_TIME_CONSTRAINT_POLICY, which is the real
-    // analogue of SCHED_FIFO: it tells the scheduler this thread needs
-    // `computation` time out of every `period`. That is worth setting for the
-    // same reason the Linux branch sets SCHED_FIFO -- in a sim build we own the
-    // loop timing.
-    //
-    // This path exists so the project builds and runs on a laptop for
-    // development. It is NOT a real-time platform: expect the loop-rate
-    // quantisation described in Robot::control to be worse here, not better.
+    // no core pinning on macOS, time-constraint policy only (dev builds, not real-time)
     (void)cpu_core;
 
 #ifndef WITH_FRANKA
     mach_timebase_info_data_t tb{};
     if (mach_timebase_info(&tb) == KERN_SUCCESS && tb.numer != 0) {
-        // Express the 1 kHz control period in mach absolute-time units.
         const double ns_per_tick = static_cast<double>(tb.numer) / tb.denom;
         const auto to_ticks = [&](double ns) {
             return static_cast<uint32_t>(ns / ns_per_tick);
         };
         thread_time_constraint_policy_data_t pol{};
-        pol.period      = to_ticks(1e6);   // 1 ms nominal loop period
-        pol.computation = to_ticks(5e5);   // ask for 0.5 ms of it
-        pol.constraint  = to_ticks(1e6);   // must finish within the period
+        pol.period      = to_ticks(1e6);   // ns
+        pol.computation = to_ticks(5e5);
+        pol.constraint  = to_ticks(1e6);
         pol.preemptible = 0;
         kern_return_t kr = thread_policy_set(
             pthread_mach_thread_np(t.native_handle()),
@@ -97,7 +66,6 @@ inline void set_realtime(std::thread& t, int cpu_core) {
                   << ") failed (rc=" << rc << ")." << std::endl;
 
 #ifndef WITH_FRANKA
-    // Sim-only: we are the ones driving the loop, so we set the policy too.
     sched_param sp{};
     sp.sched_priority = 80;
     rc = pthread_setschedparam(t.native_handle(), SCHED_FIFO, &sp);
@@ -108,16 +76,7 @@ inline void set_realtime(std::thread& t, int cpu_core) {
 #endif
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  warn_if_no_realtime — loud check for the failure mode RealtimeConfig::kIgnore
-//  hides.
-//
-//  kEnforce would make libfranka throw when the process cannot obtain real-time
-//  priority. We deliberately run kIgnore (deployment constraint), which means
-//  that failure is silent and shows up much later as
-//  control_command_success_rate < 1 followed by a reflex abort. This gives us the
-//  loud version of the same diagnosis at startup, without changing the config.
-// ─────────────────────────────────────────────────────────────────────────────
+// Warn at startup if the process cannot get RT priority (kIgnore hides this).
 inline void warn_if_no_realtime(const std::string& who) {
 #if defined(__linux__)
     rlimit rl{};

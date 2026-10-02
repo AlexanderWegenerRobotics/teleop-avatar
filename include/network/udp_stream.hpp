@@ -40,10 +40,7 @@ public:
     UdpStream(const UdpStream&) = delete;
     UdpStream& operator=(const UdpStream&) = delete;
 
-    // Invoked on the receive thread the instant a packet is accepted, before
-    // any consumer polls hasNew(). Set it before start(); it is read without a
-    // lock and is not meant to change while running. Keep the callback short --
-    // it runs on the receive thread and delays the next drain.
+    // Runs on the receive thread per accepted packet. Set before start(), keep it short.
     void setOnReceive(std::function<void()> cb) { on_receive_ = std::move(cb); }
 
     void start() {
@@ -86,12 +83,6 @@ public:
     uint32_t droppedPackets() const { return dropped_count_; }
 
 private:
-    // Send and receive used to share one thread paced at send_rate_hz, which put
-    // a 0-5 ms polling delay (at 200 Hz) in front of every inbound command on a
-    // socket that was already non-blocking. They are now independent: send stays
-    // periodic, receive blocks on the socket and fires on_receive_ as soon as a
-    // packet is accepted. The poll timeout below only bounds how quickly the
-    // thread notices a stop() request -- a packet wakes it immediately.
     void runSend() {
         auto period = std::chrono::microseconds(1000000 / config_.send_rate_hz);
         auto next = std::chrono::steady_clock::now();
@@ -160,7 +151,7 @@ private:
 
     std::function<void()> on_receive_;
 
-    // Shutdown responsiveness only; packet arrival wakes the poll immediately.
+    // only bounds stop() latency, packets wake the poll right away
     static constexpr int kRecvPollTimeoutUs = 2000;
 
     std::mutex        send_mtx_;

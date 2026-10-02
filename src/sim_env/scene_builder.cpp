@@ -14,9 +14,7 @@
 using namespace tinyxml2;
 
 
-// ===========================================================================
-// Internal TinyXML-2 helpers
-// ===========================================================================
+// TinyXML-2 helpers
 
 static std::unique_ptr<XMLDocument> loadXMLDoc(const std::string& path) {
     auto doc = std::make_unique<XMLDocument>();
@@ -45,15 +43,7 @@ static std::string docToString(XMLDocument& doc) {
 static void mergeCompilerAttributes(XMLElement* dst, const XMLElement* src) {
     for (const XMLAttribute* a = src->FirstAttribute(); a; a = a->Next()) {
         const std::string name = a->Name();
-        // meshdir/texturedir are resolved to absolute paths per-model before merging.
-        // inertiafromgeom must NOT be propagated: "true" forces MuJoCo to derive mass/inertia
-        // from geoms and ignore any explicit <inertial> element, even on unrelated bodies from
-        // other injected models. Some prop files (e.g. peg_v1_*.xml) set inertiafromgeom="true"
-        // for their own body (which has no <inertial>), but merging it into the shared global
-        // <compiler> clobbers bodies elsewhere that DO define an explicit <inertial> (e.g.
-        // board_v1, whose geoms are density="0" and rely on its explicit mass). The default
-        // "auto" behavior already does the right thing per-body (explicit inertial wins if
-        // present, geom-derived otherwise), so this attribute never needs to be global.
+        // dirs are resolved per model; inertiafromgeom made global would override explicit <inertial> of other bodies
         if (name == "meshdir" || name == "texturedir" || name == "inertiafromgeom") continue;
         dst->SetAttribute(a->Name(), a->Value());
     }
@@ -165,8 +155,7 @@ static void injectModel(const std::string& modelPath,
     if (XMLElement* ra = docRoot->FirstChildElement("asset"))
         normalizeMeshNames(ra);
 
-    // Resolve absolute paths BEFORE prefixing, so file= attributes are
-    // rewritten to absolute paths while names are still in their original form.
+    // resolve paths before prefixing names
     if (XMLElement* ra = docRoot->FirstChildElement("asset")) {
         if (!meshdir.empty())
             absoluteMeshPaths(ra, meshdir);
@@ -196,7 +185,7 @@ static void injectModel(const std::string& modelPath,
     }
 
     if (is_dynamic) {
-            // Inject top-level bodies directly into worldbody so freejoint is at the right depth
+            // directly into worldbody so the freejoint is at the right depth
             for (XMLElement* child = rw->FirstChildElement(); child; child = child->NextSiblingElement()) {
                 XMLNode* clone = child->DeepClone(&scene);
                 XMLElement* cloneEl = clone->ToElement();
@@ -207,7 +196,7 @@ static void injectModel(const std::string& modelPath,
                 worldbody->InsertEndChild(clone);
             }
         } else {
-            // All other types (static, visual, mocap): wrap in a frame body as before
+            // static/visual/mocap: wrap in a frame body
             XMLElement* frame = scene.NewElement("body");
             frame->SetAttribute("name", (namePrefix + "_frame").c_str());
             if (is_mocap)
@@ -234,9 +223,7 @@ static void injectModel(const std::string& modelPath,
 }
 
 
-// ===========================================================================
-// SceneBuilder — public interface
-// ===========================================================================
+// SceneBuilder public interface
 
 YAML::Node SceneBuilder::loadMergedSimConfig(const std::string& sim_config_path) {
     YAML::Node cfg = YAML::LoadFile(sim_config_path);
@@ -245,7 +232,7 @@ YAML::Node SceneBuilder::loadMergedSimConfig(const std::string& sim_config_path)
         return cfg;
 
     std::string task_path_str = cfg["simulation"]["task_config"].as<std::string>();
-    // Resolve relative to the sim_config's directory
+    // relative to the sim_config directory
     std::string resolved = std::filesystem::absolute(
         std::filesystem::path(sim_config_path).parent_path() / task_path_str).string();
 
@@ -254,12 +241,11 @@ YAML::Node SceneBuilder::loadMergedSimConfig(const std::string& sim_config_path)
 
     if (!task_cfg["objects"]) return cfg;
 
-    // Append task objects to sim_config objects list
     if (!cfg["objects"]) cfg["objects"] = YAML::Node(YAML::NodeType::Sequence);
     for (const auto& obj : task_cfg["objects"])
         cfg["objects"].push_back(obj);
 
-    // Expose the spawn block at top level for the episode server
+    // spawn block at top level for the episode server
     if (task_cfg["spawn"])
         cfg["spawn"] = task_cfg["spawn"];
 
@@ -290,9 +276,7 @@ BuiltScene SceneBuilder::build(const YAML::Node& sim_config, const YAML::Node& r
 }
 
 
-// ===========================================================================
 // YAML parsing
-// ===========================================================================
 
 std::vector<DeviceConfig> SceneBuilder::parseDevices(const YAML::Node& sim_config, const YAML::Node& robot_config) {
     std::unordered_map<std::string, YAML::Node> sim_devs;
@@ -303,8 +287,7 @@ std::vector<DeviceConfig> SceneBuilder::parseDevices(const YAML::Node& sim_confi
     std::vector<DeviceConfig> devices;
     if (!robot_config["devices"]) return devices;
 
-    // Collect names of disabled devices so dependents (e.g. grippers
-    // attached to a disabled arm) can be skipped too.
+    // so devices attached to a disabled one are skipped too
     std::unordered_set<std::string> disabled_devices;
     for (const auto& rd : robot_config["devices"])
         if (rd["enabled"] && !rd["enabled"].as<bool>())
@@ -331,8 +314,7 @@ std::vector<DeviceConfig> SceneBuilder::parseDevices(const YAML::Node& sim_confi
         dev.gripper_actuator = sd["gripper_actuator"] ? sd["gripper_actuator"].as<std::string>() : "";
         dev.attach_to = sd["attach_to"] ? sd["attach_to"].as<std::string>() : "";
 
-        // Skip devices attached to a disabled device (body name is prefixed
-        // with the parent device name, e.g. "arm_left_fr3_link7").
+        // body names are prefixed with the parent device name, e.g. "arm_left_fr3_link7"
         if (!dev.attach_to.empty()) {
             bool parent_disabled = false;
             for (const auto& disabled : disabled_devices) {
@@ -484,9 +466,7 @@ std::array<double, 4> SceneBuilder::lookAtToQuat(const std::array<double, 3>& po
 }
 
 
-// ===========================================================================
 // XML assembly
-// ===========================================================================
 
 std::string SceneBuilder::buildSceneXML(const std::vector<DeviceConfig>& devices,
                                          const std::vector<ObjectConfig>&  objects,
@@ -504,13 +484,7 @@ std::string SceneBuilder::buildSceneXML(const std::vector<DeviceConfig>& devices
     optionEl->SetAttribute("gravity", "0 0 -9.81");
     optionEl->SetAttribute("integrator", "implicitfast");
     optionEl->SetAttribute("cone", "elliptic");
-    // Frictional-to-normal constraint impedance ratio. With elliptic cones the
-    // default (1) makes friction as soft as the normal contact, and a grasped
-    // part creeps along the fingertip pads under a sustained tangential load:
-    // measured 0.9 mm/s at 20 N with the stiff hand model, 0.09 mm/s at 10.
-    // The standalone board scenes already run at 10; this makes the generated
-    // scene match them. Injected models' own <option> elements are not merged
-    // (only <compiler> is), so this is the one place the value is set.
+    // default 1 lets grasped parts creep along the pads; injected <option>s are not merged
     optionEl->SetAttribute("impratio", "10");
     root->InsertEndChild(optionEl);
 

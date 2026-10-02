@@ -1,18 +1,7 @@
 #pragma once
 
-// Nullspace posture reference for a 7-DOF arm under Cartesian impedance.
-//
-// At a fixed wrist pose the FR3 has one degree of redundancy: the elbow orbit.
-// Each tick this class walks a short window of that orbit, discards the part
-// that violates joint-limit margins (and optionally a manipulability floor),
-// and inside what remains picks the elbow direction closest to a heuristic
-// human-like swivel angle. The result is a joint reference q_ref that
-// cartesianImpedanceControl's nullspace spring pulls toward instead of the
-// fixed q0. It is a pure function of (q, basin) -- no task phase, no clock --
-// so it runs the same in AWAITING and ENGAGED and is reproducible offline.
-//
-// Kinematics come in through PostureKinematics so the same code runs against
-// libfranka's franka::Model on hardware and the Pinocchio-backed sim Model.
+// Nullspace posture reference: searches the elbow orbit for the feasible sample
+// closest to a target swivel angle, giving q_ref for the nullspace spring.
 
 #include <array>
 #include <functional>
@@ -27,7 +16,7 @@ struct PostureConfig {
     bool   enabled           = true;
     double window_rad        = 0.30;   // half-width of the orbit search window
     int    samples           = 7;      // odd; the centre sample is s = 0
-    double lead_rad          = 0.15;   // |q_ref - q| cap: bounds the nullspace torque, hence the elbow speed
+    double lead_rad          = 0.15;   // |q_ref - q| cap
     double filter_tau_s      = 0.20;   // first-order filter on the optimum
     double margin_rad        = 0.30;   // posture keeps this far from q_min / q_max
     double manip_floor       = 0.0;    // sqrt(det(J J^T)) floor, 0 disables
@@ -37,9 +26,8 @@ struct PostureConfig {
 };
 
 struct PostureKinematics {
-    // Base-frame pose of a robot frame at q.
+    // base frame
     std::function<Eigen::Isometry3d(franka::Frame, const Vector7&)> pose;
-    // Base-frame end-effector Jacobian at q.
     std::function<Matrix6x7(const Vector7&)> jacobian;
 };
 
@@ -62,17 +50,15 @@ public:
 
     bool enabled() const { return cfg_.enabled && initialised_; }
 
-    // Re-seed on every entry into a state that uses the reference.
     void reset(const Vector7& q);
 
-    // State-thread rate. Returns the new reference.
+    // state thread
     Vector7 update(const Vector7& q, double dt);
 
-    // Control-thread read; one lock.
+    // control thread
     PostureSnapshot snapshot() const;
 
-    // Swivel angle of the elbow about the shoulder-wrist axis, measured from
-    // "world down". Public so offline tools can report it.
+    // Elbow angle about the shoulder-wrist axis, measured from world down.
     double swivelAngle(const Vector7& q) const;
 
 private:

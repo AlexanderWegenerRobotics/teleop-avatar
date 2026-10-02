@@ -75,14 +75,11 @@ devices:
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0
       friction:
-        # Joint friction feedforward (sigmoid model). Off by default.
-        # tau_f = fp1/(1+exp(-fp2*(dq+fp3))) - fp1/(1+exp(-fp2*fp3)), added to tau_cmd.
-        # fp1..fp3: Panda identification (Gaz et al. 2019) as a starting point;
-        # scale down for the FR3 until identified. Logged as tau_friction_0..6.
+        # sigmoid friction ff, fp1..fp3 from Panda identification (Gaz 2019)
         enabled: false
-        source: reference        # reference (J_pinv * v_ref, no feedback) | measured (dq)
+        source: reference        # reference | measured
         scale: 0.5
-        joint_mask: [1, 1, 1, 1, 0, 0, 0]      # wrist off until the limit cycle is fixed
+        joint_mask: [1, 1, 1, 1, 0, 0, 0]
         max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]   # Nm clamp per joint
         fp1: [0.54615, 0.87224, 0.64068, 1.2794, 0.83904, 0.30301, 0.56489]
         fp2: [5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336]
@@ -183,14 +180,11 @@ devices:
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0
       friction:
-        # Joint friction feedforward (sigmoid model). Off by default.
-        # tau_f = fp1/(1+exp(-fp2*(dq+fp3))) - fp1/(1+exp(-fp2*fp3)), added to tau_cmd.
-        # fp1..fp3: Panda identification (Gaz et al. 2019) as a starting point;
-        # scale down for the FR3 until identified. Logged as tau_friction_0..6.
+        # sigmoid friction ff, fp1..fp3 from Panda identification (Gaz 2019)
         enabled: false
-        source: reference        # reference (J_pinv * v_ref, no feedback) | measured (dq)
+        source: reference        # reference | measured
         scale: 0.5
-        joint_mask: [1, 1, 1, 1, 0, 0, 0]      # wrist off until the limit cycle is fixed
+        joint_mask: [1, 1, 1, 1, 0, 0, 0]
         max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]   # Nm clamp per joint
         fp1: [0.54615, 0.87224, 0.64068, 1.2794, 0.83904, 0.30301, 0.56489]
         fp2: [5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336]
@@ -222,8 +216,8 @@ devices:
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 1.0       # sim: 3.0
-      max_command_angular_velocity: 4.0 # sim: 8.0
+      max_command_velocity: 1.0
+      max_command_angular_velocity: 4.0
       max_command_acceleration: 5.0          # m/s^2
       max_command_angular_acceleration: 25.0 # rad/s^2
       max_tilt_angle: 1.74533

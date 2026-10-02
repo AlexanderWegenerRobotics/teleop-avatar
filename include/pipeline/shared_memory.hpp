@@ -7,9 +7,7 @@
 #include <string>
 
 #ifdef _WIN32
-// ── Windows implementation using named file mapping ───────────────────────────
-// Equivalent to POSIX shm_open + mmap(MAP_SHARED).
-// POSIX names like "/avatar_cam" are mapped to "Local\avatar_cam".
+// Windows: named file mapping, "/avatar_cam" -> "Local\avatar_cam"
 
 constexpr int    SHM_N_SLOTS  = 3;
 constexpr size_t SHM_MAX_W    = 1280;
@@ -21,9 +19,7 @@ struct SharedFrameBuffer {
     std::atomic<uint32_t> frame_count{0};
     uint32_t width  = 0;
     uint32_t height = 0;
-    // Nanoseconds since Unix epoch (system_clock domain) at which each slot's frame
-    // was captured/rendered. Indexed identically to slots[] below - written just
-    // before the corresponding memcpy, read using the same slot resolved in read().
+    // per-slot capture time, ns since Unix epoch (system_clock)
     uint64_t capture_time_ns[SHM_N_SLOTS]{};
     uint8_t  slots[SHM_N_SLOTS][SHM_MAX_W * SHM_MAX_H * SHM_CHANNELS]{};
 };
@@ -113,8 +109,6 @@ public:
         return buf_->frame_count.load() != last_frame_;
     }
 
-    // capture_time_ns_out, if non-null, receives the capture_time_ns stamped by the
-    // writer for the slot being returned.
     const uint8_t* read(uint64_t* capture_time_ns_out = nullptr) {
         uint32_t slot = (buf_->write_idx.load(std::memory_order_acquire)
                          + SHM_N_SLOTS - 1) % SHM_N_SLOTS;
@@ -133,7 +127,7 @@ private:
 };
 
 #else
-// ── POSIX implementation ──────────────────────────────────────────────────────
+// POSIX
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -149,9 +143,7 @@ struct SharedFrameBuffer {
     std::atomic<uint32_t> frame_count;
     uint32_t width;
     uint32_t height;
-    // Nanoseconds since Unix epoch (system_clock domain) at which each slot's frame
-    // was captured/rendered. Indexed identically to slots[] below - written just
-    // before the corresponding memcpy, read using the same slot resolved in read().
+    // per-slot capture time, ns since Unix epoch (system_clock)
     uint64_t capture_time_ns[SHM_N_SLOTS];
     uint8_t  slots[SHM_N_SLOTS][SHM_MAX_W * SHM_MAX_H * SHM_CHANNELS];
 };
@@ -228,8 +220,6 @@ public:
         return buf_->frame_count.load() != last_frame_;
     }
 
-    // capture_time_ns_out, if non-null, receives the capture_time_ns stamped by the
-    // writer for the slot being returned.
     const uint8_t* read(uint64_t* capture_time_ns_out = nullptr) {
         // take a snapshot of write_idx before reading
         uint32_t slot = (buf_->write_idx.load(std::memory_order_acquire) + SHM_N_SLOTS - 1) % SHM_N_SLOTS;

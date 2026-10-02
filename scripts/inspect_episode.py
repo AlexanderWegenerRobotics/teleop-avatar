@@ -1,5 +1,5 @@
 """
-inspect_episode.py  –  Quick HDF5 episode inspector (new format).
+Quick HDF5 episode inspector.
 
 Usage:
     python inspect_episode.py                        # latest episode in logs/
@@ -18,12 +18,9 @@ import h5py
 import numpy as np
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
 def find_file(arg=None):
-    """Resolve path → HDF5 file.  Accepts a folder or a direct .hdf5 path."""
+    """Resolve a folder or .hdf5 path to the episode file (default: latest in logs/)."""
     if arg is None:
-        # Latest numeric episode folder under logs/
         candidates = sorted(glob.glob("logs/[0-9][0-9][0-9]"))
         if not candidates:
             sys.exit("No episode folders found under logs/. Pass a path explicitly.")
@@ -55,8 +52,6 @@ def fmt_arr(arr, fmt=".4f"):
     return "[" + "  ".join(f"{v:{fmt}}" for v in arr) + "]"
 
 
-# ── Structure dump ─────────────────────────────────────────────────────────────
-
 def print_structure(f):
     _sep("Structure")
     def _visit(name, obj):
@@ -71,8 +66,6 @@ def print_structure(f):
     print()
 
 
-# ── Attributes ────────────────────────────────────────────────────────────────
-
 def print_attrs(f):
     if not f.attrs:
         return
@@ -84,8 +77,6 @@ def print_attrs(f):
             print(f"  {k:<22s} <unreadable: {e}>")
     print()
 
-
-# ── Scene ─────────────────────────────────────────────────────────────────────
 
 def print_scene(f):
     if "scene" not in f:
@@ -101,7 +92,7 @@ def print_scene(f):
         pose_key = f"obj{i}_pose"
         if pose_key not in sg:
             continue
-        pose  = sg[pose_key][0]            # first frame (constant)
+        pose  = sg[pose_key][0]
         x, y, z = pose[0], pose[1], pose[2]
         yaw_key   = f"obj{i}_spawn_yaw"
         scale_key = f"obj{i}_scale"
@@ -121,8 +112,6 @@ def print_scene(f):
                 print(f"    {name:<12s} {fmt_arr(lg[name][:])}")
     print()
 
-
-# ── Telemetry stats ────────────────────────────────────────────────────────────
 
 def print_telemetry(f):
     obs = f.get("observations")
@@ -163,8 +152,6 @@ def print_telemetry(f):
             print()
 
 
-# ── Image stats + plots ────────────────────────────────────────────────────────
-
 def print_images(f, path, do_plot):
     obs = f.get("observations")
     if obs is None or "images" not in obs:
@@ -202,7 +189,6 @@ def print_images(f, path, do_plot):
             d = imgs[:, :, :, ch]
             print(f"    {name}            : mean={d.mean():.1f}  std={d.std():.1f}")
 
-        # Save middle frame
         mid      = T // 2
         png_path = os.path.splitext(path)[0] + f"_{camera}_frame{mid}.png"
         try:
@@ -241,8 +227,6 @@ def print_images(f, path, do_plot):
         plt.tight_layout()
         plt.show()
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,

@@ -33,9 +33,7 @@ void Robot::set_simulation(Simulation& _sim, const YAML::Node& sim_dev, const YA
     auto ori = robot_dev["base_pose"]["orientation"].as<std::vector<double>>();
     std::array<double, 4> base_quat = {ori[0], ori[1], ori[2], ori[3]};
 
-    // Defaults are the mujoco_menagerie FR3 values in fr3_torque.xml. Override
-    // per device in sim_config when the MJCF (or an identified arm) differs --
-    // these must track the plant or the GMO reports friction as tau_ext.
+    // defaults from menagerie fr3_torque.xml, must match the MJCF or friction shows up in tau_ext
     auto read7 = [&sim_dev](const char* key, const Vector7& fallback) {
         Vector7 v = fallback;
         if (sim_dev[key]) {
@@ -88,9 +86,7 @@ void Robot::setCollisionBehavior(
     upper_torque_thresholds_ = upper_torque_thresholds;
     lower_force_thresholds_  = lower_force_thresholds;
     upper_force_thresholds_  = upper_force_thresholds;
-    // Called from ArmControl's constructor, i.e. BEFORE set_simulation(), so
-    // name_ and the reflex settings are not populated yet -- those are logged
-    // there instead.
+    // runs before set_simulation(), so name_ is not set yet
     std::cout << "[SIM] setCollisionBehavior() - upper force ["
               << upper_force_thresholds_[0] << ", " << upper_force_thresholds_[1] << ", "
               << upper_force_thresholds_[2] << "] N, upper wrist torque ["
@@ -110,9 +106,7 @@ void Robot::automaticErrorRecovery() {
     r_            = Vector7::Zero();
     p_prev_       = Vector7::Zero();
     gmo_seed_pending_ = true;
-    // The observer is being re-seeded, so any streak counted against the old
-    // residual is meaningless. Not clearing these re-trips the reflex on the
-    // first tick after the resume, before the arm has moved.
+    // observer is reseeded, old streaks would re-trip the reflex
     joint_reflex_streak_.fill(0);
     cart_reflex_streak_.fill(0);
     robot_state_.joint_contact.fill(0.0);
@@ -123,10 +117,7 @@ void Robot::automaticErrorRecovery() {
 }
 
 RobotState Robot::readOnce() {
-    // Outside control() nothing refreshes robot_state_, so a caller planning a
-    // recovery from it would see the pose at the moment of the fault, not where
-    // the arm has coasted to since. Pull the live sim state instead, without
-    // touching the momentum observer (its dt bookkeeping belongs to control()).
+    // outside control() read live sim state, without touching the GMO
     if (!bRunning.load() && sim != nullptr) {
         DeviceState ds = sim->getDeviceState(name_);
         if (ds.q.size() >= 7) {
@@ -145,11 +136,7 @@ RobotState Robot::readOnce() {
 void Robot::updateGMO(const std::array<double, 7>& q, const std::array<double, 7>& dq, const std::array<double, 7>& tau_cmd, double dt) {
     Vector7 tau_eig = Eigen::Map<const Vector7>(tau_cmd.data());
     auto [p, tau_model] = model_->computeGMOInputs(q, dq);
-    // Seed rather than difference against a zeroed p_prev_. Robot() and
-    // automaticErrorRecovery() both zero it, so the first update after either
-    // one evaluated r_ += K_GMO * p -- 50x the momentum, reported as external
-    // torque. At rest p is zero and it did not show; after a fault the arm is
-    // still coasting (waitForRest only gets it under 0.1 rad/s) and it is not.
+    // seed p_prev_ instead of differencing against zero, arm may still be moving
     if (gmo_seed_pending_) {
         gmo_seed_pending_ = false;
         p_prev_ = p;
@@ -161,8 +148,7 @@ void Robot::updateGMO(const std::array<double, 7>& q, const std::array<double, 7
     robot_state_.tau_ext_hat_filtered   = tau_ext;
     robot_state_.O_F_ext_hat_K          = model_->cartesianWrench(q, tau_ext);
 
-    // Rotate the base-frame wrench into the stiffness frame. O_T_EE is
-    // column-major, so the leading 3x3 block of the Map is the rotation.
+    // base -> stiffness frame, O_T_EE is column-major
     Eigen::Map<const Eigen::Matrix4d> T(robot_state_.O_T_EE.data());
     const Eigen::Matrix3d R = T.topLeftCorner<3, 3>();
     Eigen::Map<const Eigen::Vector3d> f_O(robot_state_.O_F_ext_hat_K.data());
@@ -172,11 +158,7 @@ void Robot::updateGMO(const std::array<double, 7>& q, const std::array<double, 7
 }
 
 void Robot::checkCollisionReflex() {
-    // The real FR3 reflex, reproduced: the LOWER thresholds only raise the
-    // contact flags, the UPPER ones stop the arm. Without this the twin will
-    // happily push tens of newtons into a fixture that would have reflex-stopped
-    // the plant, so anything learned or recorded against it is a habit that
-    // faults on hardware.
+    // FR3 reflex: lower thresholds set contact flags, upper ones stop the arm
     auto& rs = robot_state_;
 
     for (int i = 0; i < 7; ++i) {
@@ -196,8 +178,7 @@ void Robot::checkCollisionReflex() {
         return;
     }
 
-    // Persistence, not a single sample. See collision_persist_ticks_ in the
-    // header for why: this observer's free-motion noise reaches ~5 N p95.
+    // must persist collision_persist_ticks_, not a single sample
     static const char* kAxis[6] = {"Fx", "Fy", "Fz", "Mx", "My", "Mz"};
 
     for (int i = 0; i < 6; ++i) {
@@ -247,62 +228,23 @@ void Robot::populateRobotState(const DeviceState& ds, double dt) {
 }
 
 void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const Vector7& q) {
-    // RE-ENABLED 2026-08-20. Was disabled on 2026-08-08 because the retry/FAULT
-    // path it feeds locked up desk-config runs on joint-velocity violations
-    // that motion_gen_ did not back off from on retry.
-    //
-    // The retry path has since been fixed (b7f63c8: rearmFromMeasuredState()
-    // re-plans from the measured pose and zeroes tau_prev_, so a restart no
-    // longer steps straight back to the pre-fault torque), which removes the
-    // cascade that made this unusable.
-    //
-    // Leaving it off has a cost that only became clear after the 2026-08-09
-    // desk test: with these checks bypassed the twin CANNOT fault, so it
-    // silently continues through conditions that stop the real arm. During
-    // that run the avatar faulted at t=404.7 s while the twin ran on to
-    // t=422.7 s, and no statement about the twin's safety behaviour was
-    // supportable. A digital twin that cannot fail the way the plant fails is
-    // not a safety model.
-    //
-    // If this needs disabling again, gate it behind a config flag that is
-    // logged, so the analysis can see it was off.
-
+    // mimics the FR3 hard limits so the sim can fault like the real arm
     static const std::array<double, 7> kMaxTorqueRate    = {1000, 1000, 1000, 1000, 1000, 1000, 1000};
     static const std::array<double, 7> kMaxTorque        = {87, 87, 87, 87, 12, 12, 12};
-    // FR3, matching models/mujoco/robots/franka_fr3. The datasheet gives
-    // A1-A4 150 deg/s (2.62 rad/s) and A5-A7 301 deg/s (5.26 rad/s); libfranka
-    // publishes 4.18 for A6, so take the tighter value there.
-    //
-    // These were previously Panda's limits (2.175 / 2.610) rounded down, on an
-    // FR3 model. That faulted the wrist at half its real ceiling: every
-    // joint_velocity_violation in session 002 was joint 5 at 2.58-2.61 rad/s,
-    // against a true limit of 4.18. See claude/arm-fault-root-cause-001.md.
+    // FR3 datasheet rad/s, A6 uses libfranka's tighter 4.18
     static const std::array<double, 7> kMaxJointVelocity = {2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26};
-    // 0.01 rad (~0.6 deg) numerical safety margin inside the per-device
-    // q_min_/q_max_ (set in set_simulation() from this robot's own config --
-    // the SAME range ArmControl's IK plans/brakes against). Previously this
-    // was an independent hardcoded array that didn't match a given device's
-    // actual configured range, tripping this check before ArmControl's own
-    // joint-limit braking ever needed to engage.
+    // rad, inside q_min_/q_max_
     constexpr double kJointLimitMargin = 0.01;
 
     constexpr double dt = 1.0 / 1000.0;
 
-    // First tick after entering or re-entering control(): seed tau_prev_ from
-    // the current command instead of differencing against a torque that is
-    // seconds old. The loop is parked in enterFaultAndWaitForReset() while
-    // faulted, so no ticks run, but the rate below still divides by a nominal
-    // 1 ms -- which turned an ordinary 1.8 Nm resume command into a reported
-    // 1800 Nm/s and re-faulted the arm on the tick after every reset.
+    // seed tau_prev_ on first tick after (re)entering control(), otherwise the rate check spikes
     if (tau_rate_seed_pending_) {
         tau_rate_seed_pending_ = false;
         tau_prev_ = tau_cmd;
     }
 
-    // Mirrors libfranka's behavior: a reflex-worthy condition throws
-    // franka::ControlException out of control(), rather than merely logging.
-    // This lets us exercise the same catch/retry/FAULT path in sim that the
-    // real robot forces us to handle on hardware.
+    // throws ControlException like libfranka
     for (int i = 0; i < 7; ++i) {
         if (std::abs(tau_cmd(i)) > kMaxTorque[i]) {
             std::cout << "[FRANKA ERROR] " << name_ << " joint " << i
@@ -331,20 +273,7 @@ void Robot::checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const V
                                     std::to_string(i));
         }
 
-        // Report the ENTRY into violation, once, then latch until the joint is
-        // back inside. A joint that is already past its limit has to be allowed
-        // to travel out again, or the fault is permanent: this runs on the first
-        // tick after control resumes, before the recovery trajectory has moved
-        // anything, and the arm is at rest there. Anything that keys off the
-        // sign of dq re-faults immediately, because dq is zero.
-        //
-        // The escape itself already exists -- an operator reset calls
-        // requestRecovery(OPERATOR_RESET, getQ0()) and updateRecovery() plans a
-        // MINJERK move to q0, which is inside the range on every joint. It just
-        // needs permission to execute.
-        //
-        // This is also what the hardware does: the reflex is on being driven
-        // into the stop, and moving the joint back out is what clears it.
+        // report only the entry into violation, then latch so the joint can move back out
         const double q_lo = q_min_[i] + kJointLimitMargin;
         const double q_hi = q_max_[i] - kJointLimitMargin;
         if (q(i) < q_lo || q(i) > q_hi) {
@@ -376,12 +305,10 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
 
     auto next_control_time = std::chrono::high_resolution_clock::now();
     auto tick_prev = next_control_time;
-    // Rolling mean of the achieved period, reported every kRateReportTicks. The
-    // nominal 1 ms is a request, not a guarantee -- this loop measured 2.001 ms
-    // on Windows before the hybrid sleep+spin below (see the note there).
+    // achieved rate, reported every kRateReportTicks
     constexpr int kRateReportTicks = 5000;
-    double dt_sum  = 0.0;   // wall seconds accumulated
-    double sim_sum = 0.0;   // simulated seconds accumulated
+    double dt_sum  = 0.0;   // wall s
+    double sim_sum = 0.0;   // sim s
     int    dt_n    = 0;
 
     Duration dur;
@@ -394,11 +321,7 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
     sim->setDeviceActive(name_, true);
     tau_rate_seed_pending_ = true;
     gmo_seed_pending_      = true;
-    // tau_filtered_/tau_prev_ deliberately NOT reset here -- see Robot::Robot()
-    // and automaticErrorRecovery() comments. This function is re-entered by
-    // arm_control.cpp's retry loop after every caught fault; zeroing either on
-    // each entry manufactures a spurious torque_discontinuity out of a normal
-    // torque on the very next tick.
+    // don't reset tau_filtered_/tau_prev_ here, re-entered after every fault
     bRunning = true;
 
     try {
@@ -411,17 +334,10 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
 
             DeviceState device_state = sim->getDeviceState(name_);
 
-            // SIMULATED elapsed time, not wall clock. The momentum observer
-            // differentiates mjData state, so its dt is the plant's integration
-            // time; using a wall clock biases it by (M*qdd)*(dt_sim/dt_wall - 1),
-            // which is zero at rest and grows with acceleration. The sim thread
-            // runs slower than real time (measured 0.50x), so the two differ by
-            // a factor of two here.
+            // sim time, not wall clock, since the GMO differentiates mjData state
             double dt_sim = (sim_time_prev_ < 0.0) ? 0.0
                                                    : device_state.time - sim_time_prev_;
             sim_time_prev_ = device_state.time;
-            // dt_sim == 0 means no new sim step since the last tick; p is then
-            // unchanged too, so the observer correctly leaves r_ alone.
             if (dt_sim < 0.0 || dt_sim > 0.1) dt_sim = 0.0;   // reset/seek guard
 
             const auto tick_now = std::chrono::high_resolution_clock::now();
@@ -451,13 +367,8 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
             Vector7 q_eig  = Eigen::Map<const Vector7>(robot_state_.q.data());
             Vector7 tau_cmd_eig = Eigen::Map<const Vector7>(tau_cmd.tau_J.data());
 
-            // May throw franka::ControlException, same as real hardware hitting a
-            // reflex stop - propagates out of control() below, exactly like libfranka.
+            // may throw ControlException, like libfranka
             checkFrankaErrors(tau_cmd_eig, dq_eig, q_eig);
-            // Contact and collision against the setCollisionBehavior thresholds,
-            // on the momentum observer's estimate. Separate from the hard limits
-            // above: those are about what we COMMAND, this is about what the
-            // world is doing back to the arm.
             checkCollisionReflex();
 
             tau_filtered_ = alpha * tau_raw + (1.0 - alpha) * tau_filtered_;
@@ -474,25 +385,8 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
                 sim->setCtrl(name_, std::vector<double>(tau_out.begin(), tau_out.end()));
                 next_control_time += control_period;
 
-                // Hybrid sleep + spin, instead of sleep_until(deadline).
-                //
-                // This loop asks for 1 kHz and delivered 479 Hz on 2026-08-09:
-                // a median dt of 2.001 ms, i.e. exactly twice the requested
-                // period. It is not compute-bound -- dt was identical in IDLE
-                // (2.001 ms) and ENGAGED (2.001 ms), so the loop body is not
-                // the constraint. It is the OS timer: sleep_until wakes on the
-                // next scheduler tick, so a sub-millisecond deadline is
-                // rounded up to the following one and every period doubles.
-                //
-                // The real robot does not have this problem because libfranka's
-                // control() is clocked by the FCI's own 1 ms tick. The
-                // consequence was a twin running at half the avatar's rate with
-                // three times the jitter, which is not a fair basis for
-                // comparing the two.
-                //
-                // Sleep until slightly before the deadline, then busy-wait the
-                // remainder. kSpinMargin must exceed the platform's timer
-                // granularity (~1 ms on Windows without timeBeginPeriod).
+                // sleep + spin, sleep_until alone rounds up to the OS tick and halves the rate.
+                // kSpinMargin must exceed the timer granularity (~1 ms on Windows)
                 constexpr auto kSpinMargin = std::chrono::microseconds(1200);
                 const auto sleep_until_tp = next_control_time - kSpinMargin;
                 if (std::chrono::high_resolution_clock::now() < sleep_until_tp)
@@ -500,9 +394,7 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
                 while (std::chrono::high_resolution_clock::now() < next_control_time)
                     std::this_thread::yield();
 
-                // If we have fallen far behind (debugger, host contention),
-                // resynchronise rather than sprinting to catch up -- a burst of
-                // zero-dt ticks corrupts every rate statistic downstream.
+                // resync if far behind instead of catching up
                 const auto now_tp = std::chrono::high_resolution_clock::now();
                 if (now_tp - next_control_time > std::chrono::milliseconds(50))
                     next_control_time = now_tp;

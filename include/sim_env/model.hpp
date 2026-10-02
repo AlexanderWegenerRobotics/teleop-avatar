@@ -31,9 +31,7 @@ struct GMOInputs {
 
 class Model {
 public:
-    // joint_damping / joint_coulomb / rotor_inertia must mirror the MJCF's
-    // damping / frictionloss / armature for this arm: anything the plant applies
-    // and the model omits lands in tau_ext.
+    // damping/coulomb/rotor_inertia must match the MJCF, otherwise the gap shows up in tau_ext
     Model(const std::string& urdf_path, const std::array<double, 4>& base_quat, const std::string& ee_frame_name,
           const Vector7& joint_damping, const Vector7& joint_coulomb, const Vector7& rotor_inertia);
     ~Model();
@@ -43,16 +41,14 @@ public:
     Model(Model&&) = delete;
     Model& operator=(Model&&) = delete;
 
-    // Signatures match real libfranka RobotState overloads
     std::array<double, 42> zeroJacobian(Frame frame, const RobotState& rs);
     std::array<double, 49> mass(const RobotState& rs);
     std::array<double, 7>  coriolis(const RobotState& rs);
 
-    // Simulation-internal (used by robot.cpp, keep q-based)
+    // sim-internal, q-based
     std::array<double, 7>  gravity(const std::array<double, 7>& q);
     std::array<double, 16> EEPose(const std::array<double, 7>& q);
-    // Base-frame pose of a robot frame. kJoint1..7 map to the URDF joint frames,
-    // kFlange to fr3_link8, kEndEffector/kStiffness to the configured EE frame.
+    // base-frame pose, kFlange = fr3_link8, kEndEffector/kStiffness = configured EE frame
     std::array<double, 16> framePose(Frame frame, const std::array<double, 7>& q);
     std::array<double, 6>  cartesianWrench(const std::array<double, 7>& q, const std::array<double, 7>& tau_ext);
     GMOInputs computeGMOInputs(const std::array<double, 7>& q, const std::array<double, 7>& dq);

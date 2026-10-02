@@ -15,20 +15,14 @@
 #include "twin/config_overlay.hpp"
 
 
-// ---------------------------------------------------------------------------
 // Constructor / Destructor
-// ---------------------------------------------------------------------------
 
 Simulation::Simulation(const YAML::Node& config, Role role) {
     YAML::Node sim_config    = SceneBuilder::loadMergedSimConfig(config["sim_config"].as<std::string>());
     YAML::Node robot_config  = YAML::LoadFile(config["robot_config"].as<std::string>());
     YAML::Node stream_config = YAML::LoadFile(config["streamer_config"].as<std::string>());
 
-    // Twin-role shm/port overlay (see twin/config_overlay.hpp) -- lets avatar
-    // and twin each construct their own Simulation locally from the same
-    // pipeline_config file without shm-name/port collisions. No-op for
-    // role == Avatar, and for role == Twin when the config doesn't define
-    // streamer_overlay (real cross-continent deployment).
+    // twin overlay avoids shm/port collisions when avatar and twin run on one machine
     if (role == Role::Twin && config["streamer_overlay"]) {
         applyTwinStreamerOverlay(stream_config, config["streamer_overlay"].as<std::string>());
         std::cout << "[SIM-INFO] Applied twin streamer overlay: "
@@ -41,10 +35,7 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
     objects_ = std::move(scene.objects);
     cameras_ = std::move(scene.cameras);
 
-    // An exe built against one MuJoCo and run with another's DLL (PATH picks
-    // whichever mujoco.dll it finds first) compiles, links and then misbehaves
-    // at runtime: struct layouts and contact behaviour differ between releases.
-    // Refuse to start instead.
+    // refuse to run with a mismatched mujoco DLL
     if (mj_version() != mjVERSION_HEADER)
         throw std::runtime_error("MuJoCo version mismatch: built against "
             + std::to_string(mjVERSION_HEADER) + " headers but loaded mujoco.dll "
@@ -56,10 +47,7 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
     if (!model)
         throw std::runtime_error(std::string("mj_loadXML failed: ") + err);
 
-    // The scene XMLs declare timestep="0.005" and MuJoCo's own default is 0.002,
-    // so a sim_config missing this key silently runs at 200 Hz or 500 Hz while
-    // everything downstream assumes 1 kHz. Always report the effective value,
-    // and say loudly when it came from the XML rather than the config.
+    // scene XMLs say 0.005, so warn if the config doesn't set the timestep
     const double xml_timestep = model->opt.timestep;
     const bool   from_config  = sim_config["simulation"] && sim_config["simulation"]["timestep"];
     if (from_config)
@@ -73,9 +61,7 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
                   << xml_timestep * 1e3 << " ms from the scene XML. Set it explicitly."
                   << std::endl;
 
-    // Reduce the near-clip plane so wrist cameras don't see through objects at
-    // close range. Default znear=0.01 is relative to scene extent (~2m → 2cm clip);
-    // 0.001 gives ~2mm, which is fine for close-up manipulation.
+    // ~2 mm near clip so wrist cams don't see through close objects
     model->vis.map.znear = 0.001;
 
     data = mj_makeData(model);
@@ -108,9 +94,7 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
     stream_width_ = stream_config["stream_width"].as<int>(model->vis.global.offwidth);
     stream_height_= stream_config["stream_height"].as<int>(model->vis.global.offheight);
 
-    // Build the list of cameras to stream from shared memory.
-    // In mono mode only entries with eye=="mono" (or no eye key) are active.
-    // In stereo mode only entries with eye=="left" or eye=="right" are active.
+    // mono: eye=="mono" or missing, stereo: eye=="left"/"right"
     if (stream_config["stream_cameras"] && stream_config["stream_cameras"].IsSequence()) {
         for (const auto& entry : stream_config["stream_cameras"]) {
             std::string eye = entry["eye"].as<std::string>("mono");
@@ -128,10 +112,7 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
         }
     }
 
-    // Ground truth for the momentum observer. Needs joint_ids_, so it comes
-    // after buildActuatorIndex(). Returns null when the config block is absent
-    // or unusable -- every failure path logs once and is not fatal, because
-    // this is a validation aid and must never be able to stop a run.
+    // needs joint_ids_, so after buildActuatorIndex()
     wrench_truth_ = WrenchTruth::create(
         model, sim_config, robot_config, joint_ids_,
         std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
@@ -150,9 +131,7 @@ Simulation::~Simulation() {
 }
 
 
-// ---------------------------------------------------------------------------
 // Threading
-// ---------------------------------------------------------------------------
 
 void Simulation::start() {
     if (render_enabled_) {
@@ -194,10 +173,7 @@ void Simulation::run_model() {
     const auto step_period = std::chrono::duration_cast<clock::duration>(
         std::chrono::duration<double>(model->opt.timestep));
 
-    // Sleep lands on a scheduler quantum (1 ms on Windows even with
-    // timeBeginPeriod(1)), so sleeping the full remainder overshoots every step
-    // -- that is what made this loop run at 0.50x real time. Sleep to just
-    // before the deadline, then spin the last fraction.
+    // sleep overshoots by a scheduler quantum, so sleep close to the deadline then spin
     const auto spin_margin = std::min(
         std::chrono::duration_cast<clock::duration>(std::chrono::microseconds(400)),
         step_period / 2);
@@ -251,9 +227,6 @@ void Simulation::run_model() {
             }
             mj_step(model, data);
             swapSnapshots();
-            // Read-only, rate-decimated internally off mjData::time. Sampled
-            // here rather than from the snapshot so it sees exactly the state
-            // that was just integrated, contacts included.
             if (wrench_truth_) wrench_truth_->sample(data);
         }
         const double step_ns =
@@ -265,20 +238,15 @@ void Simulation::run_model() {
         if (step_ns > step_ns_max_.load(std::memory_order_relaxed))
             step_ns_max_.store(step_ns, std::memory_order_relaxed);
 
-        // Exact stepping: one mj_step per period, never several to "catch up".
-        // Multi-stepping would hold real time but hand the plant an N-timestep
-        // zero-order hold on the torque, distorting the control loop under
-        // exactly the load where it matters. If we cannot make the deadline the
-        // sim slips and says so; the episode stays usable because every row
-        // carries mjData::time alongside the wall clock.
+        // one mj_step per period, never multi-step to catch up; sim slips instead
         auto now = clock::now();
         if (now < next - spin_margin)
             std::this_thread::sleep_until(next - spin_margin);
-        while (clock::now() < next) { /* spin the last few hundred us */ }
+        while (clock::now() < next) { }
 
         next += step_period;
         now = clock::now();
-        if (now > next) {                      // overran: cannot recover this time
+        if (now > next) {
             deadline_misses_.fetch_add(1, std::memory_order_relaxed);
             next = now + step_period;          // resync rather than spiral
         }
@@ -286,8 +254,6 @@ void Simulation::run_model() {
         wall_seconds_.store(std::chrono::duration<double>(now - loop_start).count(),
                             std::memory_order_relaxed);
 
-        // Periodic visibility. This loop ran at 0.50x real time unnoticed for
-        // months because nothing ever compared the two clocks out loud.
         if (now - last_report >= std::chrono::seconds(10)) {
             const SimTimingStats st = getTimingStats();
             std::cout << "[SIM-TIMING] rtf " << st.rtf << "  steps " << st.steps
@@ -319,9 +285,7 @@ SimTimingStats Simulation::getTimingStats() const {
 }
 
 
-// ---------------------------------------------------------------------------
 // Rendering
-// ---------------------------------------------------------------------------
 
 void Simulation::buildCameraList() {
     render_cams_.clear();
@@ -398,7 +362,7 @@ void Simulation::renderFrame() {
     int cell_w = win_w / cols;
     int cell_h = win_h / rows;
 
-    // Private copy: mjv_updateScene writes the mjData stack (see header).
+    // private copy, mjv_updateScene writes the mjData stack
     latchSnapshot(render_data_);
     mjData* snap = render_data_;
 
@@ -425,7 +389,7 @@ void Simulation::renderFrame() {
 }
 
 void Simulation::swapSnapshots() {
-    std::lock_guard<std::mutex> lock(snap_mtx_);   // see latchSnapshot()
+    std::lock_guard<std::mutex> lock(snap_mtx_);
     int w = snap_write_.load(std::memory_order_relaxed);
     mj_copyData(snap_[w], model, data);
     int next = 1 - w;
@@ -433,18 +397,14 @@ void Simulation::swapSnapshots() {
     snap_read_.store(w,    std::memory_order_release);
 }
 
-// Copy the latest published snapshot into a renderer-private mjData. Holding
-// snap_mtx_ means swapSnapshots() cannot be writing either buffer meanwhile,
-// so the copy is consistent; the physics thread waits at most one copy.
+// copies latest snapshot into a renderer-private mjData under snap_mtx_
 void Simulation::latchSnapshot(mjData* dst) {
     std::lock_guard<std::mutex> lock(snap_mtx_);
     mj_copyData(dst, model, snap_[snap_read_.load(std::memory_order_acquire)]);
 }
 
 
-// ---------------------------------------------------------------------------
 // Offscreen streaming
-// ---------------------------------------------------------------------------
 
 void Simulation::initOffscreenStreaming() {
     if (!offscreen_window_)
@@ -481,8 +441,7 @@ void Simulation::initOffscreenStreaming() {
 void Simulation::renderStreamFrame() {
     if (stream_cameras_.empty() || shm_writers_.empty()) return;
 
-    // Latch the snapshot once — all cameras render from the same physics state.
-    // Private copy: mjv_updateScene writes the mjData stack (see header).
+    // latch once so all cameras render the same state
     latchSnapshot(stream_data_);
     mjData* snap = stream_data_;
 
@@ -495,12 +454,9 @@ void Simulation::renderStreamFrame() {
         const int cw = sc.width  > 0 ? sc.width  : stream_width_;
         const int ch = sc.height > 0 ? sc.height : stream_height_;
 
-        // Use a sub-viewport so MuJoCo renders and reads only cw×ch pixels.
-        // The offscreen context is sized to the maximum (stream_width_ × stream_height_)
-        // so any per-camera resolution ≤ that maximum works without reallocating.
+        // sub-viewport, offscreen context is sized to the max resolution
         mjrRect viewport = {0, 0, cw, ch};
 
-        // Look up camera id by name.
         int cam_id = -1;
         for (const auto& c : render_cams_)
             if (c.name == sc.camera_name) { cam_id = c.id; break; }
@@ -517,15 +473,13 @@ void Simulation::renderStreamFrame() {
         pixels.resize(cw * ch * 3);
         mjr_readPixels(pixels.data(), nullptr, viewport, &stream_con_);
 
-        // MuJoCo returns pixels bottom-up; flip to top-down for consumers.
+        // MuJoCo pixels are bottom-up
         for (int row = 0; row < ch / 2; ++row) {
             uint8_t* top = pixels.data() + row * cw * 3;
             uint8_t* bot = pixels.data() + (ch - 1 - row) * cw * 3;
             std::swap_ranges(top, top + cw * 3, bot);
         }
 
-        // Sim has no separate hardware capture step - "capture" for MuJoCo is the
-        // instant the rendered pixels are actually available (i.e. now).
         const uint64_t capture_time_ns = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
@@ -579,9 +533,7 @@ void Simulation::run_streaming() {
 }
 
 
-// ---------------------------------------------------------------------------
 // Control API
-// ---------------------------------------------------------------------------
 
 void Simulation::setCtrl(const std::string& deviceName,
                           const std::vector<double>& values) {
@@ -603,7 +555,7 @@ void Simulation::setGripper(const std::string& deviceName, double width) {
         return;
     }
 
-    constexpr double kMinWidth = 0.006;   // prevent finger mesh penetration at full close
+    constexpr double kMinWidth = 0.006;   // m, avoids finger mesh penetration
     double half_width = std::clamp(width, kMinWidth, 0.08) / 2.0;
     double ctrl_value = (half_width / 0.04) * 255.0;
 
@@ -626,9 +578,7 @@ double Simulation::getGripperWidth(const std::string& deviceName) {
     return total;
 }
 
-// ---------------------------------------------------------------------------
 // Actuator index tables
-// ---------------------------------------------------------------------------
 
 void Simulation::buildActuatorIndex() {
     for (const auto& dev : devices_) {
@@ -665,9 +615,7 @@ void Simulation::buildActuatorIndex() {
 }
 
 
-// ---------------------------------------------------------------------------
 // Initial joint positions
-// ---------------------------------------------------------------------------
 
 void Simulation::applyInitialPositions() {
     for (const auto& dev : devices_) {
@@ -699,7 +647,7 @@ DeviceState Simulation::getDeviceState(const std::string& deviceName) {
     mjData* snap = snap_[r];
 
     DeviceState state;
-    state.time = snap->time;   // simulated time of this snapshot, see DeviceState
+    state.time = snap->time;   // sim time
     for (int j : it->second) {
         int qadr = model->jnt_qposadr[j];
         int vadr = model->jnt_dofadr[j];
@@ -791,9 +739,7 @@ void Simulation::applyJointCorrection(const std::string& deviceName,
         int vadr = model->jnt_dofadr[joints[i]];
         data->qvel[vadr] += ddq_delta[i];
     }
-    // Recompute dependent kinematic quantities (site/body poses, etc.) so the
-    // twin's display is consistent immediately -- this is a state write, not
-    // an integration step, so mj_forward (no mj_step) is correct here.
+    // state write only, so mj_forward not mj_step
     mj_forward(model, data);
 }
 
@@ -814,14 +760,13 @@ void Simulation::setFramePose(const std::string& name, const Eigen::Vector3d& po
 }
 
 void Simulation::setFreeBodyPose(const std::string& bodyName, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat){
-    // Find the body by name
     int body_id = mj_name2id(model, mjOBJ_BODY, bodyName.c_str());
     if (body_id < 0) {
         std::cerr << "[Simulation] setFreeBodyPose: body '" << bodyName << "' not found\n";
         return;
     }
 
-    // Find the freejoint attached to this body (must be the first joint)
+    // freejoint must be the body's first joint
     int jnt_id = -1;
     for (int j = 0; j < model->njnt; ++j) {
         if (model->jnt_bodyid[j] == body_id && model->jnt_type[j] == mjJNT_FREE) {
@@ -837,16 +782,14 @@ void Simulation::setFreeBodyPose(const std::string& bodyName, const Eigen::Vecto
     int qadr = model->jnt_qposadr[jnt_id];
 
     std::lock_guard<std::mutex> lock(data_mtx);
-    // Position (3 values)
     data->qpos[qadr + 0] = pos.x();
     data->qpos[qadr + 1] = pos.y();
     data->qpos[qadr + 2] = pos.z();
-    // Quaternion — MuJoCo stores w,x,y,z
+    // MuJoCo quat is w,x,y,z
     data->qpos[qadr + 3] = quat.w();
     data->qpos[qadr + 4] = quat.x();
     data->qpos[qadr + 5] = quat.y();
     data->qpos[qadr + 6] = quat.z();
-    // Zero out velocities so the body doesn't carry momentum from last episode
     int vadr = model->jnt_dofadr[jnt_id];
     for (int i = 0; i < 6; ++i)
         data->qvel[vadr + i] = 0.0;
@@ -909,7 +852,6 @@ void Simulation::setBodyScale(const std::string& bodyName, double scale) {
         return;
     }
 
-    // Populate cache on first call for this body.
     if (body_scale_cache_.find(bodyName) == body_scale_cache_.end()) {
         BodyScaleCache cache;
         cache.original_mass = model->body_mass[body_id];
@@ -946,15 +888,14 @@ void Simulation::setBodyScale(const std::string& bodyName, double scale) {
 
     const BodyScaleCache& cache = body_scale_cache_.at(bodyName);
 
-    // Scale geometry — always from original values so episodes don't compound.
+    // always from original values so scaling doesn't compound
     for (size_t i = 0; i < cache.geom_ids.size(); ++i) {
         int g = cache.geom_ids[i];
         for (int j = 0; j < 3; ++j) {
             model->geom_size[g * 3 + j] = cache.original_geom_size[i][j] * scale;
             model->geom_pos [g * 3 + j] = cache.original_geom_pos [i][j] * scale;
         }
-        // Bounding volumes must follow the geometry (see BodyScaleCache).
-        // Uniform scaling about the body origin scales centre and half-size alike.
+        // bounding volumes must be scaled too
         model->geom_rbound[g] = cache.original_geom_rbound[i] * scale;
         for (int j = 0; j < 6; ++j)
             model->geom_aabb[g * 6 + j] = cache.original_geom_aabb[i][j] * scale;
@@ -963,7 +904,7 @@ void Simulation::setBodyScale(const std::string& bodyName, double scale) {
         for (int j = 0; j < 6; ++j)
             model->bvh_aabb[(cache.bvh_adr + n) * 6 + j] = cache.original_bvh_aabb[n][j] * scale;
 
-    // Scale inertial properties: mass ~ scale^3, diagonal inertia ~ scale^5.
+    // mass ~ scale^3, inertia ~ scale^5
     double s3 = scale * scale * scale;
     double s5 = s3 * scale * scale;
     model->body_mass[body_id] = cache.original_mass * s3;
@@ -976,10 +917,10 @@ CameraIntrinsics Simulation::getCameraIntrinsics(const std::string& cam_name) co
     if (cam_id < 0)
         throw std::runtime_error("[Simulation] getCameraIntrinsics: camera '" + cam_name + "' not found");
 
-    // fovy is stored in radians in mjModel
+    // cam_fovy is in degrees
     float fovy_rad = static_cast<float>(model->cam_fovy[cam_id]) * static_cast<float>(M_PI) / 180.0f;
     float fy = (stream_height_ / 2.0f) / std::tan(fovy_rad / 2.0f);
-    float fx = fy;  // square pixels in MuJoCo
+    float fx = fy;  // square pixels
 
     return CameraIntrinsics{
         .fx     = fx,
@@ -996,13 +937,12 @@ CameraExtrinsics Simulation::getCameraExtrinsics(const std::string& cam_name) co
     if (cam_id < 0)
         throw std::runtime_error("[Simulation] getCameraExtrinsics: camera '" + cam_name + "' not found");
 
-    // cam_pos: default position in world frame (3 doubles per camera)
-    // cam_quat: default orientation as wxyz quaternion (4 doubles per camera)
+    // default camera pose in world frame
     const mjtNum* p = model->cam_pos  + cam_id * 3;
     const mjtNum* q = model->cam_quat + cam_id * 4;  // w, x, y, z
 
     CameraExtrinsics ext;
     ext.position    = Eigen::Vector3d(p[0], p[1], p[2]);
-    ext.orientation = Eigen::Quaterniond(q[0], q[1], q[2], q[3]);  // w, x, y, z
+    ext.orientation = Eigen::Quaterniond(q[0], q[1], q[2], q[3]);
     return ext;
 }

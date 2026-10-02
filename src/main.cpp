@@ -146,10 +146,7 @@ static void terminateHandler()
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
-    // MSVC's CRT requires 2 <= size <= INT_MAX for _IOFBF/_IOLBF; size 0 trips the
-    // invalid-parameter handler, which calls __fastfail (0xC0000409) before anything
-    // can be printed or any handler below is installed. Win32 also maps _IOLBF to
-    // full buffering, so unbuffered is what actually gives line-at-a-time ordering.
+    // MSVC: _IOLBF with size 0 crashes and is full buffering anyway, so use unbuffered
     setvbuf(stdout, nullptr, _IONBF, 0);
 #else
     setvbuf(stdout, nullptr, _IOLBF, 0);

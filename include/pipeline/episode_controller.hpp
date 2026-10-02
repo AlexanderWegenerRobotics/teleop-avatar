@@ -7,8 +7,7 @@
 
 #include "network/platform_socket.hpp"
 
-// Listens on a UDP port for EpisodeEventMsg packets from the avatar process.
-// Fires callbacks so CameraChannels can open/close HDF5 episodes in sync.
+// Listens for episode start/end packets from the avatar and fires callbacks.
 class EpisodeController {
 public:
     using StartCallback = std::function<void(const std::string& session_id, int episode_index,

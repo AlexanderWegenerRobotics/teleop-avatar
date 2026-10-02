@@ -1,9 +1,5 @@
 # Task: Parcel Sorting
-# Objects placed on the table each episode; bins are fixed reference targets.
-#
-# spawn: controls per-episode randomization (read by episode_config_server).
-# All objects with role=object are randomized; role=bin positions are fixed and
-# only used to define exclusion zones during spawn sampling.
+# spawn: randomization for role=object (episode_config_server), bins are fixed exclusion zones
 
 spawn:
   x_range: [0.45, 0.78]
@@ -11,7 +7,7 @@ spawn:
   z: 0.725
   min_object_dist: 0.12
   min_bin_dist: 0.20
-  yaw_range: [0.0, 6.2832]   # full rotation (boxes have 4-fold symmetry)
+  yaw_range: [0.0, 6.2832]
   scale_range: [0.90, 1.10]
 
 objects:

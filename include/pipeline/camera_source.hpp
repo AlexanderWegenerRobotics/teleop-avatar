@@ -12,11 +12,7 @@
 
 #include "pipeline/shared_memory.hpp"
 
-// capture_time_ns is nanoseconds since the Unix epoch (std::chrono::system_clock
-// domain), representing when the frame was captured (or rendered, for MuJoCo).
-// Each CameraSource is responsible for producing a value in that domain even if
-// its underlying hardware/driver timestamp uses a different clock - see the
-// per-source implementations for how each one normalizes to it.
+// capture_time_ns: ns since Unix epoch (system_clock), every source converts to this
 using FrameCallback = std::function<void(const uint8_t*, uint32_t, uint32_t, uint64_t)>;
 
 class CameraSource {
@@ -88,14 +84,7 @@ private:
     std::atomic<bool>                 bRunning_{false};
 };
 
-// ---------------------------------------------------------------------------
-// StereoMuJoCoSource
-// Reads left and right shm buffers in the SAME poll iteration so both eyes
-// are always from the same simulation step.  Composites them side-by-side
-// (left | right) into a single RGB buffer of width 2×w, then fires the
-// FrameCallback with that combined frame.  This guarantees temporal sync and
-// correlated compression artifacts, eliminating the independent-stream drift.
-// ---------------------------------------------------------------------------
+// Reads both eye shm buffers in one poll and composites them left|right (2x width).
 
 class StereoMuJoCoSource : public CameraSource {
 public:
@@ -138,7 +127,6 @@ public:
         if (thread_.joinable()) thread_.join();
     }
 
-    // Reports combined width (2 × single-eye width).
     uint32_t width()  const override {
         return left_reader_ ? left_reader_->width() * 2 : 0;
     }
@@ -152,21 +140,17 @@ private:
         auto next   = std::chrono::steady_clock::now();
 
         while (bRunning_) {
-            // Read both eyes in the same iteration — same simulation frame.
-            // Accept the most recent frame from each shm, even if only one
-            // has a strictly-new flag, so we never stall on one lagging.
+            // take latest of both eyes even if only one is new, so a lagging eye can't stall
             if (left_reader_->hasNewFrame() || right_reader_->hasNewFrame()) {
                 uint64_t left_ts = 0, right_ts = 0;
                 const uint8_t* left  = left_reader_->read(&left_ts);
                 const uint8_t* right = right_reader_->read(&right_ts);
-                // Whichever eye lagged this poll returns its previous (older) capture
-                // time; the fresher of the two is the real capture time of this composite.
                 uint64_t capture_time_ns = std::max(left_ts, right_ts);
 
                 const uint32_t w        = left_reader_->width();
                 const uint32_t h        = left_reader_->height();
-                const size_t   row_src  = static_cast<size_t>(w) * 3;   // bytes per eye row
-                const size_t   row_dst  = row_src * 2;                   // bytes per combined row
+                const size_t   row_src  = static_cast<size_t>(w) * 3;
+                const size_t   row_dst  = row_src * 2;
 
                 composite_.resize(row_dst * h);
 

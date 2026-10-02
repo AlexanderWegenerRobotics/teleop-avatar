@@ -43,8 +43,7 @@ Model::Model(const std::string& urdf_path, const std::array<double, 4>& base_qua
     Eigen::Vector3d g_base = q.toRotationMatrix().transpose() * Eigen::Vector3d(0, 0, -9.81);
     pin_model_.gravity.linear(g_base);
 
-    // Rotor inertia: crba adds this to M's diagonal, so p = M*dq and the Coriolis
-    // matrix match the plant instead of ignoring the drives' reflected inertia.
+    // rotor inertia goes on M's diagonal so p and C match the plant
     if (pin_model_.nv == 7)
         pin_model_.armature = rotor_inertia;
 
@@ -158,8 +157,7 @@ std::array<double, 6> Model::cartesianWrench(const std::array<double, 7>& q,
                                 pin_model_.getFrameId(ee_frame_name_),
                                 pinocchio::LOCAL_WORLD_ALIGNED, J);
 
-    // Damped least squares: near a singularity J*J^T is ill-conditioned and an
-    // undamped solve turns model noise into a large spurious wrench.
+    // damped least squares to stay sane near singularities
     constexpr double kLambdaSq = 1e-3;
     Eigen::Matrix<double, 6, 6> A = J * J.transpose();
     A.diagonal().array() += kLambdaSq;
@@ -183,17 +181,12 @@ GMOInputs Model::computeGMOInputs(const std::array<double, 7>& q, const std::arr
     pinocchio::computeCoriolisMatrix(pin_model_, pin_data_, q_eig, dq_eig);
     pinocchio::computeGeneralizedGravity(pin_model_, pin_data_, q_eig);
 
-    // Dissipative joint torque. Saturated ramp rather than sign(): MuJoCo solves
-    // frictionloss as a constraint that takes any value up to the limit at rest,
-    // so a hard switch chatters where the plant is smooth.
+    // saturated ramp instead of sign() so it doesn't chatter at rest like MuJoCo's frictionloss
     constexpr double kStictionVel = 0.01;  // rad/s
     const Vector7 ramp  = (dq_eig / kStictionVel).cwiseMax(-1.0).cwiseMin(1.0);
     const Vector7 tau_f = joint_damping_.cwiseProduct(dq_eig) + joint_coulomb_.cwiseProduct(ramp);
 
-    // Momentum observer: dp/dt = tau + C^T*dq - g - tau_f + tau_ext, so the term
-    // the residual subtracts is g - C^T*dq + tau_f. Note C^T, not -C: they differ
-    // by (C + C^T)*dq = dM/dt*dq, which otherwise shows up as fake external force
-    // whenever the arm moves.
+    // momentum observer: dp/dt = tau + C^T*dq - g - tau_f + tau_ext (C^T, not -C)
     return { p, pin_data_.g - pin_data_.C.transpose() * dq_eig + tau_f };
 }
 

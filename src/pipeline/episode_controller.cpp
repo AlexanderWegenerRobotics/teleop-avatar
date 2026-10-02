@@ -40,7 +40,7 @@ void EpisodeController::start() {
                                  + std::to_string(port_));
     }
 
-    // 500 ms receive timeout so the run loop can check bRunning_
+    // timeout so the loop can check bRunning_
 #ifdef _WIN32
     DWORD tv_ms = 500;
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO,
@@ -69,7 +69,7 @@ void EpisodeController::run() {
 
     while (bRunning_) {
         ssize_t n = recvfrom(sock_, buf, sizeof(buf), 0, nullptr, nullptr);
-        if (n <= 0) continue;   // timeout or error — loop again
+        if (n <= 0) continue;
 
         try {
             auto oh  = msgpack::unpack(buf, static_cast<size_t>(n));

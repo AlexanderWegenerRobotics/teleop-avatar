@@ -1,7 +1,5 @@
 #pragma once
-// Force-included on Windows via CMake /FI flag.
-// Guarantees winsock2.h is the very first Windows header in every TU,
-// preventing the classic winsock.h vs winsock2.h redefinition conflict.
+// Force-included via /FI so winsock2.h comes before windows.h in every TU.
 #ifdef _WIN32
     #ifndef WIN32_LEAN_AND_MEAN
         #define WIN32_LEAN_AND_MEAN

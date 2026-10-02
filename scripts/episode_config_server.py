@@ -1,29 +1,6 @@
 """
-episode_config_server.py
-------------------------
-UDP server that randomizes object positions each episode and returns
-full per-object spawn configs to the Avatar process.
-
-Protocol (msgpack over UDP):
-  Request  <- Avatar: {"type": "request_episode_config"}
-  Response -> Avatar: {
-      "seed":              int,
-      "mode":              int,      # 0=unimanual, 1=bimanual
-      "color_bin_mapping": str,      # JSON, e.g. '{"red":"bin_1","blue":"bin_2"}'
-      "objects": [
-          {"name": str, "color": str, "model_path": str, "x": float, "y": float, "z": float,
-           "yaw": float, "scale": float},
-          ...
-      ],
-      "lighting": {...}
-  }
-
-Objects with role=bin are NOT included in the response; their positions are fixed
-and the Avatar reads them directly from the (merged) sim_config at startup.
-
-Spawn parameters are read from the task config's "spawn:" block (if present),
-falling back to the defaults below.  This means each task can define its own
-randomization ranges without touching this script.
+UDP server that randomizes (or replays) object spawns per episode for the Avatar.
+msgpack protocol: {"type": "request_episode_config"} -> {seed, mode (0 uni, 1 bi), color_bin_mapping, objects, lighting}
 """
 
 import argparse
@@ -45,7 +22,6 @@ log = logging.getLogger("episode_config_server")
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 9100
 
-# Fallback spawn defaults (overridden by task config spawn: block)
 DEFAULT_SPAWN = {
     "x_range":         [0.45, 0.78],
     "y_range":         [-0.30, 0.30],
@@ -66,22 +42,13 @@ LIGHT_MAIN_WARMTH    = (-1.0, 1.0)
 LIGHT_FILL_INTENSITY = (0.1,  0.35)
 
 
-# ---------------------------------------------------------------------------
-# Config loading
-# ---------------------------------------------------------------------------
-
 def load_sim_config(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
 
 
 def resolve_merged_config(sim_config_path: str) -> tuple[dict, dict]:
-    """Return (merged_cfg, spawn_params).
-
-    Follows simulation.task_config if present and merges its objects into
-    sim_config, exactly mirroring what SceneBuilder::loadMergedSimConfig does
-    on the C++ side.
-    """
+    """Return (merged_cfg, spawn_params), same merge as SceneBuilder::loadMergedSimConfig."""
     sim_cfg = load_sim_config(sim_config_path)
     spawn_params = dict(DEFAULT_SPAWN)
 
@@ -92,11 +59,9 @@ def resolve_merged_config(sim_config_path: str) -> tuple[dict, dict]:
         with open(task_path) as f:
             task_cfg = yaml.safe_load(f)
 
-        # Merge objects
         sim_cfg.setdefault("objects", [])
         sim_cfg["objects"].extend(task_cfg.get("objects", []))
 
-        # Override spawn params from task config
         if "spawn" in task_cfg:
             for k, v in task_cfg["spawn"].items():
                 spawn_params[k] = v
@@ -136,10 +101,6 @@ def build_bin_positions(sim_cfg: dict) -> list:
                 positions.append((pos[0], pos[1]))
     return positions
 
-
-# ---------------------------------------------------------------------------
-# Randomization
-# ---------------------------------------------------------------------------
 
 def sample_lighting(rng):
     intensity = rng.uniform(*LIGHT_MAIN_INTENSITY)
@@ -217,30 +178,11 @@ def sample_episode(all_objects, bin_mapping, bin_positions, n_objects, spawn, rn
     }
 
 
-# ---------------------------------------------------------------------------
-# Replay: serve a previously RECORDED episode's scene instead of a random one
-# ---------------------------------------------------------------------------
-#
-# Why: evaluating a trained policy against its own training data needs the two
-# runs to face the same scene. Everything the Avatar needs to rebuild a scene
-# exactly is already in the recording -- scene.csv carries per-object position,
-# spawn yaw and scale plus the full lighting block, and arm_*_meta.csv carries
-# the episode_config event with seed/mode/color_bin_mapping -- so replay is just
-# reading those back instead of sampling.
-#
-# Caveat that bit during implementation: scene.csv is written per SESSION, not
-# per episode, so the tail of the file can contain rows belonging to the next
-# episode (observed: 7008 rows for this episode's seed, then 1 row of the next).
-# Rows are therefore filtered to the seed named in the meta file's
-# episode_config event before the spawn state is read off the first one.
-
+# replay: serve a recorded episode's scene instead of a random one
+# scene.csv is per session, so rows are filtered by the episode's seed
 
 def _read_episode_meta(folder: Path) -> dict:
-    """seed / mode / color_bin_mapping from the episode_config event.
-
-    Tries each arm's meta file: the event is written per-device, and an
-    interrupted recording can leave one side without it.
-    """
+    """seed / mode / color_bin_mapping from the episode_config event of any meta file."""
     for name in ("arm_left_meta.csv", "arm_right_meta.csv", "scene_meta.csv"):
         path = folder / name
         if not path.exists():
@@ -257,7 +199,7 @@ def _read_episode_meta(folder: Path) -> dict:
 
 
 def _spawn_row(folder: Path, seed: int) -> dict:
-    """First scene.csv row belonging to this episode (see the seed caveat above)."""
+    """First scene.csv row with this episode's seed."""
     path = folder / "scene.csv"
     if not path.exists():
         raise ValueError(f"{folder}: no scene.csv")
@@ -269,9 +211,7 @@ def _spawn_row(folder: Path, seed: int) -> dict:
 
 
 def _lighting_from_row(row: dict) -> dict:
-    """Reconstructs the lighting block. Avatar seeds lighting from cfg.seed and
-    then overrides with whatever keys are present, so partial blocks are safe --
-    only emit the triples the recording actually has."""
+    """Lighting block from a scene row, only the triples that are present."""
     def triple(prefix, keys):
         vals = [row.get(f"{prefix}_{k}") for k in keys]
         if any(v is None or v == "" for v in vals):
@@ -294,12 +234,7 @@ def _lighting_from_row(row: dict) -> dict:
 
 
 def load_recorded_episode(folder: Path, model_paths: dict) -> dict:
-    """Rebuilds the exact episode config the Avatar was served when recording.
-
-    model_path isn't in scene.csv (it never changes per object), so it's looked
-    up from the merged sim config by object name; unknown names get "" and the
-    Avatar falls back to its own default for that body.
-    """
+    """Rebuild the recorded episode config; model_path comes from the sim config."""
     meta = _read_episode_meta(folder)
     row = _spawn_row(folder, meta["seed"])
 
@@ -316,8 +251,7 @@ def load_recorded_episode(folder: Path, model_paths: dict) -> dict:
             "x": float(row[f"obj{i}_x"]),
             "y": float(row[f"obj{i}_y"]),
             "z": float(row[f"obj{i}_z"]),
-            # spawn_yaw, not the live quaternion: we want the pose the object
-            # was created with, not wherever it had rolled to by this row.
+            # spawn yaw, not the live pose
             "yaw": float(row.get(f"obj{i}_spawn_yaw") or 0.0),
             "scale": float(row.get(f"obj{i}_scale") or 1.0),
         })
@@ -337,17 +271,12 @@ def build_model_paths(sim_cfg: dict) -> dict:
             for o in sim_cfg.get("objects", []) if o.get("role") == "object"}
 
 
-# ---------------------------------------------------------------------------
-# Server
-# ---------------------------------------------------------------------------
-
 def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=True):
     sim_cfg, spawn = resolve_merged_config(sim_config_path)
     all_objects    = build_object_defs(sim_cfg)
     bin_mapping    = build_bin_mapping(sim_cfg)
     bin_positions  = build_bin_positions(sim_cfg)
 
-    # --- replay mode: serve recorded scenes in order, one per request --------
     replay_queue = []
     if replay_folders:
         model_paths = build_model_paths(sim_cfg)
@@ -367,7 +296,6 @@ def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=Tr
         log.error("No pickable objects found — exiting.")
         sys.exit(1)
 
-    # n_objects: explicit CLI override > all available objects
     n_objects = n_objects_override if n_objects_override is not None else len(all_objects)
     n_objects = min(n_objects, len(all_objects))
 

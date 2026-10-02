@@ -20,14 +20,13 @@
 #endif
 
 static int xioctl(int fd, unsigned long req, void* arg) {
-    // ioctl wrapper that retries on EINTR.
+    // ioctl that retries on EINTR
     int r;
     do { r = ioctl(fd, req, arg); } while (r == -1 && errno == EINTR);
     return r;
 }
 
 static void yuyvToRgb(const uint8_t* yuyv, uint8_t* rgb, int width, int height) {
-    // Convert YUYV packed to interleaved RGB888.
     int n = width * height / 2;
     for (int i = 0; i < n; ++i) {
         int y0 = yuyv[0], u = yuyv[1], y1 = yuyv[2], v = yuyv[3];
@@ -65,12 +64,11 @@ V4L2Source::V4L2Source(const std::string& device, int width, int height, int fps
 }
 
 V4L2Source::~V4L2Source() {
-    // Stop thread and release device resources.
     stop();
 }
 
 void V4L2Source::initDevice() {
-    // Open device, set format, map buffers, start streaming.
+    // open device, set format, map buffers, start streaming
     fd_ = open(device_.c_str(), O_RDWR);
     if (fd_ < 0)
         throw std::runtime_error("[V4L2Source] cannot open " + device_ + ": " + strerror(errno));
@@ -106,8 +104,7 @@ void V4L2Source::initDevice() {
     prio.value = 0;
     xioctl(fd_, VIDIOC_S_CTRL, &prio);
 
-    // Optional manual exposure. V4L2_CID_EXPOSURE_ABSOLUTE is defined in 100 us units.
-    // Long auto-exposure in dim light shifts the image ~exposure/2 into the past.
+    // V4L2_CID_EXPOSURE_ABSOLUTE is in 100 us units
     if (exposure_100us_ > 0) {
         v4l2_control ae{};
         ae.id    = V4L2_CID_EXPOSURE_AUTO;
@@ -164,9 +161,7 @@ void V4L2Source::initDevice() {
     if (mjpeg_ && !tj_) tj_ = tjInitDecompress();
 #endif
 
-    // Sample the CLOCK_MONOTONIC -> CLOCK_REALTIME offset once. VIDIOC_DQBUF gives us
-    // a monotonic-clock timestamp per buffer; this offset lets us convert it into
-    // the wall-clock (system_clock) domain the rest of the pipeline expects.
+    // buffer timestamps are monotonic, store offset to realtime once
     {
         timespec mono{}, real{};
         clock_gettime(CLOCK_MONOTONIC, &mono);
@@ -181,7 +176,6 @@ void V4L2Source::initDevice() {
 }
 
 void V4L2Source::uninitDevice() {
-    // Stop streaming, unmap buffers, close fd.
     if (fd_ < 0) return;
     v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     xioctl(fd_, VIDIOC_STREAMOFF, &type);
@@ -196,7 +190,6 @@ void V4L2Source::uninitDevice() {
 }
 
 void V4L2Source::start(FrameCallback cb) {
-    // Initialise device and launch capture thread.
     cb_ = cb;
     initDevice();
     bRunning_ = true;
@@ -204,7 +197,6 @@ void V4L2Source::start(FrameCallback cb) {
 }
 
 void V4L2Source::stop() {
-    // Signal thread to exit, join, then release device.
     bRunning_ = false;
     if (thread_.joinable()) thread_.join();
     uninitDevice();
@@ -214,11 +206,7 @@ uint32_t V4L2Source::width()  const { return static_cast<uint32_t>(width_);  }
 uint32_t V4L2Source::height() const { return static_cast<uint32_t>(height_); }
 
 void V4L2Source::run() {
-    // Dequeue frames, convert YUYV→RGB, forward via callback.
-
-    // Periodic report: kernel buffer timestamp -> dequeued here, plus decode/convert
-    // time. For uvcvideo the buffer timestamp is the driver's estimate of frame start
-    // (or first-packet arrival), so exposure before it is still not included.
+    // periodic report of buffer timestamp -> dequeue latency and convert time
     constexpr int kReportEvery = 150;              // ~5 s at 30 fps
     int      n = 0;
     double   sum_dq_ms = 0.0, max_dq_ms = 0.0, sum_cv_ms = 0.0;
@@ -259,7 +247,7 @@ void V4L2Source::run() {
             buf = newer;
         }
 
-        // buf.timestamp is CLOCK_MONOTONIC-based; translate to system_clock domain.
+        // monotonic -> system_clock
         int64_t buf_ts_ns = static_cast<int64_t>(buf.timestamp.tv_sec) * 1000000000LL +
                             static_cast<int64_t>(buf.timestamp.tv_usec) * 1000LL;
         uint64_t capture_time_ns = static_cast<uint64_t>(buf_ts_ns + clock_offset_ns_);

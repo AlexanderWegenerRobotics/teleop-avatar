@@ -10,7 +10,7 @@
 
 class RealSenseSource : public CameraSource {
 public:
-    // exposure_100us: 0 = keep auto-exposure, >0 = manual RGB exposure in 100 us units.
+    // exposure_100us: 0 = auto, >0 = manual in 100 us units
     RealSenseSource(const std::string& serial, int width, int height, int fps,
                     int exposure_100us = 0, bool auto_exposure = true, int gain = -1);
     ~RealSenseSource();

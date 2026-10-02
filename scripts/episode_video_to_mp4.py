@@ -1,18 +1,5 @@
 """
-episode_video_to_mp4.py  -  Remux a logged episode's H.264 video into an MP4.
-
-Each episode folder (logs/NNN) holds raw H.264 elementary streams named
-video_<camera>.h264 (see camera_channel.cpp / video_streamer.cpp). This just
-remuxes one into an MP4 container so it opens in a normal player; no
-re-encoding unless --crop-markers or --split-stereo is used, so it's fast
-and lossless by default.
-
-Streamed frames carry two extra marker rows at the bottom (wall-clock ns +
-frame id — see MARKER_ROWS in episode_to_hdf5.py). Pass --crop-markers to
-strip them.
-
-head_cam_stereo is left|right side-by-side; --split-stereo writes
-<camera>_left.mp4 and <camera>_right.mp4 instead of a single file.
+Remux a logged episode's H.264 video into MP4 (lossless copy unless --crop-markers / --split-stereo).
 
 Usage:
     python scripts/episode_video_to_mp4.py logs/007                       # lists available cameras

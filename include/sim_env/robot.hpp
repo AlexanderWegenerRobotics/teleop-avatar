@@ -19,9 +19,7 @@ struct DeviceState;
 
 namespace franka {
 
-// Mirrors libfranka's exception hierarchy (franka/exception.h) closely enough
-// that arm_control.cpp can catch franka::ControlException / franka::Exception
-// identically in sim and real-robot builds, with no #ifdef at the call site.
+// mirrors libfranka's exception hierarchy so callers catch the same types in sim and real
 class Exception : public std::runtime_error {
 public:
     explicit Exception(const std::string& what) : std::runtime_error(what) {}
@@ -39,25 +37,17 @@ struct RobotState {
     std::array<double, 7>  tau_J_d;
     std::array<double, 7>  tau_ext_hat_filtered;
     std::array<double, 6>  O_F_ext_hat_K;
-    // The same wrench expressed in the stiffness frame. This sim has no separate
-    // EE_T_K, so K is the configured EE frame. setCollisionBehavior's Cartesian
-    // thresholds are defined on THIS wrench on hardware, not on the base-frame
-    // one: checking a per-axis threshold set against O_F_ext_hat_K would mean
-    // something different depending on where the wrist happens to be pointing.
+    // same wrench in stiffness frame (K = EE frame here), Cartesian collision thresholds apply to this one
     std::array<double, 6>  K_F_ext_hat_K;
     std::array<double, 16> O_T_EE;
 
-    // Collision-behaviour flags, same meaning as libfranka's. The lower
-    // thresholds raise *_contact and nothing else; the upper thresholds raise
-    // *_collision and trigger the reflex. This is how a caller tells "the arm is
-    // touching something" from "the arm has stopped".
+    // lower thresholds -> *_contact, upper thresholds -> *_collision + reflex
     std::array<double, 7>  joint_contact;
     std::array<double, 6>  cartesian_contact;
     std::array<double, 7>  joint_collision;
     std::array<double, 6>  cartesian_collision;
 
-    // mjData::time of the snapshot this state came from (sim build only; 0 on
-    // hardware, which has no sim clock). q/dq are consistent in THIS clock.
+    // mjData::time of the snapshot, sim only
     double                 sim_time = 0.0;
 
     RobotState() {
@@ -98,8 +88,6 @@ public:
     RobotState readOnce();
     void control(std::function<Torques(const RobotState&, Duration)> control_callback);
 
-    // API parity with real libfranka (franka/robot.h) so arm_control.cpp can call
-    // these unconditionally, without #ifdef WITH_FRANKA around every call site.
     void setCollisionBehavior(
         const std::array<double, 7>& lower_torque_thresholds,
         const std::array<double, 7>& upper_torque_thresholds,
@@ -116,9 +104,7 @@ private:
                    const std::array<double, 7>& tau_cmd,
                    double dt);
     void checkFrankaErrors(const Vector7& tau_cmd, const Vector7& dq, const Vector7& q);
-    // Consumes the setCollisionBehavior thresholds against the momentum
-    // observer's estimate. Throws ControlException on an upper-threshold
-    // crossing, the same way libfranka surfaces cartesian_reflex / joint_reflex.
+    // throws ControlException on upper-threshold crossing, like libfranka's reflex
     void checkCollisionReflex();
 
 private:
@@ -130,41 +116,25 @@ private:
     std::atomic<bool>      bRunning{false};
     Vector7                tau_filtered_;
     Vector7                tau_prev_;
-    // Set on every entry to control(). The torque-rate check divides by a fixed
-    // 1 ms, but no ticks run while enterFaultAndWaitForReset() holds the loop,
-    // so the first tick after a resume differences against a torque from
-    // seconds ago and reports a rate that never happened.
+    // reseeds torque-rate check on entry to control(), tau_prev_ is stale after a pause
     bool                   tau_rate_seed_pending_{true};
-    // Same idea for the momentum observer's p_prev_ — see updateGMO.
     bool                   gmo_seed_pending_{true};
-    // Per joint: a position-limit violation has been reported and not yet
-    // cleared by the joint returning inside its range. Latches so the arm can
-    // travel back out of a limit it is already past -- see checkFrankaErrors.
-    // Deliberately NOT reset on re-entry to control().
+    // latched per joint until back in range, not reset on re-entry to control()
     std::array<bool, 7>    joint_limit_tripped_{};
 
     Vector7 r_;
     Vector7 p_prev_;
-    // mjData::time at the previous GMO update; <0 means "no previous sample".
+    // <0 = no previous sample
     double  sim_time_prev_ = -1.0;
     static constexpr double K_GMO = 50.0;
 
-    // Consumed by checkCollisionReflex(). Defaults are libfranka's own
-    // setDefaultBehavior example values, so an arm whose config omits the
-    // safety.collision_* block still reflexes somewhere sane instead of never.
-    // Torques in Nm per joint; forces (x,y,z) in N and (R,P,Y) in Nm, on the
-    // stiffness-frame wrench.
+    // libfranka default values; torques Nm, forces N (x,y,z) / Nm (R,P,Y) in stiffness frame
     std::array<double, 7> lower_torque_thresholds_{20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0};
     std::array<double, 7> upper_torque_thresholds_{20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0};
     std::array<double, 6> lower_force_thresholds_{20.0, 20.0, 20.0, 25.0, 25.0, 25.0};
     std::array<double, 6> upper_force_thresholds_{20.0, 20.0, 20.0, 25.0, 25.0, 25.0};
 
-    // A momentum observer is noisier than the FR3's internal estimator: this
-    // one measures 0.97 N mean / 3.1 N p95 in free motion on arm_left and
-    // 2.19 / 4.8 on arm_right (claude/external-wrench-estimator.md). Tripping on
-    // a single sample would fault on estimator noise rather than on contact, so
-    // a crossing has to persist. At the 1 kHz control tick the default is 5 ms,
-    // which is short against any real contact transient.
+    // crossing must persist this many 1 kHz ticks, GMO is too noisy to trip on one sample
     int  collision_persist_ticks_ = 5;
     bool collision_reflex_enabled_ = true;
     std::array<int, 7> joint_reflex_streak_{};
@@ -172,13 +142,7 @@ private:
     std::array<double, 7> joint_impedance_{};
     std::array<double, 6> cartesian_impedance_{};
 
-    // Per-device joint position limits, read from robot_dev["q_min"/"q_max"]
-    // in set_simulation() -- the SAME config ArmControl itself plans/brakes
-    // against (device_config["q_min"/"q_max"]), so checkFrankaErrors' hard
-    // limit check agrees with what the arm's own IK thinks its range is,
-    // rather than an independent hardcoded value. Falls back to the FR3
-    // factory range if a config omits them (shouldn't happen in practice --
-    // ArmControl itself requires these keys).
+    // overwritten from robot_dev q_min/q_max, FR3 factory range as fallback
     std::array<double, 7> q_min_{-2.8973, -1.7628, -2.8973, -3.0718, -2.8973,  0.0175, -2.8973};
     std::array<double, 7> q_max_{ 2.8973,  1.7628,  2.8973, -0.0698,  2.8973,  3.7525,  2.8973};
 };

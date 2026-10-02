@@ -1,26 +1,9 @@
 """
-hdf5_video.py  --  inspect and export the log-only camera channels
-
-Channels with stream.enabled = false are written by VideoLogger as HDF5 rather
-than H.264, because there is no encoder in that path to tee from. The layout
-(see include/pipeline/video_logger.hpp) is:
-
-    /observations/images/<camera_name>   (T, H, W, 3)  uint8, deflate-1
-    /observations/timestamp_ns           (T,)          uint64
-    /observations/frame_id               (T,)          uint64
-    attrs: session_id, episode_index, end_reason, frame_count
-
-The frames are LOSSLESS. The .h264 logs from streaming channels are not -- they
-are a tee of the encode that was actually transmitted, so they carry the
-artefacts the operator saw. Which one is "right" depends on the question:
-lossless for policy observations, the H.264 for what the operator experienced.
+Inspect and export the log-only (HDF5) camera channels.
 
 Usage:
-    python hdf5_video.py <file.hdf5>                      # inspect only
-    python hdf5_video.py <file.hdf5> --mp4 out.mp4        # export video
-    python hdf5_video.py <file.hdf5> --mp4 out.mp4 --fps 20
-    python hdf5_video.py <file.hdf5> --frame 120 --png f.png
-    python hdf5_video.py <dir>/ --mp4-all                 # every hdf5 in a dir
+    python hdf5_video.py <file.hdf5> [--mp4 out.mp4] [--fps 20] [--frame 120 --png f.png]
+    python hdf5_video.py <dir>/ --mp4-all
 """
 
 import argparse
@@ -122,7 +105,7 @@ def export(path, out, fps_override=None, stride=1):
             if not writer.isOpened():
                 sys.exit(f"OpenCV could not open {out} for writing")
 
-        # Read in chunks: the whole episode does not fit in memory at 640x480.
+        # chunked read, full episode doesn't fit in memory
         step = 64
         written = 0
         for i in range(0, T, step):

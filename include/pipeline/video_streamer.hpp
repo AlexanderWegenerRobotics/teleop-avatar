@@ -28,12 +28,9 @@ struct StreamerConfig {
     int         fec_percentage     = 10;
     int         stream_width       = 640;
     int         stream_height      = 480;
-    // Source dimensions as read from SHM / camera device.
-    // When these differ from stream_width/height, pushFrame will rescale.
-    // 0 means "same as stream_width/height" (no rescaling).
+    // 0 = same as stream size, otherwise pushFrame rescales
     int         source_width       = 0;
     int         source_height      = 0;
-    // When true the pipeline tees the encoded H.264 to an appsink for per-episode logging.
     bool        log_enabled        = false;
 };
 
@@ -41,20 +38,17 @@ class VideoStreamer {
 public:
     static constexpr size_t kTimestampBytes = 8;
 
-    // gst_init() must be called by the caller (main) before constructing any VideoStreamer.
+    // gst_init() must be called before constructing
     explicit VideoStreamer(const StreamerConfig& config);
     ~VideoStreamer();
 
     void start();
     void stop();
 
-    // Push one raw RGB frame from CameraChannel. w/h must match config stream_width/height.
-    // capture_time_ns is the frame's capture/render time (system_clock domain, 0 if unknown);
-    // used to compute and log the capture->encode latency leg alongside the existing
-    // encode-transmit-decode instrumentation.
+    // capture_time_ns in system_clock ns, 0 if unknown
     void pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height, uint64_t capture_time_ns);
 
-    // Per-episode logging of the already-encoded H.264 stream (no extra CPU encode/resize).
+    // Logs the already-encoded H.264 stream per episode.
     void startEncodedLog(const std::string& path);
     void stopEncodedLog();
 
@@ -82,16 +76,14 @@ private:
 
     GstElement* logsink_  = nullptr;
     FILE*       enc_file_ = nullptr;
-    // sidecar: per logged frame "frame_idx,wall_clock_ns,capture_time_ns,capture_to_encode_ns"
     FILE*       ts_file_  = nullptr;
     std::mutex  enc_mutex_;
-    std::atomic<bool>     await_keyframe_{false};  // skip encoded buffers until the first IDR of an episode
+    std::atomic<bool>     await_keyframe_{false};  // wait for first IDR of episode
 
-    // Timestamps of pushed frames awaiting their encoded AU in onNewSample.
     struct PendingFrameTs {
-        uint64_t encode_ns;   // wall clock when pushFrame encoded this frame (== embedded pixel row)
-        uint64_t capture_ns;  // capture_time_ns passed in to pushFrame (0 if source didn't provide one)
+        uint64_t encode_ns;
+        uint64_t capture_ns;
     };
     std::deque<PendingFrameTs> ts_queue_;
-    uint64_t              log_frame_idx_ = 0;    // index of the next frame written to the current episode
+    uint64_t              log_frame_idx_ = 0;
 };

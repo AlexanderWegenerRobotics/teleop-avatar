@@ -43,18 +43,7 @@ public:
     Interpolator interpolator_;
     using HeadStream = UdpStream<HeadCommandMsg, HeadStateMsg>;
     std::unique_ptr<HeadStream> transmission_;
-    // Second command channel on its own port. Same HeadCommandMsg struct and
-    // the same ABSOLUTE joint-target semantics as transmission_ -- the split
-    // is about PEERS, not frames.
-    //
-    // Each UdpStream has exactly one remote peer, so the VR interface and an
-    // autonomous policy cannot share one; the arms have the same pair for the
-    // same reason. Treating the two as different FRAMES (transmission_ adding
-    // q0_, this one not) was tried on 2026-09-23 and produced two bugs in one
-    // evening -- see the note in runStateHandler. Both are absolute now.
-    //
-    // Config-gated (transmission_absolute in the head's device_config), so a
-    // config without it behaves exactly as before.
+    // Second channel for the policy (one peer per stream), same absolute targets. Optional.
     std::unique_ptr<HeadStream> transmission_absolute_;
     std::unique_ptr<DataLogger<HeadLogEntry>> logger_;
     std::chrono::high_resolution_clock::time_point startTime_;

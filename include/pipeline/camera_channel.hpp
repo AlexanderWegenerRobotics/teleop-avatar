@@ -12,7 +12,6 @@
 struct CameraChannelConfig {
     std::string name;
 
-    // ── Source ────────────────────────────────────────────────────────────
     std::string source_type     = "mujoco";  // "mujoco" | "realsense" | "v4l2"
     std::string shm_name;                    // mujoco only
     std::string realsense_serial;            // realsense only (empty = first device)
@@ -21,33 +20,23 @@ struct CameraChannelConfig {
     int         fps             = 30;
     int         source_width    = 640;       // realsense/v4l2 only (mujoco reads from shm)
     int         source_height   = 480;
-    // realsense/v4l2 only. 0 = leave auto-exposure on. >0 = manual exposure in
-    // 100 us units (V4L2_CID_EXPOSURE_ABSOLUTE / RealSense RGB exposure), e.g. 100 = 10 ms.
-    // Auto-exposure priority is always turned off, so the camera never drops fps
-    // to lengthen exposure.
+    // 0 = auto-exposure, >0 = manual exposure in 100 us units (100 = 10 ms)
     int         exposure_100us  = 0;
     bool        auto_exposure   = true;
     int         gain            = -1;
 
-    // ── Stereo-combined mode ──────────────────────────────────────────────
-    // When true, this channel reads shm_name (left) AND stereo_partner_shm
-    // (right) in the same poll loop, composites them side-by-side, and sends
-    // a single 2×width stream.  The right-eye CameraChannel should have
-    // stream_enabled=false.  Only valid for source_type="mujoco".
+    // mujoco only: send left|right side by side as one 2x width stream
     bool        stereo_combined    = false;
     std::string stereo_partner_shm = "";
 
-    // ── Streaming ─────────────────────────────────────────────────────────
     bool         stream_enabled = false;
     StreamerConfig stream;
 
-    // ── Logging ───────────────────────────────────────────────────────────
     bool         log_enabled    = false;
     LoggerConfig log;
 };
 
-// Owns one CameraSource and fans its frames to an optional VideoStreamer and/or
-// VideoLogger. Episode lifecycle is forwarded in from the EpisodeController.
+// One camera source fanned out to an optional streamer and logger.
 class CameraChannel {
 public:
     explicit CameraChannel(const CameraChannelConfig& config);
@@ -71,5 +60,5 @@ private:
     std::unique_ptr<VideoLogger>  logger_;
 
     std::atomic<uint64_t> frame_count_{0};
-    int logging_idx_ = -1;   // episode currently being logged; -1 = none (dedup repeated starts)
+    int logging_idx_ = -1;   // -1 = not logging
 };

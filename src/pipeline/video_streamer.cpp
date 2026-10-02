@@ -95,7 +95,7 @@ static bool nvencAvailable() {
     return false;
 }
 
-// True when the CUDA colour-convert elements exist, so RGB→NV12 can run on the GPU.
+// true if CUDA color convert elements exist (RGB->NV12 on GPU)
 static bool cudaConvertAvailable() {
     GstElementFactory* up = gst_element_factory_find("cudaupload");
     GstElementFactory* cv = gst_element_factory_find("cudaconvert");
@@ -106,14 +106,10 @@ static bool cudaConvertAvailable() {
 }
 
 void VideoStreamer::buildPipeline() {
-    // Height + 2: the extra two rows carry the embedded wall-clock timestamp and frame ID.
-    // The receiver reads and crops them before display.
+    // +2 rows for embedded timestamp and frame ID, receiver crops them
     int padded_height = config_.stream_height + 2;
 
-    // GPU encoder (nvh264enc) when present, else CPU (x264enc); with CUDA convert elements
-    // the RGB→NV12 colour convert also runs on the GPU. config-interval=1 repeats SPS/PPS
-    // in-band; byte-stream caps keep the encoder output compatible with rtph264pay and make
-    // the optional logging branch a decodable Annex-B .h264 elementary stream.
+    // nvh264enc if available, else x264enc. byte-stream so the log branch is plain Annex-B .h264
     auto build = [&](bool gpu, bool cuda_convert) -> std::string {
         std::string convert_seg = !gpu
             ? std::string(" ! videoconvert ! video/x-raw,format=I420")
@@ -136,10 +132,7 @@ void VideoStreamer::buildPipeline() {
             " ! rtpulpfecenc name=fec percentage=" + std::to_string(config_.fec_percentage) +
             " ! udpsink host=" + config_.host +
             " port="           + std::to_string(config_.port) +
-            // Send as soon as a packet exists. With the default sync=true the sink
-            // schedules buffers against the pipeline clock using PTS, and our PTS is a
-            // frame counter (frame_count_/fps), not capture time -- if frames ever
-            // arrive faster than nominal fps, the sink would start holding them back.
+            // sync=false: PTS is a frame counter, not capture time, so don't let the sink hold buffers
             " sync=false async=false";
 
         std::string tail = config_.log_enabled
@@ -194,9 +187,7 @@ void VideoStreamer::buildPipeline() {
     if (!encoder_)
         throw std::runtime_error("Failed to get encoder element from pipeline");
 
-    // Low-latency encoder switches, set only where the element exposes them so an
-    // older nvcodec build still constructs the pipeline (a bad property in the
-    // gst_parse_launch string would fail the GPU build and fall back to x264 CPU).
+    // low-latency options, only set if the encoder has them (older nvcodec builds)
     {
         GObjectClass* klass = G_OBJECT_GET_CLASS(encoder_);
         if (g_object_class_find_property(klass, "zerolatency")) {
@@ -226,7 +217,7 @@ void VideoStreamer::buildPipeline() {
     gst_app_src_set_max_bytes(GST_APP_SRC(appsrc_), 0);
 }
 
-// Appsink callback (streaming thread): appends each encoded access unit to the open episode file.
+// Appsink callback, writes each encoded AU to the episode file.
 GstFlowReturn VideoStreamer::onNewSample(GstAppSink* sink, gpointer user) {
     VideoStreamer* self = static_cast<VideoStreamer*>(user);
     GstSample* sample = gst_app_sink_pull_sample(sink);
@@ -240,12 +231,10 @@ GstFlowReturn VideoStreamer::onNewSample(GstAppSink* sink, gpointer user) {
             bool keyframe = !GST_BUFFER_FLAG_IS_SET(buf, GST_BUFFER_FLAG_DELTA_UNIT);
             PendingFrameTs ts{0, 0}; bool have_ts = false;
             if (!self->ts_queue_.empty()) { ts = self->ts_queue_.front(); self->ts_queue_.pop_front(); have_ts = true; }
-            if (have_ts && !(self->await_keyframe_ && !keyframe)) {   // skip leading P-frames; file starts on an IDR
+            if (have_ts && !(self->await_keyframe_ && !keyframe)) {   // file must start on an IDR
                 self->await_keyframe_ = false;
                 std::fwrite(map.data, 1, map.size, self->enc_file_);
                 if (self->ts_file_) {
-                    // capture_to_encode_ns is only meaningful when the source supplied a
-                    // real capture_ns (non-zero); left as 0 otherwise rather than a bogus delta.
                     uint64_t capture_to_encode_ns =
                         (ts.capture_ns != 0 && ts.encode_ns >= ts.capture_ns)
                             ? (ts.encode_ns - ts.capture_ns) : 0;
@@ -263,7 +252,7 @@ GstFlowReturn VideoStreamer::onNewSample(GstAppSink* sink, gpointer user) {
     return GST_FLOW_OK;
 }
 
-// Opens a per-episode file and asks the encoder for an IDR so the file starts on a keyframe.
+// Opens an episode file and requests an IDR.
 void VideoStreamer::startEncodedLog(const std::string& path) {
     {
         std::lock_guard<std::mutex> lk(enc_mutex_);
@@ -285,7 +274,7 @@ void VideoStreamer::startEncodedLog(const std::string& path) {
     requestKeyframe();
 }
 
-// Sends an upstream force-key-unit (with SPS/PPS) so the next encoded buffer is a self-contained IDR.
+// Requests an IDR with SPS/PPS from the encoder.
 void VideoStreamer::requestKeyframe() {
     if (!logsink_) return;
     GstPad* pad = gst_element_get_static_pad(logsink_, "sink");
@@ -295,7 +284,6 @@ void VideoStreamer::requestKeyframe() {
     gst_object_unref(pad);
 }
 
-// Closes the current episode's encoded file.
 void VideoStreamer::stopEncodedLog() {
     std::lock_guard<std::mutex> lk(enc_mutex_);
     if (enc_file_) { std::fclose(enc_file_); enc_file_ = nullptr; }
@@ -359,9 +347,7 @@ void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t heigh
 
     {
         std::lock_guard<std::mutex> lk(enc_mutex_);
-        // Aligned to the encoded AU in onNewSample. now_ns is the encode-push wall clock
-        // (same value embedded in the pixel timestamp row); capture_time_ns is when the
-        // source captured/rendered the frame, letting onNewSample log the capture->encode delta.
+        // popped in onNewSample in the same order as encoded AUs
         if (enc_file_) ts_queue_.push_back({now_ns, capture_time_ns});
     }
 

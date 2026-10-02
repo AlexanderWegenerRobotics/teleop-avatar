@@ -22,10 +22,10 @@
 
 class Simulation;
 
-// Low-level control mode selected per arm via the config key "control_mode".
+// Per-arm control mode, config key "control_mode".
 enum class ControlMode {
-    CARTESIAN_IMPEDANCE,  // default — unchanged Cartesian impedance + nullspace
-    JOINT_IK              // resolved-rate IK → joint impedance tracking q_ref
+    CARTESIAN_IMPEDANCE,
+    JOINT_IK              // resolved-rate IK -> joint impedance on q_ref
 };
 
 class ArmControl{
@@ -41,9 +41,6 @@ public:
     SysState getState() const {return state_;}
     Eigen::Isometry3d getTargetPose() const;
     Eigen::Isometry3d getRawTargetPose() const;
-    // Raw joint state (q, dq), uniform across sim/real-hardware builds since
-    // current_state is populated via the franka::Robot abstraction either
-    // way. Used by Avatar to build TwinTelemetryMsg (docs/twin_concept.md).
     void getJointState(Vector7& q, Vector7& dq) const;
     void initSelfCollisionProtection(std::shared_ptr<DeviceRegistry> registry, const SelfCollisionConfig& config) {
         scp_ = std::make_unique<SelfCollisionProtection>(name_, std::move(registry), config);
@@ -56,20 +53,10 @@ public:
     Vector7 getQ0() const { return q0_; }
     void reOrigin();
 
-    // ── Command authority ───────────────────────────────────────────────────
-    // Which channel may move THIS arm. See CommandAuthority in common.hpp.
-    // Called from the avatar's authority_request handler (cmd_channel_ receive
-    // thread); read by the state thread every cycle and by the control thread
-    // once per log row, hence the atomic.
-    //
-    // Entering HUMAN re-origins first and opens the VR gate second, so the
-    // operator's first packet is composed against where the policy actually
-    // left the arm rather than against where they last let go of it.
+    // Which channel may move this arm. Entering HUMAN re-origins before opening the VR gate.
     void setAuthority(CommandAuthority requested, const std::string& source);
     CommandAuthority getAuthority() const { return authority_.load(std::memory_order_relaxed); }
-    // Commands that arrived on a channel that did not hold authority and were
-    // therefore discarded. The only way to tell "the gate is working" from "the
-    // sender stopped"; without them every gate test is eyeballed.
+    // Commands dropped because their channel did not hold authority.
     uint64_t getDroppedVrCommands()  const { return dropped_vr_cmds_.load(std::memory_order_relaxed); }
     uint64_t getDroppedAbsCommands() const { return dropped_abs_cmds_.load(std::memory_order_relaxed); }
 
@@ -113,10 +100,7 @@ private:
     Vector7 cartesianImpedanceControl(const franka::RobotState& rs);
     Eigen::Matrix<double, 6, 1> feedforwardWrench(const Eigen::Matrix<double, 6, 1>& v_ref) const;
     Eigen::Matrix<double, 6, 1> filteredReferenceVelocity();
-    // Joint friction model (sigmoid form, supervisor's model / Gaz et al. 2019):
-    // tau_f(dq) = fp1 / (1 + exp(-fp2 (dq + fp3))) - fp1 / (1 + exp(-fp2 fp3)).
-    // Zero at dq = 0, saturating at roughly +-fp1/2. Returns the torque needed
-    // to overcome friction, so it is ADDED to the command.
+    // Gaz et al. 2019: tau_f = fp1/(1+exp(-fp2(dq+fp3))) - fp1/(1+exp(-fp2 fp3)), added to the command.
     Vector7 frictionTorque(const Vector7& dq) const;
     void updateStateMachine(SysState cmd_state);
     void updateRecovery();
@@ -186,7 +170,6 @@ private:
     ControlMode control_mode_ = ControlMode::CARTESIAN_IMPEDANCE;
     double state_rate_hz_{200.0};
 
-    // ── Early-wake plumbing ──────────────────────────────────────────────────
     std::mutex              cmd_wake_mtx_;
     std::condition_variable cmd_wake_cv_;
     bool                    cmd_wake_flag_{false};
@@ -200,20 +183,11 @@ private:
     double ff_force_max_{30.0}, ff_torque_max_{8.0};
     double ff_filter_hz_{20.0};
 
-    // ── Joint friction feedforward ───────────────────────────────────────────
-    // Config: control.friction (see robot_config_*.yaml). Off unless enabled.
-    // Default source is the REFERENCE joint velocity dq_ref = J_pinv * v_ref
-    // (the same filtered reference twist the eta feedforward uses), not the
-    // measured dq: compensating on measured velocity is positive velocity
-    // feedback (moving faster -> more push -> faster), which the wrist, already
-    // prone to a limit cycle, does not need. On the reference it can only push
-    // along the commanded motion and adds nothing to the closed loop.
-    // fp1..fp3 defaults are the Panda identification (Gaz et al. 2019), handed
-    // over as the starting point; FR3 friction is similar but not identical,
-    // hence scale.
+    // Friction feedforward. Uses reference dq by default; measured dq would be positive velocity feedback.
+    // fp1..fp3 are the Panda values (Gaz et al. 2019), scaled for FR3.
     struct FrictionConfig {
         bool    enabled      = false;
-        bool    use_measured = false;   // source: "reference" (default) | "measured"
+        bool    use_measured = false;
         double  scale        = 0.5;
         Vector7 mask         = (Vector7() << 1, 1, 1, 1, 0, 0, 0).finished();
         Vector7 max_torque   = (Vector7() << 2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0).finished();
@@ -221,21 +195,16 @@ private:
         Vector7 fp2 = (Vector7() << 5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336).finished();
         Vector7 fp3 = (Vector7() << 0.039533, 0.025882, -0.04607, 0.036194, 0.026226, -0.021047, 0.0035526).finished();
     } friction_cfg_;
-    // Written by the control thread in cartesianImpedanceControl, zeroed every
-    // control tick before the state switch, read by buildArmLogEntry on the same
-    // thread (log_src 0). Never touched by the state thread.
+    // Control thread only.
     Vector7 tau_friction_ = Vector7::Zero();
     Eigen::Matrix<double, 6, 1> v_ref_filt_ = Eigen::Matrix<double, 6, 1>::Zero();
     Vector7 kp_null_, kd_null_;
 
-    // ── Nullspace posture ────────────────────────────────────────────────────
-    // State thread writes (update / reset), control thread reads one snapshot
-    // per tick into posture_snap_ and uses it for tau_null and the log row.
+    // State thread writes, control thread reads one snapshot per tick.
     PostureConfig     posture_cfg_;
     PostureOptimizer  posture_;
     PostureSnapshot   posture_snap_;
-    // RobotState whose F_T_EE / EE_T_K the kinematics functors reuse when
-    // evaluating poses at configurations other than the measured one.
+    // Supplies F_T_EE / EE_T_K for FK at non-measured configurations.
     franka::RobotState kin_template_;
 
 private:
@@ -245,18 +214,13 @@ private:
     double table_safety_margin_;
     double max_command_velocity_;
     double max_command_angular_velocity_;
-    // Second-order bound on the command target (see validateTargetPose). 0 disables.
+    // 0 disables.
     double max_command_acceleration_{5.0};          // m/s^2
     double max_command_angular_acceleration_{25.0}; // rad/s^2
     Eigen::Vector3d prev_target_vel_    = Eigen::Vector3d::Zero();
     Eigen::Vector3d prev_target_angvel_ = Eigen::Vector3d::Zero();
-    // Furthest the commanded target may sit ahead of the MEASURED pose, in m.
-    // Bounds the impedance spring: at kp_cart 1000 N/m, 0.05 m is 50 N. <=0 disables.
+    // Max distance of target ahead of the measured pose (m / rad). <=0 disables.
     double max_target_lead_{0.0};
-    // Rotational twin of the above, in radians. Bounds the rotational spring the
-    // same way: at kp_cart 125 Nm/rad, 0.10 rad is 12.5 Nm, which is already the
-    // FR3 wrist's per-joint ceiling, so the useful range sits well under that.
-    // <=0 disables.
     double max_target_lead_rot_{0.0};
     std::chrono::steady_clock::time_point last_leash_log_time_{};
     std::chrono::steady_clock::time_point last_leash_rot_log_time_{};
@@ -268,16 +232,9 @@ private:
     bool has_prev_valid_target_{false};
     Eigen::Vector3d prev_valid_target_pos_ = Eigen::Vector3d::Zero();
     Eigen::Quaterniond prev_valid_target_rot_ = Eigen::Quaterniond::Identity();
-    // When the last command was accepted, so validateTargetPose can bound the
-    // step by MEASURED elapsed time instead of the nominal command period. See
-    // the comment there for why cmd_dt_ alone was wrong.
     std::chrono::steady_clock::time_point prev_valid_target_time_{};
-    double last_cmd_dt_{0.0};   // measured in validateTargetPose, sizes the plan
-    // Last pose actually handed to planCartesian. UdpStream resends the latest
-    // command at its own rate, so most packets carry a target the interpolator
-    // is already planning to; replanning on those restarts the plan from
-    // waypoint 0 and, once the send rate exceeds the plan length, the reference
-    // only ever covers a fraction of the remaining distance per replan.
+    double last_cmd_dt_{0.0};
+    // Last pose passed to planCartesian, to skip replanning on resent packets.
     Eigen::Isometry3d last_planned_target_ = Eigen::Isometry3d::Identity();
     bool              has_planned_target_{false};
 };
