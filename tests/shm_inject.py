@@ -1,34 +1,8 @@
 #!/usr/bin/env python3
 """
-shm_inject.py — Standalone stereo SHM test injector
-=====================================================
-Bypasses MuJoCo entirely.  Pumps solid-colour frames into the Windows named
-file mappings that avatar_pipeline reads as its "mujoco" camera source.
+Windows-only: pump solid-colour frames into the SHM camera source of avatar_pipeline (no MuJoCo).
 
-Usage
------
-  # Mono mode  — inject green frames into avatar_cam
-  python shm_inject.py
-
-  # Stereo mode — inject red/blue frames into avatar_cam_left / avatar_cam_right
-  python shm_inject.py --stereo
-
-  # Stop after N frames (default: run until Ctrl-C)
-  python shm_inject.py --frames 300
-
-Then launch avatar_pipeline in another terminal:
-  build\\Release\\avatar_pipeline.exe config\\config_local.yaml
-and confirm it logs "Registering camera" for the expected channel(s).
-
-SharedFrameBuffer layout (must match shared_memory.hpp)
---------------------------------------------------------
-  uint32  write_idx     (atomic, treated as plain u32 by Python)
-  uint32  frame_count   (atomic, treated as plain u32 by Python)
-  uint32  width
-  uint32  height
-  uint8   slots[N_SLOTS][MAX_W * MAX_H * CHANNELS]
-
-On Windows the shared name is "Local\\<name>" (leading slash stripped).
+Usage: python shm_inject.py [--stereo] [--frames 300]
 """
 
 import argparse
@@ -37,8 +11,7 @@ import struct
 import sys
 import time
 
-# ── Constants (must match shared_memory.hpp) ──────────────────────────────────
-
+# must match shared_memory.hpp
 N_SLOTS   = 3
 MAX_W     = 1280
 MAX_H     = 960
@@ -50,16 +23,10 @@ SLOT_SIZE   = MAX_W * MAX_H * CHANNELS
 TOTAL_SIZE  = HEADER_SIZE + N_SLOTS * SLOT_SIZE
 
 
-# ── SHM segment helper ────────────────────────────────────────────────────────
-
 class ShmWriter:
-    """
-    Opens (or creates) a Windows named file mapping and exposes a write()
-    method compatible with SharedMemoryWriter in shared_memory.hpp.
-    """
+    """Windows named file mapping writer, same layout as SharedMemoryWriter."""
 
     def __init__(self, posix_name: str, width: int, height: int):
-        # Strip leading slash to get the Win32 name, e.g. "/avatar_cam" → "Local\avatar_cam"
         bare = posix_name.lstrip("/")
         win32_name = f"Local\\{bare}"
 
@@ -69,7 +36,6 @@ class ShmWriter:
         self._write_idx   = 0
         self._frame_count = 0
 
-        # Initialise the header
         self._mm.seek(0)
         self._mm.write(struct.pack(HEADER_FMT, 0, 0, width, height))
         print(f"[ShmWriter] Opened '{win32_name}'  ({width}x{height})")
@@ -83,7 +49,6 @@ class ShmWriter:
         self._write_idx   += 1
         self._frame_count += 1
 
-        # Update header atomically enough for a test tool
         self._mm.seek(0)
         self._mm.write(struct.pack(HEADER_FMT,
                                    self._write_idx, self._frame_count,
@@ -94,12 +59,9 @@ class ShmWriter:
 
 
 def solid_frame(width: int, height: int, r: int, g: int, b: int) -> bytes:
-    """Return a solid-colour RGB frame (top-down, 8-bit per channel)."""
     pixel = bytes([r, g, b])
     return pixel * (width * height)
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Inject test frames into SHM for avatar_pipeline testing")
@@ -141,13 +103,11 @@ def main():
             if args.frames and count >= args.frames:
                 break
 
-            # Rate limiting
             t_next += period
             now = time.monotonic()
             if t_next > now:
                 time.sleep(t_next - now)
 
-            # Status line every second
             elapsed = time.monotonic() - t_start
             if count % args.fps == 0:
                 actual_fps = count / elapsed if elapsed > 0 else 0

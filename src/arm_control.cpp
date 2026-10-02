@@ -14,20 +14,15 @@
 namespace {
 constexpr double kGripperMaxWidth = 0.08;
 
-// Bounds on the measured command interval used by validateTargetPose. Low guards
-// against a zero/negative interval; high caps the jump allowed after a gap in the
-// command stream (0.05 s x max_command_velocity = 50 mm at 1.0 m/s).
+// Clamp on the measured command interval (s) in validateTargetPose.
 constexpr double kMinCmdDt = 0.0005;
 constexpr double kMaxCmdDt = 0.05;
-// Shortest interval the acceleration bound divides by. Two packets 0.5 ms apart
-// differ by float32 quantisation, which over 0.5 ms reads as tens of m/s^2.
+// Min dt for the accel bound, bunched packets would read as huge accel.
 constexpr double kAccelDtFloor = 0.002;
-// Braking-curve deceleration allowed toward the raw target, as a multiple of
-// the configured acceleration bound (see validateTargetPose).
+// Brake decel toward the raw target, as multiple of the accel bound.
 constexpr double kBrakeAccelFactor = 3.0;
 
-// Well below the float32 resolution of a command on the wire, so this only ever
-// matches a genuinely repeated target.
+// Below float32 wire resolution, only matches a repeated target.
 constexpr double kTargetEpsM   = 1e-6;
 constexpr double kTargetEpsRad = 1e-6;
 
@@ -59,27 +54,10 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         .control_freq   = 1000,
         .comm_freq      = device_config["transmission"]["frequency"].as<int>(),
         .n_dof          = 7,
-        // The interpolator's speed caps MUST match the safety limiter applied in
-        // validateTargetPose, never be tighter than it. They were hardcoded at
-        // 0.5 m/s and 0.8 rad/s while safety allowed 1.0 m/s and 4.0 rad/s --
-        // 2x tighter in translation, 5x in rotation. planCartesian replans from
-        // the current interpolated waypoint each command, so above the cap the
-        // reference simply cannot move fast enough and lag accumulates without
-        // bound until the operator slows down. It is a cliff, not a gradient:
-        // below the cap the cost is ~4.5 ms (half of min_steps), at it the
-        // reference saturates. logs/079 and logs/080 show the reference angular
-        // rate pinned at p95 = 0.86 rad/s against the old 0.8 cap for much of
-        // the episode -- rotation was saturated during ordinary use. Reading
-        // both from the same config keys the limiter uses keeps them from
-        // drifting apart again.
+        // Must match the safety limiter in validateTargetPose, never tighter.
         .max_linear_vel  = device_config["safety"]["max_command_velocity"].as<double>(),
         .max_angular_vel = device_config["safety"]["max_command_angular_velocity"].as<double>(),
-        // Joint plans were timed off max_angular_vel above, which is the
-        // END-EFFECTOR rotational cap. Nothing there bounds a joint, and MINJERK
-        // peaks at 1.875x the average it was sized for, so a recovery plan
-        // reached 7.5 rad/s and faulted the arm mid-homing. Same numbers the
-        // robot's own check uses; absent from the config it falls back to the
-        // old behaviour and says so.
+        // Per-joint velocity caps for joint plans (dq_max, empty = old behaviour).
         .max_joint_vel   = [&device_config]() -> std::vector<double> {
             if (device_config["dq_max"])
                 return device_config["dq_max"].as<std::vector<double>>();
@@ -106,8 +84,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     base_position_ = Eigen::Vector3d(pos[0], pos[1], pos[2]);
     base_orientation_ = Eigen::Quaterniond(ori[0], ori[1], ori[2], ori[3]);
 
-    // Controller-frame -> EE/flange-frame axis remap for body-frame orientation
-    // retargeting. Defaults to identity (passthrough). Fill from the single-axis test.
+    // Controller-frame -> EE-frame axis remap, identity by default.
     R_ctrl_to_ee_ = Eigen::Matrix3d::Identity();
     if (device_config["controller_axis_map"]) {
         auto rows = device_config["controller_axis_map"].as<std::vector<std::vector<double>>>();
@@ -142,16 +119,12 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     tau_max_ = yamlToVector<7>(device_config["max_torque"]);
     tau_rate_max_ = yamlToVector<7>(device_config["max_torque_rate"]) / 1000.0;
 
-    // Headroom on the torque-rate limiter. max_torque_rate stays whatever the
-    // config says (it is the physical envelope); this is how much of it we let
-    // ourselves spend, so the safety margin can be tuned against the jitter of a
-    // given host without touching the envelope itself.
+    // Fraction of max_torque_rate we actually use.
     if (device_config["control"]["torque_rate_margin"])
         torque_rate_margin_ = device_config["control"]["torque_rate_margin"].as<double>();
     torque_rate_margin_ = std::clamp(torque_rate_margin_, 0.05, 1.0);
 
-    // Authority staleness watchdog; see authority_stale_ms_. Floored well above
-    // one state-thread period so a single late packet can never reclaim an arm.
+    // Floored so a single late packet can't reclaim an arm.
     if (device_config["control"]["authority_stale_ms"])
         authority_stale_ms_ = device_config["control"]["authority_stale_ms"].as<double>();
     authority_stale_ms_ = std::max(authority_stale_ms_, 50.0);
@@ -159,11 +132,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     kp_joint_ = yamlToVector<7>(device_config["control"]["kp_joint"]);
     kd_joint_ = yamlToVector<7>(device_config["control"]["kd_joint"]);
 
-    // IDLE hold gains -- explicit config if present, otherwise a scaled-down
-    // fraction of the tracking gains. Deliberately soft: the IDLE target is
-    // latched at the *current* pose, so initial error (and therefore initial
-    // torque) is zero, and steady-state error is only tau_residual/kp -- well
-    // under a degree even at reduced stiffness.
+    // IDLE hold gains: from config or a soft fraction of the tracking gains.
     constexpr double kIdleStiffFrac = 0.40;
     constexpr double kIdleDampFrac  = 0.63;   // ~sqrt(0.40), keeps damping ratio
     if (device_config["control"]["kp_idle"])
@@ -230,10 +199,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     joint_limit_buffer_  = device_config["safety"]["joint_limit_buffer"].as<double>();
     joint_limit_torque_frac_ = device_config["safety"]["joint_limit_torque_frac"].as<double>();
 
-    // ── Collision behavior / impedance ──────────────────────────────────────
-    // Applied once at startup, before the control thread ever calls robot->control().
-    // Left optional and explicit: if not present in config we deliberately keep
-    // whatever the robot/Desk already has configured rather than guessing values.
+    // Collision thresholds, if missing keep the robot/Desk defaults.
     if (device_config["safety"]["collision_lower_torque"] && device_config["safety"]["collision_upper_torque"] &&
         device_config["safety"]["collision_lower_force"]  && device_config["safety"]["collision_upper_force"]) {
         auto lower_torque = toArray<7>(device_config["safety"]["collision_lower_torque"].as<std::vector<double>>());
@@ -263,13 +229,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         transmission_ = std::make_unique<ArmStream>(stream_cfg);
     }
 
-    // Optional second channel, own port, same ArmCommandMsg struct -- for an
-    // autonomous policy's absolute world-frame pose commands (see
-    // worldAbsoluteToBase), kept fully separate from transmission_'s
-    // delta-from-origin VR path above so nothing sending there is affected.
-    // Its outgoing ArmStateMsg echo isn't consumed by anything -- state is
-    // already published on transmission_ -- so remote_ip/send_port here just
-    // need to be valid, not actually listened to.
+    // Optional channel for absolute world-frame pose commands (policy).
     if (device_config["transmission_absolute"]) {
         UdpStreamConfig stream_cfg;
         stream_cfg.transport.remote_ip   = device_config["transmission_absolute"]["remote_ip"].as<std::string>();
@@ -320,7 +280,6 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     max_tilt_angle_ = device_config["safety"]["max_tilt_angle"].as<double>();
     cmd_dt_ = 1.0 / static_cast<double>(device_config["transmission"]["frequency"].as<int>());
 
-    // ── Control mode ─────────────────────────────────────────────────────────
     control_mode_ = ControlMode::CARTESIAN_IMPEDANCE;
     if (device_config["control_mode"]) {
         std::string mode_str = device_config["control_mode"].as<std::string>();
@@ -371,11 +330,7 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
             grasp_speed_ = gripper_cfg["grasp_speed"].as<double>();
     }
 
-    // ── Thread placement ────────────────────────────────────────────────────
-    // Defaults reproduce the previous hard-coded mapping (arm_left -> 0/1,
-    // arm_right -> 2/3). Overridable because the right cores are a property of
-    // the machine, not of the arm: on a P/E-core host you want the 1 kHz loop on
-    // a P-core, and on any Linux box you want it off core 0.
+    // Thread cores, overridable per machine.
     rt_control_core_ = (name_ == "arm_right") ? 2 : 0;
     rt_state_core_   = (name_ == "arm_right") ? 3 : 1;
     if (device_config["rt"]) {
@@ -399,8 +354,7 @@ ArmControl::~ArmControl(){
 }
 
 void ArmControl::start(){
-    // We run libfranka with RealtimeConfig::kIgnore, which turns "cannot get RT
-    // priority" from an exception into silence. Say it out loud at startup instead.
+    // Running with kIgnore, so warn about missing RT priority here.
     warn_if_no_realtime(name_);
 
     bRunning = true;
@@ -462,9 +416,7 @@ void ArmControl::start(){
         });
     }
 #endif
-    // Wake the state thread the moment a command lands rather than letting it
-    // sit until the next periodic tick. Must be set before start() -- the
-    // callback is read unlocked on the receive thread.
+    // Wake state thread on command arrival. Must be set before start().
     if (transmission_) transmission_->setOnReceive([this]{ notifyCommandArrived(); });
     if (transmission_absolute_) transmission_absolute_->setOnReceive([this]{ notifyCommandArrived(); });
     if (transmission_) transmission_->start();
@@ -480,8 +432,7 @@ void ArmControl::stop(){
     if (state_trace_) state_trace_->stop();
     bRunning = false;
     state_ = SysState::OFFLINE;
-    // Release runStateHandler if it is parked in waitForCommandOrDeadline;
-    // without this the join below waits out one full period.
+    // Release runStateHandler from waitForCommandOrDeadline.
     notifyCommandArrived();
     if (control_thread.joinable()) control_thread.join();
     if (state_thread.joinable()) state_thread.join();
@@ -495,11 +446,7 @@ ArmLogEntry ArmControl::buildArmLogEntry(const franka::RobotState& rs,
                                          uint8_t log_src) {
     const Eigen::Isometry3d T_ee(Eigen::Map<const Eigen::Matrix4d>(rs.O_T_EE.data()));
 
-    // Default to the MEASURED pose rather than identity. Identity here was the
-    // bug behind the phantom setpoint: T_base_ * I is the arm's mounting frame,
-    // which plots as a perfectly plausible command that nobody issued. Writing
-    // the measured pose makes the command columns degenerate to "wherever the
-    // arm is" whenever there is no target, and cmd_valid says which it is.
+    // Default to measured pose so rows without a command show no fake setpoint.
     Vector7 q_target  = Vector7::Zero();
     Matrix4 T_target  = T_ee.matrix();
     uint8_t cmd_valid = 0;
@@ -539,8 +486,7 @@ ArmLogEntry ArmControl::buildArmLogEntry(const franka::RobotState& rs,
     e.gripper_width = gripper_width_.load();
     e.gripper_cmd   = (grasp_allowed_.load() && desired_gripper_closed_.load()) ? 0.0 : 0.08;
     e.grasp_state   = static_cast<uint8_t>(grasp_state_.load());
-    // Ungated, unlike gripper_cmd above: this is what the operator's hand was
-    // doing, whether or not this arm was in a state that would act on it.
+    // Ungated raw operator grip.
     e.grasp_cmd     = desired_gripper_closed_.load() ? 1 : 0;
     e.clutch        = clutch_active_.load() ? 1 : 0;
     e.applied_cmd_sequence = applied_cmd_seq_.load(std::memory_order_relaxed);
@@ -554,20 +500,13 @@ ArmLogEntry ArmControl::buildArmLogEntry(const franka::RobotState& rs,
     std::copy(rs.O_F_ext_hat_K.begin(), rs.O_F_ext_hat_K.end(), e.F_ext.begin());
 
     Eigen::Map<Vector7>(e.q_cmd.data()) = q_target;
-    // Post rate-limit, post-saturation: exactly the vector handed to
-    // franka::Torques. tau_J is what the joints measured, this is what we asked
-    // for; diff() it per tick against max_torque_rate to see a discontinuity
-    // instead of guessing at one. Zero in fallback rows, which is literally
-    // true -- no control loop is running to command anything.
+    // Final torque sent to franka::Torques (after rate limit and saturation).
     Eigen::Map<Vector7>(e.tau_cmd.data()) = tau_cmd;
-    // Friction feedforward contained in tau_cmd (pre rate-limit). Zero in
-    // fallback rows and whenever the feature is off.
+    // Friction feedforward part of tau_cmd.
     if (log_src == 0)
         Eigen::Map<Vector7>(e.tau_friction.data()) = tau_friction_;
 
-    // posture_snap_ is written by the control thread every tick. Reading it
-    // from the state thread would be a race for no benefit, and it is stale by
-    // definition whenever the fallback fires.
+    // posture_snap_ is control-thread only, stale in fallback rows.
     if (log_src == 0) {
         Eigen::Map<Vector7>(e.q_null_ref.data()) = posture_snap_.valid ? posture_snap_.q_ref : q0_;
         e.posture_s      = posture_snap_.s_opt;
@@ -579,10 +518,7 @@ ArmLogEntry ArmControl::buildArmLogEntry(const franka::RobotState& rs,
     }
 
     Eigen::Map<Matrix4>(e.O_T_EE_cmd.data()) = T_target;
-    // World-frame counterparts (T_base_ * local), additive -- the same
-    // composition already used live for ArmStateMsg, logged per-tick so policy
-    // training can consume world-frame poses directly instead of a base-frame
-    // pose tied to this arm's mounting calibration.
+    // World-frame poses (T_base_ * local).
     Eigen::Map<Matrix4>(e.O_T_EE_world.data())     = (T_base_ * T_ee).matrix();
     Eigen::Map<Matrix4>(e.O_T_EE_cmd_world.data()) = (T_base_ * Eigen::Isometry3d(T_target)).matrix();
 
@@ -590,14 +526,7 @@ ArmLogEntry ArmControl::buildArmLogEntry(const franka::RobotState& rs,
 }
 
 void ArmControl::runStateHandler(){
-    // Loop period and the dt handed to stepIk now come from one number.
-    // They used to be independently hardcoded -- a 200 Hz period sitting next to
-    // dt_state = 1/500 -- so stepIk integrated q_ref += u*dt with a dt 2.5x too
-    // small: the IK reference advanced at 40% of the commanded joint velocity
-    // and the a_max*dt acceleration bound was 2.5x tighter than configured.
-    // JOINT_IK was running 2.5x slower than it was tuned for. Dead code while
-    // control_mode is cartesian_impedance, but silent and confusing the moment
-    // the IK path is revisited.
+    // Loop period and IK dt both come from state_rate_hz_.
     const auto control_period =
         std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<double>(1.0 / state_rate_hz_));
@@ -613,20 +542,8 @@ void ArmControl::runStateHandler(){
 
     while(bRunning){
 
-        // ── Command authority gate ───────────────────────────────────────────
-        // Both channels are drained every cycle so a non-authoritative sender
-        // cannot back up its socket, but only the authoritative one is allowed
-        // to reach the target OR the gripper.
-        //
-        // The gripper matters as much as the pose and is a separate code path:
-        // desired_gripper_closed_ was stored unconditionally from whichever
-        // packet arrived last, independently of applyOperatorCommand's
-        // pose-priority decision. So a VR-only cycle set the gripper from the
-        // operator's grip toggle even while the absolute channel was driving
-        // the arm. Gating the pose alone would leave that in place.
-        //
-        // While UNSET nothing is gated and this is exactly the previous
-        // behaviour -- see CommandAuthority in common.hpp for why that matters.
+        // Drain both channels every cycle, only the authoritative one sets target and gripper.
+        // UNSET = no gating.
         const CommandAuthority auth = authority_.load(std::memory_order_relaxed);
         const bool enforce     = (auth != CommandAuthority::UNSET);
         const bool vr_allowed  = !enforce || auth == CommandAuthority::HUMAN;
@@ -634,12 +551,7 @@ void ArmControl::runStateHandler(){
 
         if (transmission_ && transmission_->hasNew()) {
             const ArmCommandMsg m = transmission_->getRecvData();
-            // Clutch is a property of the OPERATOR, not of whoever holds the
-            // arm, so it is recorded from the VR stream whether or not that
-            // stream is driving. That is what makes the log self-checking:
-            // authority HUMAN must coincide with clutch 0, and any row where it
-            // does not means the interface and the avatar disagree about who
-            // has the robot.
+            // Clutch is recorded from the VR stream regardless of authority.
             clutch_active_.store(m.clutch != 0);
             if (vr_allowed) {
                 cmd = m;
@@ -652,8 +564,7 @@ void ArmControl::runStateHandler(){
         }
         if (transmission_absolute_ && transmission_absolute_->hasNew()) {
             const ArmCommandMsg m = transmission_absolute_->getRecvData();
-            // Only while unenforced, to keep pre-authority runs byte-identical.
-            // Once enforcement is on, the line above is the single writer.
+            // Only while unenforced, otherwise the VR stream is the single writer.
             if (!enforce) clutch_active_.store(m.clutch != 0);
             if (abs_allowed) {
                 cmd_abs = m;
@@ -666,14 +577,7 @@ void ArmControl::runStateHandler(){
         }
         updateAuthorityWatchdog();
 
-        // ── Early wake ───────────────────────────────────────────────────────
-        // A command landed before the periodic deadline. Push it straight
-        // through to the target and go back to waiting instead of holding it
-        // until the next tick. Only the command -> target path runs here: the
-        // state machine, telemetry publish, gripper read and state trace stay on
-        // the periodic tick, so none of their rates follow the command rate when
-        // comms move to 500 Hz. prev_state is deliberately not touched, so a
-        // fast iteration can never swallow a state-entry block.
+        // Early wake: apply a new command right away, the rest waits for the periodic tick.
         if (std::chrono::steady_clock::now() < next_control_time) {
             if (state_ == SysState::ENGAGED && (has_cmd || has_cmd_abs))
                 applyOperatorCommand(cmd, cmd_abs, has_cmd, has_cmd_abs, prev_cmd_quat_);
@@ -689,7 +593,7 @@ void ArmControl::runStateHandler(){
             has_cmd_abs = false;
         }
 
-        // ── Nullspace posture ────────────────────────────────────────────────
+        // Nullspace posture
         {
             const bool cart_now  = (state_ == SysState::AWAITING || state_ == SysState::ENGAGED);
             const bool cart_prev = (prev_state == SysState::AWAITING || prev_state == SysState::ENGAGED);
@@ -709,7 +613,7 @@ void ArmControl::runStateHandler(){
             }
         }
 
-        // ── HOMING entry ──────────────────────────────────────────────────────
+        // HOMING entry
         if (state_ == SysState::HOMING && prev_state != SysState::HOMING) {
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
@@ -718,26 +622,19 @@ void ArmControl::runStateHandler(){
             motion_gen_.planJoint(q_current, q0_, ProfileType::MINJERK);
         }
 
-        // ── IDLE entry: latch the current configuration as the hold target ────
-        // Without this the arm is commanded zero torque, i.e. gravity-compensated
-        // float. That is neutral equilibrium -- no restoring term anywhere -- so
-        // any model residual or leftover velocity integrates into unbounded drift
-        // rather than being corrected.
+        // IDLE entry: latch current config as hold target (otherwise the arm floats and drifts).
         else if (state_ == SysState::IDLE && prev_state != SysState::IDLE) {
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
                 q_current = Eigen::Map<const Vector7>(current_state.q.data());
             }
-            // Zero-length plan: getCurrentJoint() parks at q_current, so the
-            // impedance target is FIXED rather than tracking the live pose.
-            // Re-reading the live pose every tick would recreate neutral equilibrium
-            // and drift exactly as before.
+            // Zero-length plan so the hold target stays fixed.
             motion_gen_.planJoint(q_current, q_current, ProfileType::MINJERK);
             idle_hold_valid_.store(true, std::memory_order_release);
             std::cout << "[INFO]: " << name_ << " idle hold latched." << std::endl;
         }
 
-        // ── ENGAGED entry: seed IK to current robot state ─────────────────────
+        // ENGAGED entry: seed IK to current robot state
         else if (state_ == SysState::ENGAGED && prev_state != SysState::ENGAGED
                  && control_mode_ == ControlMode::JOINT_IK) {
             franka::RobotState rs;
@@ -752,7 +649,7 @@ void ArmControl::runStateHandler(){
             has_planned_target_ = false;
         }
 
-        // ── ENGAGED tick ──────────────────────────────────────────────────────
+        // ENGAGED tick
         else if (state_ == SysState::ENGAGED) {
             if (has_cmd || has_cmd_abs) {
                 applyOperatorCommand(cmd, cmd_abs, has_cmd, has_cmd_abs, prev_cmd_quat_);
@@ -800,9 +697,7 @@ void ArmControl::runStateHandler(){
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
                 rs = current_state;
-                // Read under the same lock as the state itself, so the stamp
-                // always belongs to the snapshot we just took rather than to a
-                // newer one that landed in between.
+                // Same lock so the stamp matches the snapshot.
                 rs_sample_ns = state_sample_ns_.load(std::memory_order_relaxed);
             }
             Eigen::Isometry3d T_ee(Eigen::Map<const Eigen::Matrix4d>(rs.O_T_EE.data()));
@@ -833,35 +728,12 @@ void ArmControl::runStateHandler(){
             state_msg.recovering    = (state_ == SysState::RECOVERING) ? 1 : 0;
             state_msg.gripper_width = static_cast<float>(gripper_width_.load());
             state_msg.grasp_state   = grasp_state_.load();
-            // When the CONTROL thread last read the robot. doSend() fills in
-            // sequence/timestamp_ns at send time; this is the one field that
-            // stops advancing if the control loop dies, which is the whole
-            // point of it (see MsgHeader in common.hpp).
+            // When the control thread last read the robot, stops advancing if it dies.
             state_msg.header.sample_time_ns = rs_sample_ns;
-            // Echo the last operator command we acted on, so the interface can
-            // difference it against its own send timestamp (see common.hpp).
+            // Echo of the last applied operator command, for latency measurement.
             state_msg.applied_cmd_sequence = applied_cmd_seq_.load(std::memory_order_relaxed);
             transmission_->setSendData(state_msg);
-            // Publish the SAME state on the absolute channel as well.
-            //
-            // Every outbound channel here is point-to-point: UdpTransport holds
-            // one remote_ip/remote_port from the config and sends there. So
-            // transmission_ can serve exactly one client, and the VR interface
-            // and the orchestrator both need arm state -- the interface to know
-            // the arm is alive at all, the orchestrator because ArmStateMsg IS
-            // the policy's proprio.
-            //
-            // With both running they collided on transmission_'s send_port and
-            // whichever process bound it first starved the other. The symptom is
-            // not subtle but it is very indirect: the interface reports the
-            // avatar as not alive, stays OFFLINE, and locks START and ENGAGE.
-            //
-            // transmission_absolute_ already exists for the orchestrator (it is
-            // how absolute world-frame commands come IN), it already carries the
-            // same ArmStateMsg type, and it has its own ports. So the two
-            // clients get a channel each and nothing has to learn to fan out.
-            // Costs one 117-byte datagram per state tick to a port nobody may be
-            // listening on, which UDP discards.
+            // Also publish on the absolute channel, UDP is point-to-point and the orchestrator needs state too.
             if (transmission_absolute_) transmission_absolute_->setSendData(state_msg);
         }
 
@@ -877,11 +749,7 @@ void ArmControl::runStateHandler(){
 #endif
         updateGraspConfirmation(width);
 
-        // ── state trace ───────────────────────────────────────────────────────
-        // Written here rather than in the control callback so it keeps going
-        // through faults, automaticErrorRecovery() and the blocking FAULT wait
-        // -- the three situations where arm.csv goes silent and where knowing
-        // what happened matters most.
+        // State trace, written here so it keeps going through faults.
         if (state_trace_) {
             const uint64_t now_ns    = timestamp_ns();
             const uint64_t sample_ns = state_sample_ns_.load(std::memory_order_relaxed);
@@ -890,8 +758,7 @@ void ArmControl::runStateHandler(){
                 std::chrono::high_resolution_clock::now() - startTime_).count();
             tr.wall_clock_ns        = now_ns;
             tr.control_sample_ns    = sample_ns;
-            // Grows without bound while the control thread is not running. This
-            // is the single column to plot when asking "was the robot alive?".
+            // Grows while the control thread is dead, -1 if no sample yet.
             tr.control_age_ms       = (sample_ns == 0 || now_ns < sample_ns)
                                         ? -1.0
                                         : static_cast<double>(now_ns - sample_ns) / 1e6;
@@ -902,21 +769,7 @@ void ArmControl::runStateHandler(){
             state_trace_->write(tr);
         }
 
-        // ── log continuity across control-loop outages ────────────────────────
-        // logger_ is written from inside robot->control()'s callback, so a
-        // ControlException takes the writer with it. automaticErrorRecovery(),
-        // waitForRest(), the 500 ms re-entry dwell and the blocking wait in
-        // enterFaultAndWaitForReset() then leave 3-7 s with no rows at all --
-        // which is why arm.csv drew a straight line through every fault instead
-        // of showing one. Fill that window from here at the state rate, marked
-        // log_src = 1.
-        //
-        // current_state rather than a readOnce() of our own: waitForRest() is
-        // already polling the robot from the control thread during most of the
-        // outage and publishing into current_state under state_mtx, and two
-        // threads calling readOnce() concurrently is not something libfranka
-        // promises. When nothing refreshes it the pose is frozen, which is an
-        // accurate description of an arm that has been stopped by a reflex.
+        // Fill log gaps while the control loop is down (log_src = 1).
         if (logger_) {
             constexpr double kControlStaleLogMs = 20.0;
             const uint64_t now_ns    = timestamp_ns();
@@ -936,9 +789,7 @@ void ArmControl::runStateHandler(){
 
         prev_state = state_;
         next_control_time += control_period;
-        // Fell far behind (host contention, a long gripper call): resynchronise
-        // rather than sprint through a burst of catch-up ticks. Same rationale
-        // as Robot::control.
+        // Resync if we fell far behind instead of bursting catch-up ticks.
         const auto now_tp = std::chrono::steady_clock::now();
         if (now_tp - next_control_time > std::chrono::milliseconds(50))
             next_control_time = now_tp;
@@ -946,11 +797,7 @@ void ArmControl::runStateHandler(){
     }
 }
 
-// Sleep to the periodic deadline, or return the instant a command arrives.
-// Replaces sleep_until(next_control_time): the command path used to sit behind
-// two independent polls in series -- UdpStream polling a non-blocking socket at
-// send_rate_hz, then this thread polling hasNew() -- for 0-10 ms of pure
-// waiting on a packet that had already arrived.
+// Sleep until the deadline or until a command arrives.
 void ArmControl::waitForCommandOrDeadline(
         const std::chrono::steady_clock::time_point& deadline) {
     std::unique_lock<std::mutex> lock(cmd_wake_mtx_);
@@ -968,29 +815,15 @@ void ArmControl::notifyCommandArrived() {
     cmd_wake_cv_.notify_one();
 }
 
-// Body lifted verbatim out of the ENGAGED tick so the early-wake path and the
-// periodic path apply a command identically. Called only from the state thread,
-// so target_pose_/target_pose_raw_ and prev_cmd_quat_ keep their single-writer
-// invariant.
+// Apply one operator command. State thread only.
 void ArmControl::applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommandMsg& cmd_abs,
                                       bool& has_cmd, bool& has_cmd_abs,
                                       Eigen::Quaterniond& prev_cmd_quat_) {
-    // Absolute (autonomous policy) takes priority if both arrived this tick --
-    // shouldn't happen in practice, since SystemArbitrator/policy mode gating
-    // means only one sender is ever actually active, but this keeps it
-    // deterministic rather than order-of-arrival dependent.
+    // Absolute (policy) wins if both arrived this tick.
     bool absolute = has_cmd_abs;
     const ArmCommandMsg& src = absolute ? cmd_abs : cmd;
 
-    // Record which command we are about to ACT on, for the echo in the outgoing
-    // ArmStateMsg. Deliberately set here rather than where the packet is
-    // received: a command that arrived but was dropped (not ENGAGED, superseded
-    // within the same tick) never moved the robot, and echoing it would
-    // understate the latency the operator actually experiences.
-    //
-    // Only the relative/operator stream is echoed. The absolute stream comes
-    // from an autonomous policy, not from the VR interface, so there is no send
-    // timestamp on the operator side to difference against.
+    // Echo only the VR stream's sequence, set here because it is actually applied.
     if (!absolute) {
         applied_cmd_seq_.store(src.header.sequence, std::memory_order_relaxed);
     }
@@ -1004,16 +837,14 @@ void ArmControl::applyOperatorCommand(const ArmCommandMsg& cmd, const ArmCommand
     T_cmd.translation() = pos;
     T_cmd.linear() = q.toRotationMatrix();
 
-    // Absolute: world-frame target, no origin/controller-remap involved
-    // (worldAbsoluteToBase). Otherwise: existing delta-from-origin VR semantics
-    // (transformCommandToBase), unchanged.
+    // Absolute: world-frame target. Otherwise: delta from origin.
     Eigen::Isometry3d T_target = absolute ? worldAbsoluteToBase(T_cmd) : transformCommandToBase(T_cmd);
     target_pose_raw_ = T_base_ * T_target;
     applySelfCollisionFilter(T_target);
     validateTargetPose(T_target);
 
     if (control_mode_ == ControlMode::JOINT_IK) {
-        // IK goal update -- goal is frozen when commands stop
+        // IK goal, frozen when commands stop
         motion_gen_.setCartesianGoal(T_target);
     } else if (!has_planned_target_ || !targetsEqual(T_target, last_planned_target_)) {
         motion_gen_.setCommandInterval(last_cmd_dt_);
@@ -1045,10 +876,7 @@ void ArmControl::updateRecovery() {
     RecoveryRequest req = recovery_.consumePending();
     if (req.valid) {
         Vector7 q_current, dq_current;
-        // While FAULT holds the control thread, current_state is frozen at the
-        // moment of the fault. Read the robot directly (readOnce() is live
-        // outside control()) so the recovery plan starts where the arm is, and
-        // hold the request until the reflex brake has brought it to rest.
+        // In FAULT current_state is frozen, so read the robot directly.
         if (state_ == SysState::FAULT) {
             franka::RobotState rs = robot->readOnce();
             std::lock_guard<std::mutex> lock(state_mtx);
@@ -1079,20 +907,12 @@ void ArmControl::updateRecovery() {
             std::cout << "[WARN]: " << name_ << " arm still moving after 3 s - starting recovery anyway." << std::endl;
         }
         recovery_deferred_ = false;
-        // Under state_mtx because runControlHandler's rearmFromMeasuredState reads
-        // it from the control thread when restarting a faulted loop.
+        // Locked because the control thread reads it in rearmFromMeasuredState.
         {
             std::lock_guard<std::mutex> lock(state_mtx);
             recovery_target_q_ = req.target_q;
         }
-        // Drop the pre-fault operator target. rearmFromMeasuredState already
-        // re-plans the motion generator from the measured pose, but these two
-        // survived it: the first command after a reset was rate-limited against
-        // a prev_valid_target_pos_ from before the fault, and targetsEqual()
-        // against a stale last_planned_target_ could suppress the replan
-        // entirely, leaving the arm running the recovery trajectory. Written on
-        // the state thread, same as validateTargetPose. Safe to clear now that
-        // max_target_lead_ bounds the first unlimited command.
+        // Drop the pre-fault target history so the first command replans cleanly.
         has_prev_valid_target_ = false;
         has_planned_target_    = false;
 
@@ -1214,9 +1034,7 @@ void ArmControl::updateStateMachine(SysState cmd_state){
         default:
             break;
     }
-    // Invalidate the IDLE hold the instant we transition INTO idle, so the 1 kHz
-    // control loop cannot hold against a stale motion_gen_ target (e.g. q0 left
-    // over from HOMING) in the window before runStateHandler latches a new one.
+    // Invalidate IDLE hold on entry so the control loop can't hold a stale target.
     if (state_ != prev && state_ == SysState::IDLE) {
         idle_hold_valid_.store(false, std::memory_order_release);
     }
@@ -1229,8 +1047,7 @@ void ArmControl::updateStateMachine(SysState cmd_state){
 void ArmControl::runControlHandler(){
     Vector7 tau_prev_ = Vector7::Zero();
 
-    // Hoisted out of the callback: one multiply we do not need to repeat 1000x/s,
-    // and it makes the effective limit visible in one place.
+    // Effective torque-rate limit per tick.
     const Vector7 tau_rate_step = tau_rate_max_ * torque_rate_margin_;
 
     std::function<franka::Torques(const franka::RobotState&, franka::Duration)>
@@ -1241,10 +1058,7 @@ void ArmControl::runControlHandler(){
             {
                 std::lock_guard<std::mutex> lock(state_mtx);
                 current_state = robot_state;
-                // Freshness stamp for outgoing telemetry. Written here and
-                // nowhere else: this is the only place the robot is actually
-                // read, so if this loop stops advancing, so does the stamp,
-                // and every consumer can see it.
+                // Freshness stamp, only written here.
                 state_sample_ns_.store(timestamp_ns(), std::memory_order_relaxed);
             }
             Vector7 ctrl_torque = Vector7::Zero();
@@ -1258,9 +1072,7 @@ void ArmControl::runControlHandler(){
                     break;
 
                 case SysState::IDLE:
-                    // Hold the configuration latched on IDLE entry. Gated on
-                    // idle_hold_valid_ so we never impedance-track an empty or
-                    // stale motion_gen_ buffer (see arm_control.hpp).
+                    // Hold the latched config once idle_hold_valid_ is set.
                     if (idle_hold_valid_.load(std::memory_order_acquire))
                         ctrl_torque = jointImpedanceControl(robot_state);
                     break;
@@ -1306,24 +1118,8 @@ void ArmControl::runControlHandler(){
     bool have_prior_fault = false;
     std::chrono::steady_clock::time_point last_fault_time{};
 
-    // ── Re-arm against the robot's MEASURED state before handing control back ──
-    //
-    // Two things change under us whenever robot->control() returns: the robot's
-    // internal tau_J_d drops to zero, and the arm has usually moved (reflex stop,
-    // then automaticErrorRecovery).
-    //
-    // Restarting without accounting for that is what turned a single reflex into
-    // a fault loop. tau_prev_ lives outside this retry loop, so the first command
-    // of the new control loop was tau_prev_ +/- one rate-limiter step -- i.e. it
-    // jumped from 0 straight back to whatever torque was being commanded when the
-    // reflex fired. At 15 Nm that is a 15000 Nm/s step on tick one, well past the
-    // 1000 Nm/s FCI limit, so it tripped controller_torque_discontinuity before a
-    // single command landed. That is the control_command_success_rate: 0 signature
-    // on retries #2+.
-    //
-    // Zeroing tau_prev_ makes the existing rate limiter double as a soft-start
-    // (~0.9 Nm/tick, so ~17 ms to climb back to 15 Nm), and re-planning from the
-    // measured pose stops the impedance error from being large to begin with.
+    // Re-arm from measured state before re-entering control(): zero tau_prev_ (soft start
+    // via the rate limiter) and replan from the measured pose.
     auto rearmFromMeasuredState = [this, &tau_prev_]() {
         tau_prev_.setZero();
         v_ref_filt_.setZero();
@@ -1336,13 +1132,11 @@ void ArmControl::runControlHandler(){
             T_ee          = Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(current_state.O_T_EE.data()));
             recovery_goal = recovery_target_q_;
         }
-        // No usable robot state yet -- leave the existing plan alone rather than
-        // latching onto zeros (that would command a full-speed move to q = 0).
+        // No valid state yet, don't plan toward q = 0.
         if (!q.allFinite() || q.norm() < 1e-9) return;
 
         switch (state_.load()) {
             case SysState::HOMING:
-                // Still going to q0, just re-planned from where the arm actually is.
                 motion_gen_.planJoint(q, q0_, ProfileType::MINJERK);
                 break;
             case SysState::RECOVERING:
@@ -1353,9 +1147,7 @@ void ArmControl::runControlHandler(){
                 idle_hold_valid_.store(true, std::memory_order_release);
                 break;
             default:
-                // AWAITING / ENGAGED / PAUSED: hold the measured pose. The operator
-                // has to re-engage the stream anyway, and starting from zero error
-                // is the whole point of this function.
+                // AWAITING / ENGAGED / PAUSED: hold the measured pose.
                 if (control_mode_ == ControlMode::JOINT_IK) {
                     motion_gen_.seedJointReference(q);
                     motion_gen_.setCartesianGoal(T_ee);
@@ -1367,17 +1159,7 @@ void ArmControl::runControlHandler(){
         }
     };
 
-    // Enter FAULT and block the control thread (not exit it) until an operator
-    // clears it. The existing arm_reset / reset_all commands already drive
-    // ArmRecovery -> updateRecovery() on the state thread, which moves state_
-    // out of FAULT into RECOVERING on its own - we just wait for that to happen.
-    // Every fault previously went out as INTERNAL_ERROR, so fault_code on the
-    // wire said only "something went wrong" — an arm stopped by contact and an
-    // arm stopped by a torque discontinuity were indistinguishable to the
-    // operator and in the logs. libfranka has no structured error on
-    // ControlException either, so the cause has to come from the message; the
-    // substrings below are the ones both libfranka and the sim's
-    // checkFrankaErrors / checkCollisionReflex emit.
+    // Map a ControlException message to a FaultCode (substrings from libfranka and sim).
     auto classifyFault = [](const std::string& what) {
         auto has = [&what](const char* s) { return what.find(s) != std::string::npos; };
         if (has("reflex") || has("cartesian_motion_generator_") ||
@@ -1393,6 +1175,7 @@ void ArmControl::runControlHandler(){
     };
     FaultCode last_fault_code = FaultCode::INTERNAL_ERROR;
 
+    // Enter FAULT and block until an operator reset moves state_ out of it.
     auto enterFaultAndWaitForReset = [this, &last_fault_code]() {
         state_ = SysState::FAULT;
         if (transmission_) transmission_->setState(state_, last_fault_code);
@@ -1408,14 +1191,7 @@ void ArmControl::runControlHandler(){
         }
     };
 
-    // After a reflex stop the arm keeps whatever velocity the fault left it
-    // (in sim it coasts on the reflex brake; on hardware the FCI's controlled
-    // stop takes a few hundred ms). Re-entering control() before it is still
-    // trips the same velocity reflex within a tick -- logs/002 shows three
-    // retries at 6.5, 6.2 and 5.9 rad/s -- and rearmFromMeasuredState would
-    // plan from a pose that is already stale. Poll readOnce(), which is live
-    // outside control(), and refresh current_state so everything downstream
-    // starts from where the arm actually stopped.
+    // Wait for the arm to stop after a fault, refreshing current_state.
     auto waitForRest = [this](double timeout_s) -> bool {
         constexpr double kRestVel = 0.10;   // rad/s
         const auto t0 = std::chrono::steady_clock::now();
@@ -1439,18 +1215,10 @@ void ArmControl::runControlHandler(){
     };
 
     while (bRunning) {
-        // Only on a restart: on the very first entry start() has already seeded
-        // motion_gen_ and tau_prev_ is zero by construction.
+        // Only on restart, first entry is already seeded by start().
         if (!first_attempt) {
             waitForRest(3.0);
-            // Dwell before re-entering. Re-entry used to take milliseconds:
-            // the observer reconverges in ~20 ms, the contact is still there
-            // because the operator is still pushing into it, and three faults
-            // landed inside 50 ms -- so what is physically ONE collision
-            // consumed the whole retry budget and demanded an operator reset.
-            // On hardware automaticErrorRecovery() alone takes several hundred
-            // ms, during which the arm is visibly stopped and the operator has
-            // a chance to back off. This buys that same chance.
+            // Dwell so one collision doesn't use up the whole retry budget.
             for (int i = 0; i < 50 && bRunning; ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             rearmFromMeasuredState();
@@ -1458,22 +1226,17 @@ void ArmControl::runControlHandler(){
         first_attempt = false;
 
         try {
-            // Counted so the state trace can distinguish "ran clean" from
-            // "faulted and silently retried". A bump here with no matching gap
-            // in arm.csv means a fault was absorbed without the operator ever
-            // being told.
+            // Counted for the state trace, to spot silently absorbed faults.
             control_loop_entries_.fetch_add(1, std::memory_order_relaxed);
 #ifdef WITH_FRANKA
             robot->control(control_callback, true);
 #else
             robot->control(control_callback);
 #endif
-            break;  // clean stop: control_callback set motion_finished from ArmControl::stop()
+            break;  // clean stop via stop()
         } catch (const franka::ControlException& e) {
             const auto now = std::chrono::steady_clock::now();
-            // "Consecutive" should mean consecutive. If the loop ran clean for a
-            // while before this fault, start a fresh streak instead of carrying
-            // stale counts from an unrelated incident half an hour ago.
+            // Reset the streak if the last fault was long ago.
             if (have_prior_fault && (now - last_fault_time) > kFaultStreakWindow)
                 fault_count = 0;
             last_fault_time  = now;
@@ -1486,22 +1249,7 @@ void ArmControl::runControlHandler(){
                       << "/" << kMaxConsecutiveFaults << ", fault_code="
                       << static_cast<int>(last_fault_code) << "): " << e.what() << std::endl;
 
-            // Tell the operator NOW, on the first fault, not only once the
-            // streak threshold is crossed.
-            //
-            // Previously the only fault ever transmitted came from
-            // enterFaultAndWaitForReset(), i.e. after kMaxConsecutiveFaults.
-            // automaticErrorRecovery() on real hardware takes several hundred
-            // milliseconds, so a single fault meant roughly a second of a
-            // motionless robot with the interface showing a fully healthy
-            // link and an ENGAGED remote state. On 2026-08-09 the first fault
-            // was at t=404.717 s and the arm never moved again, yet the
-            // operator kept commanding until 408.139 s.
-            //
-            // RECOVERING (not FAULT) is deliberate: this is transient and
-            // self-clearing, and it must not latch the interface into the
-            // operator-reset path that FAULT triggers. It restores itself
-            // below once control() is successfully re-entered.
+            // Report RECOVERING right away (transient, unlike FAULT).
             if (transmission_) transmission_->setState(SysState::RECOVERING, last_fault_code);
             if (transmission_absolute_) transmission_absolute_->setState(SysState::RECOVERING, last_fault_code);
 
@@ -1511,23 +1259,18 @@ void ArmControl::runControlHandler(){
                 std::cout << "[WARN] " << name_ << ": automaticErrorRecovery() failed: "
                           << recovery_err.what() << std::endl;
             }
-            // Was '>', which is why the log showed a fourth attempt numbered "#4/3".
             if (fault_count >= kMaxConsecutiveFaults) {
                 enterFaultAndWaitForReset();
                 fault_count      = 0;
                 fault_streak_.store(0, std::memory_order_relaxed);
                 have_prior_fault = false;
             } else {
-                // Recovered within the streak budget: clear the transient
-                // RECOVERING published above so the interface stops warning,
-                // then fall through and re-enter control().
+                // Recovered within budget: clear RECOVERING and retry.
                 if (transmission_) transmission_->setState(state_);
                 if (transmission_absolute_) transmission_absolute_->setState(state_);
             }
         } catch (const franka::Exception& e) {
-            // Non-control franka errors (e.g. connection-level) aren't something a
-            // retry loop can paper over - surface as FAULT and wait for the operator
-            // rather than spinning or terminating the process.
+            // Non-control errors: go to FAULT and wait for the operator.
             std::cout << "[ERROR] " << name_ << ": franka::Exception: " << e.what() << std::endl;
             last_fault_code = FaultCode::INTERNAL_ERROR;
             enterFaultAndWaitForReset();
@@ -1582,22 +1325,7 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     Eigen::Quaterniond q_target(T_ee_target.rotation());
     Eigen::Quaterniond q_current(T_ee.rotation());
     if (q_target.dot(q_current) < 0.0) q_target.coeffs() *= -1.0;
-    // Full rotation vector (axis * angle), not vec(q_err).
-    //
-    // vec(q_err) = n*sin(theta/2) ~ n*theta/2 for small theta -- HALF the
-    // rotation vector -- while the damping term below uses the true angular
-    // velocity from J*dq. The two halves of the impedance were in different
-    // units, so the effective rotational stiffness was kp_cart/2 and the
-    // steady-state lag was 2*kd/kp = 120 ms, not the 60 ms the raw ratio
-    // suggests. Measured orientation lag in logs/079 and logs/080 was 158 and
-    // 168 ms, the worst axis in the system by a wide margin.
-    //
-    // vec() also saturates at theta = 180 deg and reverses past it, so restoring
-    // torque collapses exactly where it is needed most; axis*angle does not.
-    //
-    // The rotational kp_cart entries are HALVED in config alongside this change,
-    // so closed-loop behaviour is unchanged on day one. This commit makes the
-    // gain mean what it says; raising it is a separate, deliberate step.
+    // Rotation vector (axis * angle), consistent with the J*dq damping term.
     Eigen::Quaterniond q_error = (q_target * q_current.inverse()).normalized();
     Eigen::AngleAxisd  aa_error(q_error);
     Eigen::Vector3d    ori_error = aa_error.axis() * aa_error.angle();
@@ -1633,10 +1361,7 @@ Vector7 ArmControl::cartesianImpedanceControl(const franka::RobotState& rs) {
     const Vector7& q_null_ref = posture_snap_.valid ? posture_snap_.q_ref : q0_;
     Vector7 tau_null = N * (kp_null_.cwiseProduct(q_null_ref - q) - kd_null_.cwiseProduct(dq));
 
-    // Joint friction feedforward. dq_ref maps the reference twist into joint
-    // space with the same (damped, dynamically consistent) inverse used for the
-    // nullspace projector above; it is zero whenever the reference holds, so
-    // AWAITING and a clutched/idle operator get no friction torque at all.
+    // Joint friction feedforward, dq_ref uses the same damped inverse as the nullspace.
     if (friction_cfg_.enabled) {
         const Vector7 dq_src = friction_cfg_.use_measured ? Vector7(dq) : Vector7(J_pinv * v_ref);
         const Vector7 tf = friction_cfg_.scale * frictionTorque(dq_src).cwiseProduct(friction_cfg_.mask);
@@ -1680,9 +1405,7 @@ Eigen::Matrix<double, 6, 1> ArmControl::feedforwardWrench(
     F.head<3>() = eta_lin_ * kd_cart_.head<3>().cwiseProduct(v_ref.head<3>());
     F.tail<3>() = eta_rot_ * kd_cart_.tail<3>().cwiseProduct(v_ref.tail<3>());
 
-    // Norm-clamped per block so the direction survives. Without this the
-    // rotational term reaches 0.9 * 15 * 4 = 54 Nm at the configured angular
-    // rate limit, against a 12 Nm wrist joint limit.
+    // Norm-clamped per block to keep the direction.
     const double f = F.head<3>().norm();
     if (f > ff_force_max_)  F.head<3>() *= ff_force_max_ / f;
     const double m = F.tail<3>().norm();
@@ -1725,10 +1448,7 @@ Eigen::Isometry3d ArmControl::transformCommandToBase(const Eigen::Isometry3d& T_
 }
 
 Eigen::Isometry3d ArmControl::worldAbsoluteToBase(const Eigen::Isometry3d& T_world_abs) const {
-    // Exact inverse of the T_base_ * T_local composition used everywhere else
-    // for state/logging (see O_T_EE_world in the ArmLogEntry write site) --
-    // no T_origin_/controller-remap involved, since this path is for an
-    // absolute target, not a delta from wherever homing last landed.
+    // Inverse of T_base_ * T_local, no origin or controller remap.
     return T_base_.inverse() * T_world_abs;
 }
 
@@ -1818,25 +1538,12 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
         return;
     }
 
-    // Elapsed time since the last accepted command, MEASURED rather than assumed
-    // from transmission.frequency.
-    //
-    // This used cmd_dt_ = 1/transmission.frequency while the function itself runs
-    // once per state-thread tick. Those are the same quantity only when the two
-    // rates match. Raising comms 200 -> 500 Hz shrank cmd_dt_ to 2 ms while the
-    // tick stayed at 5 ms, so the bound became 2 mm per 5 ms = 0.4 m/s against a
-    // configured 1.0 m/s: the guard silently got 2.5x more aggressive purely from
-    // a comms change, which is the opposite of what raising the command rate is
-    // for. Measuring the interval makes this a true velocity limit at any command
-    // rate, and robust to dropped packets and jitter.
+    // Measured interval since the last accepted command.
     const auto cmd_now = std::chrono::steady_clock::now();
     double cmd_dt = cmd_dt_;   // nominal, for the very first command
     if (has_prev_valid_target_) {
         cmd_dt = std::chrono::duration<double>(cmd_now - prev_valid_target_time_).count();
-        // Clamp low against a zero or negative interval (clock jitter, two
-        // commands inside one tick), and high so a long gap -- re-engage, a
-        // stalled sender, an operator who stopped moving -- cannot hand out an
-        // effectively unbounded jump.
+        // Clamp against zero dt and long gaps.
         cmd_dt = std::clamp(cmd_dt, kMinCmdDt, kMaxCmdDt);
         last_cmd_dt_ = cmd_dt;
     }
@@ -1858,19 +1565,8 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
         if (angle > max_angle && angle > 1e-9)
             q_target = prev_valid_target_rot_.slerp(max_angle / angle, q_target);
 
-        // Acceleration bound on the target itself (second-order rate limiter).
-        // The velocity bound above only caps the step; a command stream can
-        // still reverse or stop within one tick, and the stiff impedance turns
-        // that into a force step the operator feels as a jolt. Two rules:
-        //   1. |dv| <= a_max * dt      -- speed may not change faster than a_max
-        //   2. |v|  <= sqrt(2 a_brk d) -- braking curve toward the raw target,
-        //      a_brk = kBrakeAccelFactor * a_max, so a target that was held
-        //      back (leash release, a fast catch-up) arrives at the operator's
-        //      pose at zero speed instead of overshooting by v^2/2a.
-        // Rule 2 costs a steady lag of v^2/(2 a_brk) -- small with the
-        // defaults (8 m/s^2, brake 24 m/s^2: 2 mm at 0.3 m/s). On logs/002 this halves
-        // the p99 target acceleration and jerk at a p95 lag of 1.2 mm. dt is
-        // floored so bunched packets do not read as spikes.
+        // Target accel bound: |dv| <= a_max*dt, plus braking curve |v| <= sqrt(2*a_brk*d)
+        // toward the raw target so it arrives at zero speed.
         if (max_command_acceleration_ > 0.0 || max_command_angular_acceleration_ > 0.0) {
             const double dt_acc = std::max(cmd_dt, kAccelDtFloor);
 
@@ -1911,29 +1607,7 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
         }
     }
 
-    // Leash the target to the MEASURED pose.
-    //
-    // Everything above bounds target-against-target: how fast the setpoint may
-    // move. None of it looks at where the robot actually is, so a command far
-    // enough away is not rejected -- it is walked toward at max_command_velocity
-    // for as long as it takes, and the impedance spring stretches the whole way.
-    // On 2026-09-16 a 143 mm command glitch became 150 ms at 1 m/s, 113 mm of
-    // error, ~113 N at kp_cart 1000, and both arms latched FAULT. The rate limit
-    // did not prevent that; it was the mechanism.
-    //
-    // Capping the lead converts an unreachable command into bounded force: the
-    // target sits max_target_lead_ ahead, pulls with kp_cart * lead, and advances
-    // only as the robot advances. The operator sees lag instead of a fault, and
-    // the arm still gets there.
-    //
-    // Rotation is leashed the same way and for the same reason. Everything above
-    // bounds the orientation target's velocity and acceleration; none of it
-    // looks at where the wrist actually is, so an unreachable orientation is
-    // walked toward at max_command_angular_velocity while the rotational spring
-    // stretches. At kp_cart 125 Nm/rad that is 125 Nm/rad of lead against a
-    // 12 Nm wrist, i.e. roughly 0.1 rad before the commanded torque alone
-    // exceeds what joints 5-7 are allowed to produce -- the identical failure
-    // mode to the 143 mm translation glitch, on an axis nothing was checking.
+    // Leash target to the measured pose so an unreachable command gives bounded force, not a fault.
     if (max_target_lead_ > 0.0 || max_target_lead_rot_ > 0.0) {
         Eigen::Vector3d    ee_pos;
         Eigen::Quaterniond ee_rot;
@@ -1944,9 +1618,7 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
             ee_pos = T_ee.translation();
             ee_rot = Eigen::Quaterniond(T_ee.rotation());
         }
-        // Zero before the first state arrives -- leashing to the base frame would
-        // yank the target to the robot's origin, and O_T_EE's rotation block is
-        // all zeros there, which is not a rotation at all.
+        // O_T_EE is zero before the first state arrives.
         const bool state_valid = ee_pos.norm() > 1e-6;
 
         if (state_valid && max_target_lead_ > 0.0) {
@@ -1999,10 +1671,7 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 
     T_target.translation() = p_target;
     T_target.linear()      = q_target.toRotationMatrix();
-    // Target velocity bookkeeping for the acceleration bound, taken from the
-    // FINAL target so a leash or workspace clamp above counts as a stop rather
-    // than as stored momentum. Zeroed when the history is invalid (engage,
-    // recovery), so the first command after a re-plan ramps up from rest.
+    // Velocity bookkeeping from the final target, zero when history is invalid.
     if (has_prev_valid_target_) {
         const double dt_acc = std::max(cmd_dt, kAccelDtFloor);
         prev_target_vel_ = (p_target - prev_valid_target_pos_) / dt_acc;
@@ -2026,39 +1695,16 @@ void ArmControl::reOrigin() {
 void ArmControl::setAuthority(CommandAuthority requested, const std::string& source) {
     const CommandAuthority prev = authority_.load(std::memory_order_relaxed);
     if (prev == requested) {
-        // A repeat is a heartbeat, not a transition. Stamping it here is what
-        // lets the interface hold an arm through a quiet stretch without the
-        // watchdog reclaiming it.
+        // Repeat acts as a heartbeat for the watchdog.
         authority_last_cmd_ns_.store(timestamp_ns(), std::memory_order_relaxed);
         return;
     }
 
-    // Re-anchor BEFORE opening the VR gate, never after. T_origin_ is what the
-    // operator's delta composes against; if a packet were applied between the
-    // store and the re-origin it would compose against the old origin and step
-    // the arm by exactly the distance the policy moved it.
-    //
-    // reOrigin() latches the MEASURED pose, so it silently discards the
-    // commanded-minus-measured tracking error. That error is bounded by
-    // safety.max_target_lead (0.05 m), and it collapses toward zero while the
-    // arm decelerates -- which is the argument for passing through HOLD rather
-    // than going POLICY -> HUMAN directly.
+    // Re-anchor before opening the VR gate so the delta uses the new origin.
     if (requested == CommandAuthority::HUMAN) reOrigin();
 
     authority_.store(requested, std::memory_order_relaxed);
-    // ZERO, not now(). 0 means "the new holder has not sent anything yet", which
-    // updateAuthorityWatchdog skips entirely: the countdown starts only once a
-    // command has actually been accepted on the newly-authoritative channel.
-    //
-    // Stamping now() here deadlocked the handover, and the event log showed it
-    // exactly. RESUME granted POLICY; the orchestrator had not sent an absolute
-    // command yet, because it does not send until it SEES POLICY; 250 ms later
-    // the watchdog took the arm back to HOLD. Every subsequent press reported
-    // "from=HOLD" and nothing ever stuck.
-    //
-    // The watchdog's actual job -- a holder that WAS sending and then died must
-    // lose the arm -- is unaffected. A holder that has never sent keeps an arm
-    // it is not moving, and the operator can still take it with the trigger.
+    // 0 = new holder hasn't sent yet, watchdog only starts after its first command.
     authority_last_cmd_ns_.store(0, std::memory_order_relaxed);
 
     std::cout << "[AVATAR-INFO]: " << name_ << " authority " << toString(prev)
@@ -2085,13 +1731,7 @@ void ArmControl::updateAuthorityWatchdog() {
 
 void ArmControl::latchOriginForEngage(SysState from) {
     Eigen::Isometry3d T_hold;
-    // The third clause is the one that matters after a recovery. The recovery
-    // is a JOINT plan, and planJoint never writes cartesian_waypoints_, so
-    // getCurrentCartesian() still returns the pose the arm was at when it
-    // faulted. Latching that set T_origin_ to the PRE-FAULT pose while the arm
-    // sat at home, and the impedance spring pulled it straight back there --
-    // 418 mm on 2026-09-21. Homing has the same shape, where the buffer is
-    // empty instead and the guard below skipped the latch entirely.
+    // Measured pose after joint plans (homing/recovery), the Cartesian buffer is stale there.
     const bool from_measured = (from == SysState::PAUSED)
                             || (control_mode_ == ControlMode::JOINT_IK)
                             || !motion_gen_.isCartesianSpace();

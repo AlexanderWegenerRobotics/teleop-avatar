@@ -9,25 +9,25 @@ avatar:
 devices:
   - name: arm_left
     transmission:
-      send_port:    8901   # base: 8001
-      receive_port: 7901   # base: 7001
+      send_port:    8901
+      receive_port: 7901
 
   - name: arm_right
     transmission:
-      send_port:    8902   # base: 8002
-      receive_port: 7902   # base: 7002
+      send_port:    8902
+      receive_port: 7902
 
   - name: head
     transmission:
-      send_port:    8903   # base: 8003
-      receive_port: 7903   # base: 7003
+      send_port:    8903
+      receive_port: 7903
 
   - name: hand_left
     transmission:
-      send_port:    8904   # base: 8004
-      receive_port: 7904   # base: 7004
+      send_port:    8904
+      receive_port: 7904
 
   - name: hand_right
     transmission:
-      send_port:    8905   # base: 8005
-      receive_port: 7905   # base: 7005
+      send_port:    8905
+      receive_port: 7905

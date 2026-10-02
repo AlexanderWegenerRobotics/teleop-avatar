@@ -1,11 +1,6 @@
 # Task: FMB Board 1 assembly
 
-# spawn.mode: fixed -> episode_config_server puts every role=object body back at
-# its pose below (scale 1.0) on startup and on every home/episode_restart.
-# The ranges below are only used in mode: random.
-#
-# body_name must be the <body name="..."> inside model_path: the Avatar resets
-# and logs the MuJoCo body "<name>_<body_name>" (e.g. peg_1_1_peg_v1_1).
+# body_name must match the <body> in model_path (MuJoCo body is "<name>_<body_name>")
 
 spawn:
   mode: fixed
@@ -14,7 +9,7 @@ spawn:
   z: 0.725
   min_object_dist: 0.12
   min_bin_dist: 0.20
-  yaw_range: [0.0, 6.2832]   # full rotation (boxes have 4-fold symmetry)
+  yaw_range: [0.0, 6.2832]
   scale_range: [0.90, 1.10]
 
 objects:

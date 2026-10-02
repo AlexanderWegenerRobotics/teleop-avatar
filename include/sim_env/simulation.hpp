@@ -34,13 +34,13 @@ struct LightingConfig {
             return std::uniform_real_distribution<float>(lo, hi)(rng);
         };
 
-        // Key light: vary x/y position, keep height fixed for consistent shadow direction
+        // keep height fixed so shadow direction stays consistent
         main_pos[0] = u(0.3f, 0.8f);
         main_pos[1] = u(-0.3f, 0.3f);
         main_pos[2] = 1.8f;
 
         float kd = u(0.6f, 1.4f);
-        float tint = u(-0.05f, 0.05f);  // subtle warm/cool shift
+        float tint = u(-0.05f, 0.05f);  // warm/cool shift
         main_diffuse[0] = kd + tint;
         main_diffuse[1] = kd;
         main_diffuse[2] = kd - tint;
@@ -64,18 +64,11 @@ struct DeviceState {
     std::vector<double> dq;
     std::vector<double> tau_J;
     std::vector<double> tau_ext;
-    // mjData::time of the snapshot these values came from -- SIMULATED time, not
-    // wall time. q and dq are physically consistent in THIS clock only. Anything
-    // differentiating this state (the momentum observer) must use its delta,
-    // never a wall clock; anything resampling a recorded episode should use it
-    // as the time base. See getTimingStats() for how far the two clocks drift.
+    // sim time (mjData::time), not wall time; differentiate with this clock only
     double time = 0.0;
 };
 
-// Sim-vs-wall clock accounting, sampled from run_model(). rtf < 1 means the
-// simulation is running slower than real time: sim seconds per wall second.
-// Deliberately reported, never enforced -- a loaded machine produces a slow
-// episode with recorded slip, not a discarded one.
+// sim vs wall clock stats, rtf < 1 = slower than real time (reported, not enforced)
 struct SimTimingStats {
     double   sim_seconds        = 0.0;  // steps * opt.timestep
     double   wall_seconds       = 0.0;
@@ -89,12 +82,7 @@ struct SimTimingStats {
 
 class Simulation {
 public:
-    // role defaults to Avatar so any other/future callers behave exactly as
-    // before. When role == Twin and config["streamer_overlay"] is present,
-    // the loaded streamer_config (config["streamer_config"]) is patched via
-    // applyTwinStreamerOverlay before shm writers are built, so avatar and
-    // twin can run locally at once without shm-name/port collisions (see
-    // twin/config_overlay.hpp).
+    // for Twin role the streamer_overlay is applied so avatar and twin can run side by side
     explicit Simulation(const YAML::Node& config, Role role = Role::Avatar);
     ~Simulation();
 
@@ -115,55 +103,27 @@ public:
     void setBodyScale(const std::string& bodyName, double scale);
     uint64_t         getFrameId() const { return stream_frame_count_.load(); }
 
-    // Effective integration step, after the sim_config override is applied on
-    // top of whatever the scene XML declared. Read this rather than assuming
-    // 0.001: the scene XMLs say 0.005 and MuJoCo's own default is 0.002.
+    // effective timestep after the sim_config override, don't assume 0.001
     double           getTimestep() const { return model ? model->opt.timestep : 0.0; }
     SimTimingStats   getTimingStats() const;
 
-    // Point the ground-truth wrench CSVs at a new episode folder. No-op when
-    // the feature is off, so callers need no guard.
+    // no-op when wrench truth is off
     void restartWrenchTruthLoggers(const std::string& folder) {
         if (wrench_truth_) wrench_truth_->restartLoggers(folder);
     }
 
-    // ── Twin / reconciler support (docs/twin_concept.md) ────────────────────
-    // Read-only access to the loaded mjModel so a Reconciler can build its own
-    // private, headless mjData (mj_makeData(model)) that shares this model --
-    // "scratch calculator" for forward replay, never touching the live `data`.
-    // The model is effectively immutable after construction (only body-scale
-    // geom/inertial fields change, via setBodyScale), so sharing the raw
-    // pointer across threads is safe; only `data` needs the lock below.
+    // twin/reconciler support; model is immutable after construction so sharing it is safe
     const mjModel* mjModelPtr() const { return model; }
 
-    // Directly nudge a device's joint qpos/qvel by the given deltas (radians,
-    // rad/s), bypassing actuators/controllers entirely. This is the
-    // reconciler's filtered-pull correction application (section 4/5):
-    // "applies it at the top of its next tick" -- a state write, not a
-    // control force. deltas.size() must match the device's joint count
-    // (silently truncated/ignored beyond that). No-op for unknown devices.
+    // writes qpos/qvel deltas (rad, rad/s) directly, bypasses actuators
     void applyJointCorrection(const std::string& deviceName,
                                const std::vector<double>& dq_delta,
                                const std::vector<double>& ddq_delta);
 
-    // Current per-tick joint-actuator ctrl values for a device (same order as
-    // getDeviceState's q/dq), i.e. exactly what run_model() writes into
-    // data->ctrl this step. The reconciler buffers these alongside q/dq so
-    // its forward-replay Phi_fhat can re-drive a scratch mjData with the
-    // twin's actual applied low-level commands, not just re-integrate an
-    // uncontrolled model (section 3/4 of docs/twin_concept.md).
+    // ctrl values run_model() applies this tick, same order as q/dq
     std::vector<double> getDeviceCtrl(const std::string& deviceName);
 
-    // ── Replay support for the reconciler's private scratch mjData ─────────
-    // The reconciler owns a headless mjData (mj_makeData(mjModelPtr())) and
-    // drives it through these calls to re-integrate forward from a delayed
-    // telemetry sample using the twin's actually-applied ctrl history
-    // (docs/twin_concept.md section 4, Phi_fhat). Joint/actuator index
-    // bookkeeping stays inside Simulation either way -- these are thin
-    // wrappers so nothing outside this class needs jnt_qposadr/jnt_dofadr/
-    // actuator-id internals. replay_data is caller-owned and never touches
-    // the live `data`/data_mtx (single-source-of-truth: the replay instance
-    // is never an authority).
+    // replay helpers on a caller-owned scratch mjData, never touch the live data
     void replaySeed(mjData* replay_data, const std::string& deviceName,
                      const std::vector<double>& q, const std::vector<double>& dq);
     void replaySetCtrl(mjData* replay_data, const std::string& deviceName,
@@ -176,10 +136,7 @@ private:
     mjModel* model = nullptr;
     mjData*  data  = nullptr;
 
-    // MuJoCo ground truth for the momentum observer. Sim-only by construction:
-    // this header is not compiled in the hardware build, nothing it produces
-    // reaches franka::RobotState, and it writes its own CSV rather than adding
-    // columns to arm.csv. null when the config block is absent or disabled.
+    // MuJoCo ground truth for the momentum observer, null when disabled
     std::unique_ptr<WrenchTruth> wrench_truth_;
 
     std::vector<DeviceConfig> devices_;
@@ -199,12 +156,7 @@ private:
     std::unordered_map<std::string, int>              gripper_ids_;
     std::unordered_map<std::string, std::vector<int>> joint_ids_;
     std::unordered_map<std::string, bool> active_devices_;
-    // Reflex stop for an inactive (faulted / not-yet-controlled) device. The
-    // real robot decelerates and engages brakes on a reflex; without this the
-    // sim arm free-floats on gravity compensation with whatever velocity the
-    // fault left it, which is what turned a 1 ms contact impulse in logs/002
-    // into seconds of uncontrolled rotation. Phase 1 damps every joint; once
-    // all joints are below kBrakeRestVel the pose is latched and held.
+    // brake for inactive devices: damp until below kBrakeRestVel, then hold pose
     struct BrakeState {
         bool                braked = false;
         std::vector<double> q_hold;
@@ -213,8 +165,7 @@ private:
     static constexpr double kBrakeRestVel   = 0.05;  // rad/s, all joints
     static constexpr double kBrakeDampFrac  = 0.30;  // D_i = frac * ctrl_max_i  [Nm s/rad]
     static constexpr double kBrakeStiffFrac = 10.0;  // K_i = frac * ctrl_max_i  [Nm/rad]
-    // run_model() timing accounting -- written by the model thread only, read
-    // by anyone via getTimingStats().
+    // written by the model thread only
     std::atomic<uint64_t> sim_steps_{0};
     std::atomic<uint64_t> deadline_misses_{0};
     std::atomic<double>   wall_seconds_{0.0};
@@ -243,15 +194,8 @@ private:
     std::atomic<int> snap_write_ {0};
     std::atomic<int> snap_read_  {1};
 
-    // Render/stream threads must NOT run mjv_updateScene on snap_[]: it calls
-    // mj_markStack/mj_freeStack, i.e. it WRITES the mjData's stack pointers.
-    // Two renderers on the same snapshot, or a renderer on a buffer that
-    // swapSnapshots() is overwriting (it recycles a buffer every 2 ms), corrupt
-    // those pointers -> ACCESS_VIOLATION in mj_markStack (mujoco.dll+0xAC3FC,
-    // 3.3.0). Each renderer therefore owns a private mjData and copies the
-    // latest snapshot into it under snap_mtx_ once per frame (latchSnapshot).
-    // snap_mtx_ is only ever taken inside data_mtx (physics) or alone
-    // (renderers), so there is no lock-order inversion.
+    // mjv_updateScene writes mjData stack pointers, so each renderer copies snap_ into its own mjData.
+    // snap_mtx_ is only taken inside data_mtx or alone, no lock-order inversion.
     std::mutex snap_mtx_;
     mjData*    render_data_ = nullptr;   // owned by the rendering thread
     mjData*    stream_data_ = nullptr;   // owned by the streaming thread
@@ -286,19 +230,14 @@ private:
     void initOffscreenStreaming();
     void renderStreamFrame();
 
-    // Per-body scale cache: original geom sizes/positions and inertial params,
-    // populated lazily on first setBodyScale call for each body.
+    // original geom/inertial values, filled on first setBodyScale per body
     struct BodyScaleCache {
         mjtNum             original_mass;
         mjtNum             original_inertia[3];
         std::vector<int>   geom_ids;
         std::vector<std::array<mjtNum, 3>> original_geom_size;
         std::vector<std::array<mjtNum, 3>> original_geom_pos;
-        // Collision bounding volumes. MuJoCo computes these at compile time
-        // from geom_size and never refreshes them; if they are not scaled
-        // with the geometry, a body scaled > 1 has bounds smaller than its
-        // geoms and broad/mid-phase culls real contacts (fingers close into
-        // the parcel, grasp slips, parcel drops).
+        // bounding volumes are not refreshed by MuJoCo, must be scaled too or contacts get culled
         std::vector<mjtNum>                original_geom_rbound;
         std::vector<std::array<mjtNum, 6>> original_geom_aabb;   // center[3], half-size[3]
         int                                bvh_adr = -1;

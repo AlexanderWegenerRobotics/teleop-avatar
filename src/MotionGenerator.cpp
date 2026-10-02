@@ -4,26 +4,14 @@
 #include <stdexcept>
 #include <array>
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Construction
-// ─────────────────────────────────────────────────────────────────────────────
-
 MotionGenerator::MotionGenerator(const InterpolatorConfig& config)
     : config_(config)
-    // Floor of 1. Integer division makes this 0 as soon as comm_freq exceeds
-    // control_freq, and then a zero-distance command yields n_steps = 0, an
-    // empty waypoint vector, and getCurrentCartesian() falling back to
-    // Isometry3d::Identity() -- i.e. an impedance target at the robot base.
-    // Harmless at 200 Hz, latent the moment the command rate is raised.
-    , min_steps_(std::max(1, config.control_freq / config.comm_freq))   // until the first measurement
+    // floor of 1, otherwise an empty plan returns Identity as target
+    , min_steps_(std::max(1, config.control_freq / config.comm_freq))
     , space_(InterpolationSpace::JOINT)
     , joint_idx_(0)
     , cartesian_idx_(0)
 {}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Interpolation helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 void MotionGenerator::setCommandInterval(double dt_s) {
     if (!(dt_s > 0.0)) return;
@@ -35,11 +23,7 @@ void MotionGenerator::setCommandInterval(double dt_s) {
     cmd_interval_s_ = (cmd_interval_s_ <= 0.0) ? dt_s
                                                : (1.0 - kEma) * cmd_interval_s_ + kEma * dt_s;
 
-    // Deliberately biased short. A plan LONGER than the command interval is
-    // superseded before it finishes, and since each replan only re-ramps the
-    // remaining distance, the reference converges geometrically and never
-    // arrives. A plan shorter than the interval just completes and holds --
-    // the old behaviour, which is merely suboptimal rather than divergent.
+    // biased short: a plan longer than the command interval never reaches the target
     const int steps = static_cast<int>(std::lround(kShrink * cmd_interval_s_ * config_.control_freq));
     min_steps_.store(std::clamp(steps, 1, kMax), std::memory_order_relaxed);
 }
@@ -47,7 +31,7 @@ void MotionGenerator::setCommandInterval(double dt_s) {
 double MotionGenerator::profilePeakRate(ProfileType profile) {
     switch (profile) {
         case ProfileType::MINJERK:     return 1.875;          // max of 30t^2(1-t)^2
-        case ProfileType::TRAPEZOIDAL: return 1.0 / (1.0 - 0.2);  // ramp_fraction in trapezoidalProfile
+        case ProfileType::TRAPEZOIDAL: return 1.0 / (1.0 - 0.2);  // must match ramp_fraction in trapezoidalProfile
         default:                       return 1.0;
     }
 }
@@ -122,10 +106,6 @@ double MotionGenerator::applyProfile(double t, ProfileType profile) const {
         default:                       return trapezoidalProfile(t);
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Interpolation API
-// ─────────────────────────────────────────────────────────────────────────────
 
 void MotionGenerator::planJoint(const Eigen::VectorXd& q_start, const Eigen::VectorXd& q_end,
                                  ProfileType profile) {
@@ -207,10 +187,7 @@ bool MotionGenerator::step() {
         cartesian_vel_.head<3>() = (b.translation() - a.translation()) * f;
         cartesian_vel_.tail<3>() = aa.axis() * aa.angle() * f;
 
-        // f is the ASSUMED loop rate. A loop running slower than control_freq
-        // would scale this up, and it feeds a force, not a target. The plan was
-        // built under these caps, so exceeding them means the assumption is
-        // wrong; clamp rather than propagate it.
+        // f is the assumed loop rate, so clamp to the plan caps
         const double vl = cartesian_vel_.head<3>().norm();
         if (vl > config_.max_linear_vel)
             cartesian_vel_.head<3>() *= config_.max_linear_vel / vl;
@@ -242,10 +219,6 @@ void MotionGenerator::reset() {
     cartesian_idx_ = 0;
     cartesian_vel_.setZero();
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Resolved-rate IK — configuration & seeding
-// ─────────────────────────────────────────────────────────────────────────────
 
 void MotionGenerator::setIkConfig(const IkConfig& c) {
     std::lock_guard<std::mutex> lock(ik_mtx_);
@@ -284,19 +257,7 @@ Eigen::Matrix<double,7,1> MotionGenerator::getVelocityReference() const {
     return u_prev_;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  stepIk — one resolved-rate IK tick
-//
-//  Inputs  (caller provides fresh values each tick):
-//    q   current joint positions (7)
-//    J   base-frame geometric Jacobian (6×7), same convention as
-//        model->zeroJacobian(kEndEffector, rs)
-//    x   current EE pose in base frame (from rs.O_T_EE)
-//    dt  state-thread period (1/500 s)
-//
-//  Computes joint velocity u, integrates into q_ref_, stores u as u_prev_.
-//  Returns q_ref_ (same as getJointReference()).
-// ─────────────────────────────────────────────────────────────────────────────
+// One resolved-rate IK tick: solves for joint velocity u and integrates it into q_ref_.
 Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
     const Eigen::Matrix<double,7,1>& q,
     const Eigen::Matrix<double,6,7>& J,
@@ -305,8 +266,7 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
 {
     std::lock_guard<std::mutex> lock(ik_mtx_);
 
-    // Fallback seed: should not happen if seedJointReference() was called on
-    // ENGAGED entry, but guards against races at first tick.
+    // fallback if seedJointReference() was not called
     if (!ik_seeded_) {
         q_ref_     = q;
         u_prev_    = Eigen::Matrix<double,7,1>::Zero();
@@ -315,29 +275,18 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
 
     const IkConfig& c = ik_cfg_;
 
-    // ── Task-space error ──────────────────────────────────────────────────────
-    // x MUST be the reference pose FK(q_ref), NOT the measured EE pose. The caller
-    // evaluates FK and the Jacobian at q_ref so this IK is a pure feedforward
-    // reference generator, decoupled from the robot. Passing the measured pose here
-    // closes an integrator around the compliant joint-impedance loop and yields an
-    // undamped Cartesian oscillation.
+    // x must be FK(q_ref), not the measured pose, or the loop oscillates
     Eigen::Vector3d e_p = X_goal_.translation() - x.translation();
 
-    // Orientation error — same convention as cartesianImpedanceControl:
-    //   q_err = q_d * q_cur^{-1},  error axis = vec(q_err)
     Eigen::Quaterniond q_d(X_goal_.rotation());
     Eigen::Quaterniond q_cur(x.rotation());
     if (q_d.dot(q_cur) < 0.0) q_d.coeffs() *= -1.0;
-    // Full rotation vector, matching cartesianImpedanceControl -- see the long
-    // comment there. vec(q_err) is half the rotation vector and saturates past
-    // 180 deg. ik.kp_o is halved in config alongside this so the commanded task
-    // angular velocity is unchanged.
+    // full rotation vector of q_d * q_cur^-1, same as cartesianImpedanceControl
     Eigen::Quaterniond q_err = (q_d * q_cur.inverse()).normalized();
     Eigen::AngleAxisd  aa_err(q_err);
     Eigen::Vector3d    e_o = aa_err.axis() * aa_err.angle();
 
-    // Proportional task velocity, capped — gives a smooth, moderate command the
-    // acceleration limit can track (a full Newton step / dt is bang-bang and stalls).
+    // capped proportional task velocity
     Eigen::Matrix<double,6,1> v_des;
     v_des.head<3>() = c.Kp_p.cwiseProduct(e_p);
     v_des.tail<3>() = c.Kp_o * e_o;
@@ -348,8 +297,7 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
         if (vang > c.v_ang_max && vang > 1e-9) v_des.tail<3>() *= c.v_ang_max / vang;
     }
 
-    // Damped weighted resolved-rate with a soft posture pull toward q0 (no null-space):
-    //   min || J u - v_des ||^2_Wtask + Kp_posture || u - (q0 - q_ref) ||^2 + lambda||u||^2
+    // min ||J u - v_des||^2_Wtask + Kp_posture ||u - (q0 - q_ref)||^2 + lambda ||u||^2
     Eigen::Matrix<double,7,1> e_post = c.q0 - q_ref_;
     Eigen::Matrix<double,7,7> A = J.transpose() * c.Wtask.asDiagonal() * J;
     A.diagonal()         += c.Kp_posture;
@@ -358,18 +306,10 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
                                   + c.Kp_posture.cwiseProduct(e_post);
     Eigen::Matrix<double,7,1> u = A.ldlt().solve(b);
 
-    // ── Per-joint box bounds ─────────────────────────────────────────────────
-    // Each bound folds three safety constraints:
-    //   term 1: velocity limit        (±qd_max_i)
-    //   term 2: position-limit braking (don't command a velocity that would
-    //           breach q_min/q_max within horizon T_brake)
-    //   term 3: acceleration limit    (u_prev ± a_max*dt)
+    // per-joint bounds: velocity limit, position-limit braking over T_brake, accel limit
     Eigen::Matrix<double,7,1> L, U;
     for (int i = 0; i < 7; ++i) {
         const double ul_vel =  c.qd_max(i);
-        // Position-limit braking uses q_ref_ (not actual q) because we are
-        // commanding q_ref_; this prevents q_ref_ itself from approaching the
-        // joint limit regardless of where actual q currently is.
         const double ul_pos = (c.q_max(i) - c.gamma - q_ref_(i)) / c.T_brake;
         const double ll_pos = (c.q_min(i) + c.gamma - q_ref_(i)) / c.T_brake;
         const double ul_acc =  u_prev_(i) + c.a_max * dt;
@@ -378,7 +318,7 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
         U(i) = std::min({ul_vel,  ul_pos, ul_acc});
         L(i) = std::max({-ul_vel, ll_pos, ll_acc});
 
-        // Numerical safeguard: if already past a limit L may exceed U
+        // L can exceed U when already past a limit
         if (L(i) > U(i)) {
             double mid = 0.5 * (L(i) + U(i));
             L(i) = U(i) = mid;
@@ -387,10 +327,8 @@ Eigen::Matrix<double,7,1> MotionGenerator::stepIk(
 
     u = u.cwiseMax(L).cwiseMin(U);
 
-    // ── Integrate joint reference ─────────────────────────────────────────────
     q_ref_ += u * dt;
 
-    // Hard-clamp q_ref to joint limits (belt-and-suspenders)
     for (int i = 0; i < 7; ++i)
         q_ref_(i) = std::clamp(q_ref_(i), c.q_min(i) + c.gamma, c.q_max(i) - c.gamma);
 

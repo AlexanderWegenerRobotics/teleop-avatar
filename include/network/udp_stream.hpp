@@ -13,8 +13,7 @@
 #include "udp_transport.hpp"
 #include "common.hpp"
 
-// True for send types that carry the network-delay echo (ArmStateMsg, see
-// common.hpp). doSend fills those two fields; every other stream is untouched.
+// true for send types with the network-delay echo fields (ArmStateMsg)
 template<typename T, typename = void>
 struct HasCmdEcho : std::false_type {};
 template<typename T>
@@ -49,10 +48,7 @@ public:
     UdpStream(const UdpStream&) = delete;
     UdpStream& operator=(const UdpStream&) = delete;
 
-    // Invoked on the receive thread the instant a packet is accepted, before
-    // any consumer polls hasNew(). Set it before start(); it is read without a
-    // lock and is not meant to change while running. Keep the callback short --
-    // it runs on the receive thread and delays the next drain.
+    // Runs on the receive thread per accepted packet. Set before start(), keep it short.
     void setOnReceive(std::function<void()> cb) { on_receive_ = std::move(cb); }
 
     void start() {
@@ -95,12 +91,6 @@ public:
     uint32_t droppedPackets() const { return dropped_count_; }
 
 private:
-    // Send and receive used to share one thread paced at send_rate_hz, which put
-    // a 0-5 ms polling delay (at 200 Hz) in front of every inbound command on a
-    // socket that was already non-blocking. They are now independent: send stays
-    // periodic, receive blocks on the socket and fires on_receive_ as soon as a
-    // packet is accepted. The poll timeout below only bounds how quickly the
-    // thread notices a stop() request -- a packet wakes it immediately.
     void runSend() {
         auto period = std::chrono::microseconds(1000000 / config_.send_rate_hz);
         auto next = std::chrono::steady_clock::now();
@@ -125,12 +115,7 @@ private:
         send_msg_.header.sequence = ++send_seq_;
         send_msg_.header.timestamp_ns = now_ns;
         if constexpr (HasCmdEcho<TSend>::value) {
-            // Echo the newest command RECEIVED and how long it has been here,
-            // so the peer can take this side's dwell out of its round trip
-            // (common.hpp, ArmStateMsg). Stamped now, not in setSendData, so
-            // the send-thread wait is part of the hold rather than of the
-            // "network". seq and its arrival time are read under the same lock
-            // they are written under, so they always belong together.
+            // stamped at send time so the send-thread wait counts as hold, not network
             uint32_t echo_seq = 0;
             uint64_t echo_recv_ns = 0;
             {
@@ -190,7 +175,7 @@ private:
 
     std::function<void()> on_receive_;
 
-    // Shutdown responsiveness only; packet arrival wakes the poll immediately.
+    // only bounds stop() latency, packets wake the poll right away
     static constexpr int kRecvPollTimeoutUs = 2000;
 
     std::mutex        send_mtx_;
@@ -202,7 +187,7 @@ private:
     std::mutex        recv_mtx_;
     TRecv             recv_msg_;
     std::atomic<bool> has_new_{false};
-    uint64_t          last_recv_ns_ = 0;   // timestamp_ns() at acceptance of last_recv_seq_; guarded by recv_mtx_
+    uint64_t          last_recv_ns_ = 0;   // guarded by recv_mtx_
 
     std::chrono::steady_clock::time_point last_recv_time_;
     std::atomic<uint32_t> last_recv_seq_{0};

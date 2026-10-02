@@ -1,15 +1,6 @@
 #pragma once
 
-// Wire format for y(t_s): real hardware joint telemetry, published by a
-// role: avatar process and consumed by a paired role: twin process's
-// Reconciler (docs/twin_concept.md section 4). One-way, best-effort UDP,
-// same "trivially copyable, MsgHeader-first" convention as the existing
-// ArmCommandMsg/ArmStateMsg in common.hpp.
-//
-// Fixed to two arms (arm_left, arm_right / 7 DoF each -> x in R^14) to match
-// the rest of this codebase's bimanual assumption (see common.hpp's
-// ArmStateMsg, robot_config's devices list). Extend to N arms only if a
-// third manipulator is ever added to the rig.
+// Wire format for hardware joint telemetry avatar -> twin reconciler (UDP, 2 arms x 7 DoF).
 
 #include <cstdint>
 #include <type_traits>
@@ -19,11 +10,7 @@
 #pragma pack(push, 1)
 
 struct TwinTelemetryMsg {
-    MsgHeader header;   // timestamp_ns here is t_s -- the sample's wall-clock
-                         // stamp on the avatar side, NOT the send time. Both
-                         // machines are NTP-synchronized (docs/twin_concept.md
-                         // section 2), so this is directly comparable to the
-                         // twin's local clock without a separate offset.
+    MsgHeader header;   // timestamp_ns = sample time t_s (not send time), NTP-synced clocks
     float    q_left[7];
     float    dq_left[7];
     float    q_right[7];

@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""
-arm_tester.py — interactive pose command tool for avatar system
-
-Avatar cmd channel : UdpReliable (msgpack envelopes, heartbeat)
-Arm channels       : UdpStream   (raw packed structs)
-
-State machine keys : h=home  g=engage  p=pause  b=idle  x=stop
-Arm select         : 1=left  2=right  3=both
-Pose nudge         : w/s=+/-X  a/d=+/-Y  q/e=+/-Z
-Orientation nudge  : I/K=+/-Rx  J/L=+/-Ry  U/O=+/-Rz  (shift)
-Step size          : +/-  to increase/decrease nudge step
-Gripper            : f=open  v=close
-Reset arm pose     : r
-Reset left arm     : z
-Reset right arm    : X  (shift+x)
-Reset both arms    : c
-Resume left arm    : n  (only when awaiting resume)
-Resume right arm   : m  (only when awaiting resume)
-Quit               : ESC or ctrl-c
-"""
+"""Interactive curses tool to send state changes and pose commands to the avatar arms (keys listed in HELP)."""
 
 import socket
 import struct
@@ -73,10 +54,7 @@ RESET_STATE_NAMES = {
 
 # ── Message formats ───────────────────────────────────────────────────────────
 
-# MsgHeader: uint32 seq, uint64 ts, uint8 state, uint8 fault, uint8 device_id = 15 bytes
-# ArmCommandMsg: header + 3f pos + 4f quat + 1f gripper = 47 bytes
-# ArmStateMsg:   header + 3f pos + 4f quat + 7f joints + 7f tau_ext + 1B recovering
-#                + 1f gripper_width + 1B grasp_confirmed = 105 bytes
+# ArmCommandMsg 47 bytes, ArmStateMsg 105 bytes (15 byte header)
 ARM_CMD_FMT  = '<IQ3B3f4ff'
 ARM_CMD_SIZE = struct.calcsize(ARM_CMD_FMT)
 
@@ -174,8 +152,6 @@ def parse_arm_state(data):
     if len(data) != ARM_STATE_SIZE:
         return None
     fields = struct.unpack(ARM_STATE_FMT, data)
-    # seq, ts, state, fault, device_id, px, py, pz, qw, qx, qy, qz, j0-6, tau0-6,
-    # recovering, gripper_width, grasp_confirmed
     return {
         "device_id": fields[4],
         "state":     fields[2],
@@ -495,7 +471,6 @@ def run_tui(stdscr, app, avatar_sock):
                 app.quat = (1.0, 0.0, 0.0, 0.0)
             app.log("Pose reset to origin")
 
-        # z — reset left arm
         elif ch == 'z':
             if l_reset == ResetState.IDLE:
                 send_arm_reset(avatar_sock, "arm_left", av)
@@ -503,7 +478,6 @@ def run_tui(stdscr, app, avatar_sock):
                     app.left_reset_state = ResetState.RECOVERING
                 app.log("→ arm_left reset sent")
 
-        # X — reset right arm
         elif ch == 'X':
             if r_reset == ResetState.IDLE:
                 send_arm_reset(avatar_sock, "arm_right", av)
@@ -511,7 +485,6 @@ def run_tui(stdscr, app, avatar_sock):
                     app.right_reset_state = ResetState.RECOVERING
                 app.log("→ arm_right reset sent")
 
-        # c — reset both arms
         elif ch == 'c':
             if l_reset == ResetState.IDLE:
                 send_arm_reset(avatar_sock, "arm_left", av)
@@ -523,7 +496,6 @@ def run_tui(stdscr, app, avatar_sock):
                     app.right_reset_state = ResetState.RECOVERING
             app.log("→ both arms reset sent")
 
-        # n — resume left arm
         elif ch == 'n':
             if l_reset == ResetState.AWAITING_RESUME:
                 send_arm_resume(avatar_sock, "arm_left", av)
@@ -533,7 +505,6 @@ def run_tui(stdscr, app, avatar_sock):
                     app.quat = (1.0, 0.0, 0.0, 0.0)
                 app.log("→ arm_left resumed, pose origin reset")
 
-        # m — resume right arm
         elif ch == 'm':
             if r_reset == ResetState.AWAITING_RESUME:
                 send_arm_resume(avatar_sock, "arm_right", av)

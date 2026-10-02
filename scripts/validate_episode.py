@@ -1,8 +1,5 @@
 """
-validate_episode.py  -  Pre-collection gate check for a converted episode.
-
-Asserts all P0/P1/P2 acceptance criteria on a freshly converted episode.hdf5.
-Exit 0 = all checks passed. Exit 1 = one or more failures.
+Pre-collection gate check for a converted episode.hdf5 (exit 1 on any failure).
 
 Usage:
     python validate_episode.py logs/007
@@ -49,14 +46,13 @@ def validate(episode_hdf5):
 
     with h5py.File(episode_hdf5, "r") as f:
 
-        # ── Reference length ──────────────────────────────────────────────
         T = None
         if "observations/timestamp_ns" in f:
             T = len(f["observations/timestamp_ns"])
         check(T is not None and T > 0, "observations/timestamp_ns present and non-empty",
               f"T={T}")
 
-        # ── P0: gripper_cmd in actions ────────────────────────────────────
+        # P0: gripper_cmd in actions
         for arm in ("arm_left", "arm_right"):
             key = f"actions/{arm}/gripper_cmd"
             exists = key in f
@@ -67,7 +63,7 @@ def validate(episode_hdf5):
                 check(not np.all(arr == arr[0]), f"{key} not constant (varies over episode)",
                       "constant signal — ensure a grasp episode is tested; OK for open-only runs")
 
-        # ── P1: intent group ──────────────────────────────────────────────
+        # P1: intent group
         intent_path = "observations/intent"
         check(intent_path in f, f"{intent_path} group exists")
         if intent_path in f:
@@ -82,7 +78,7 @@ def validate(episode_hdf5):
             for col in ("gaze_px_x", "gaze_px_y", "gaze_valid"):
                 check(col in ig, f"{intent_path}/{col} present")
 
-        # ── P1: scene metadata ────────────────────────────────────────────
+        # P1: scene metadata
         check("scene" in f, "scene group exists")
         if "scene" in f:
             sg = f["scene"]
@@ -102,7 +98,7 @@ def validate(episode_hdf5):
         check("seed" in f.attrs, "attrs/seed present")
         check("mode" in f.attrs, "attrs/mode present")
 
-    # ── P2: intention_log_meta.csv populated ──────────────────────────────
+    # P2: intention_log_meta.csv
     imeta = os.path.join(folder, "intention_log_meta.csv")
     check(os.path.exists(imeta), "intention_log_meta.csv exists")
     if os.path.exists(imeta):
@@ -117,7 +113,7 @@ def validate(episode_hdf5):
             check(label not in ("", None), "episode_end has non-empty success label",
                   f"value={label!r}")
 
-    # ── P2: scene_meta.csv annotation alignment ───────────────────────────
+    # P2: scene_meta.csv annotations
     smeta = os.path.join(folder, "scene_meta.csv")
     check(os.path.exists(smeta), "scene_meta.csv exists")
     if os.path.exists(smeta):

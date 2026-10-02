@@ -4,16 +4,11 @@
 #include <iostream>
 #include <numeric>
 
-// Remaps from robot body frame to OpenCV frame:
-//   body X → CV Z (forward), body Y → CV -X (left), body Z → CV -Y (down)
+// body -> OpenCV: body X -> CV Z, body Y -> CV -X, body Z -> CV -Y
 static const Eigen::Matrix3d R_body2cv = (Eigen::Matrix3d() <<
      0.0, -1.0,  0.0,
      0.0,  0.0, -1.0,
      1.0,  0.0,  0.0).finished();
-
-// ---------------------------------------------------------------------------
-// Constructor
-// ---------------------------------------------------------------------------
 
 IntentionBuffer::IntentionBuffer(const IntentionBufferConfig& config)
     : config_(config)
@@ -24,20 +19,12 @@ void IntentionBuffer::setCallback(SampleCallback cb) {
     callback_ = std::move(cb);
 }
 
-// ---------------------------------------------------------------------------
-// Snapshot — called at frame-capture time
-// ---------------------------------------------------------------------------
-
 void IntentionBuffer::snapshot(const StateSnapshot& state) {
     std::lock_guard<std::mutex> lock(buf_mtx_);
     buffer_.push_back(state);
     if (static_cast<int>(buffer_.size()) > config_.max_frames)
         buffer_.pop_front();
 }
-
-// ---------------------------------------------------------------------------
-// Gaze fusion — called when a gaze packet arrives from the operator
-// ---------------------------------------------------------------------------
 
 void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
     auto snap_opt = lookup(gaze.frame_id);
@@ -61,7 +48,7 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
         sample.gripper_left  = snap.gripper_left;
         sample.gripper_right = snap.gripper_right;
 
-        // Head rotation: tilt around +Y (R_Y(q_tilt)), pan world→head requires -q_pan (passive rotation)
+        // tilt about +Y, pan world->head needs -q_pan (passive)
         Eigen::Matrix3d R_pan  = Eigen::AngleAxisd(-snap.head_pan, Eigen::Vector3d::UnitZ()).toRotationMatrix();
         Eigen::Matrix3d R_tilt = Eigen::AngleAxisd(snap.head_tilt,  Eigen::Vector3d::UnitY()).toRotationMatrix();
         Eigen::Matrix3d R_CH   = R_tilt * R_pan;
@@ -80,24 +67,15 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
             sample.slot_names.push_back(slot.name);
         }
 
-        // gaze_px_x comes in as GazeUV.X * 2560 (full stereo width).
-        // projectToImage works in single-camera coordinates (cx=640, width=1280).
-        // Halve u to align coordinate spaces; v height is the same in both frames.
-        // gaze_u_cam/gaze_v_cam stay in native single-cam pixels here and feed the
-        // belief filter below unchanged (slotLikelihood/computeBelief are already
-        // internally consistent in that space — this fix only changes what gets
-        // stored in `sample`/logged, not the live belief computation itself).
+        // gaze u comes in over full stereo width (2560), halve it to single-cam pixels
         const float gaze_u_cam = gaze.gaze_px_x * 0.5f;
         const float gaze_v_cam = gaze.gaze_px_y;
 
-        // Logged/exported gaze is a normalized pinhole ray coordinate — (u-cx)/fx,
-        // (v-cy)/fy — not a pixel count, so it stays meaningful across resolution
-        // AND lens/FOV changes. Anything reading gaze_px_x/y downstream (training
-        // features, playback, labeling) must expect this, not raw pixels.
+        // stored gaze is a normalized ray coord (u-cx)/fx, (v-cy)/fy, not pixels
         sample.gaze_px_x = (gaze_u_cam - config_.intrinsics.cx) / config_.intrinsics.fx;
         sample.gaze_px_y = (gaze_v_cam - config_.intrinsics.cy) / config_.intrinsics.fy;
 
-        // Retrieve previous belief (empty on first packet → uniform prior inside computeBelief)
+        // empty on first packet -> uniform prior
         std::vector<float> prev;
         {
             std::lock_guard<std::mutex> bl(belief_mtx_);
@@ -111,18 +89,12 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
             config_.head_position,
             prev);
 
-        // Persist for next packet
         {
             std::lock_guard<std::mutex> bl(belief_mtx_);
             prev_belief_ = sample.slot_belief;
         }
 
-        // Same normalized-ray convention as gaze above: (u-cx)/fx, (v-cy)/fy.
-        // Sentinel for "behind camera / not projected" can no longer be -1.0f:
-        // in pixel space -1 could never be a real coordinate, but as a ray
-        // coordinate -1.0 (~45 deg off-axis) is achievable on a wide-FOV lens.
-        // Use a magnitude no plausible lens can produce; downstream "< 0"
-        // invalidity checks (common.py, contracts.features) still hold.
+        // normalized ray coords; -1000 = not projected (-1 is a valid ray coord on wide FOV)
         constexpr float kNotProjected = -1000.0f;
         for (const auto& k : kernels) {
             float u = kNotProjected, v = kNotProjected;
@@ -135,7 +107,7 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
             }
         }
 
-        // Distances: 2 EEFs x N pick/place slots, interleaved [left_slot0, right_slot0, ...]
+        // interleaved [left_slot0, right_slot0, ...]
         for (const auto& slot : snap.slots) {
             float dl = static_cast<float>((snap.T_ee_left.translation()  - slot.T_world.translation()).norm());
             float dr = static_cast<float>((snap.T_ee_right.translation() - slot.T_world.translation()).norm());
@@ -151,10 +123,6 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
     }
     if (cb) cb(sample);
 }
-
-// ---------------------------------------------------------------------------
-// Buffer lookup helpers
-// ---------------------------------------------------------------------------
 
 std::optional<StateSnapshot> IntentionBuffer::lookup(uint64_t frame_id) const {
     std::lock_guard<std::mutex> lock(buf_mtx_);
@@ -216,18 +184,11 @@ std::optional<StateSnapshot> IntentionBuffer::interpolate(uint64_t frame_id) con
     return interp;
 }
 
-// ---------------------------------------------------------------------------
-// Projection + belief
-// ---------------------------------------------------------------------------
-
 bool IntentionBuffer::projectToImage(const Eigen::Vector3d& p_world,
                                      const Eigen::Matrix3d& R_CH,
                                      const Eigen::Vector3d& t_WH,
                                      float& u, float& v) const {
-    // Match ProjectWorldToScreen chain exactly:
-    //   p_H      = R_CH * (p_W - t_WH)     — into head frame
-    //   p_C_body = p_H - t_HC              — subtract cam offset in head frame
-    //   p_CV     = R_body2cv * p_C_body    — remap to OpenCV axes
+    // same chain as ProjectWorldToScreen: world -> head -> cam offset -> OpenCV axes
     Eigen::Vector3d p_H      = R_CH * (p_world - t_WH);
     Eigen::Vector3d p_C_body = p_H - config_.extrinsics.position;
     Eigen::Vector3d p_CV     = R_body2cv * p_C_body;
@@ -287,27 +248,24 @@ std::vector<float> IntentionBuffer::computeBelief(
     const Eigen::Vector3d& t_WH,
     const std::vector<float>& prev_belief) const
 {
-    // Slot layout: [ee_left, ee_right, obj_0..obj_K, bin_0..bin_M, null]
-    // Indices 0-1 are EE slots (use rho_ee); rest are target/null slots (use rho_tgt).
+    // slots: [ee_left, ee_right, objs..., bins..., null]; first 2 use rho_ee, rest rho_tgt
     int N  = static_cast<int>(kernels.size());
-    int NB = N + 1;  // +1 for null slot
+    int NB = N + 1;  // +1 null slot
 
-    // ── Step 1: raw likelihoods ──────────────────────────────────────────────
+    // raw likelihoods
     std::vector<float> likelihood(NB, 0.0f);
     for (int i = 0; i < N; ++i)
         likelihood[i] = slotLikelihood(gaze_u, gaze_v, kernels[i], R_CH, t_WH);
-    likelihood[N] = 0.1f;  // null slot fixed likelihood
+    likelihood[N] = 0.1f;  // fixed null likelihood
 
-    // Temperature scaling on likelihood before Bayes update
+    // temperature scaling
     const float inv_T = 1.0f / config_.belief_temperature;
     if (config_.belief_temperature != 1.0f) {
         for (auto& l : likelihood)
             l = std::pow(l, inv_T);
     }
 
-    // ── Step 2: sticky Bayesian prior ────────────────────────────────────────
-    // prior[i] = rho[i] * prev[i] + (1 - rho[i]) * (1/NB)
-    // If no previous belief, use uniform.
+    // sticky prior: rho * prev + (1 - rho) / NB
     const float uniform = 1.0f / static_cast<float>(NB);
     std::vector<float> prior(NB);
 
@@ -318,7 +276,7 @@ std::vector<float> IntentionBuffer::computeBelief(
         prior[i]   = rho * prev + (1.0f - rho) * uniform;
     }
 
-    // ── Step 3: posterior = prior * likelihood, normalise ────────────────────
+    // posterior = prior * likelihood, normalized
     std::vector<float> belief(NB);
     for (int i = 0; i < NB; ++i)
         belief[i] = prior[i] * likelihood[i];
@@ -327,7 +285,7 @@ std::vector<float> IntentionBuffer::computeBelief(
     if (total > 1e-6f)
         for (auto& b : belief) b /= total;
     else
-        belief = prior;  // degenerate: fall back to prior
+        belief = prior;  // degenerate, fall back to prior
 
     return belief;
 }

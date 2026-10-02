@@ -1,9 +1,6 @@
 #pragma once
 
-// Cross-platform BSD socket abstraction.
-// Include this instead of <sys/socket.h> / <winsock2.h> directly.
-// On Windows, must be included before any <windows.h> pull-in to avoid
-// the classic winsock.h vs winsock2.h redefinition conflict.
+// Cross-platform socket header. On Windows include before <windows.h> (winsock2 conflict).
 
 #ifdef _WIN32
     #ifndef WIN32_LEAN_AND_MEAN

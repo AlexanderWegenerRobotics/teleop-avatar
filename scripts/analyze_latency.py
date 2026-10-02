@@ -1,14 +1,7 @@
 """
-analyze_latency.py  -  Summarize capture->encode latency from a logged episode's
-*.timestamps.csv sidecar(s) (see VideoStreamer::pushFrame / onNewSample in
-video_streamer.cpp). Prints min/median/p95/max and plots capture_to_encode_ns
-per frame for each camera found in the episode folder.
+Summarize capture->encode latency from an episode's *.timestamps.csv files.
 
-Usage:
-    python scripts/analyze_latency.py 7                       # logs/007, all cameras
-    python scripts/analyze_latency.py logs/007
-    python scripts/analyze_latency.py logs/007 --camera head_cam_stereo
-    python scripts/analyze_latency.py logs/007 --no-plot
+Usage: python scripts/analyze_latency.py <7 | logs/007> [--camera head_cam_stereo] [--no-plot]
 """
 
 import argparse
@@ -36,8 +29,7 @@ def load_timestamps_csv(path):
                 cap = int(row["capture_time_ns"])
                 c2e = int(row["capture_to_encode_ns"])
             except (TypeError, ValueError):
-                # Truncated row, e.g. the last line of a file that wasn't closed
-                # cleanly (process killed mid-write instead of stopEncodedLog()).
+                # truncated last row if the process was killed mid-write
                 skipped += 1
                 continue
             frame_idx.append(fi)

@@ -2,17 +2,14 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- optional role override, forwarded as-is to both avatar and
-#     avatar_pipeline (see twin/role.hpp parseRoleFlag). Omit to use
-#     whatever config.yaml's role: key says -- unchanged from before this
-#     flag existed. Usage: ./launch.sh --twin   |   ./launch.sh --avatar
+# optional role override: ./launch.sh --twin | --avatar (default: config.yaml role)
 ROLE_ARG="$1"
 if [ -n "$ROLE_ARG" ] && [ "$ROLE_ARG" != "--twin" ] && [ "$ROLE_ARG" != "--avatar" ]; then
     echo "[ERROR]: unrecognized argument \"$ROLE_ARG\" (expected --twin or --avatar)"
     exit 1
 fi
 
-# --- locate binaries (Release preferred, Debug fallback, then plain build/) ---
+# locate binaries (Release, then Debug, then build/)
 AVATAR=""
 STREAMER=""
 for CONFIG in Release Debug ""; do
@@ -27,7 +24,6 @@ for CONFIG in Release Debug ""; do
     fi
 done
 
-# --- add MuJoCo lib dir to LD_LIBRARY_PATH if not already there ---
 for MJ_CANDIDATE in "$HOME/Workspace/tools/mujoco" "$HOME/Documents/awegener/dev/mujoco" "$MUJOCO_ROOT"; do
     if [ -n "$MJ_CANDIDATE" ] && [ -d "$MJ_CANDIDATE/lib" ]; then
         case ":$LD_LIBRARY_PATH:" in
@@ -38,7 +34,6 @@ for MJ_CANDIDATE in "$HOME/Workspace/tools/mujoco" "$HOME/Documents/awegener/dev
     fi
 done
 
-# --- sanity checks ---
 if [ -z "$AVATAR" ]; then
     echo "[ERROR]: avatar binary not found in build/Release, build/Debug, or build/"
     exit 1
@@ -115,7 +110,6 @@ fi
 echo "[LAUNCH]: streamer PID=$STREAMER_PID"
 echo "[LAUNCH]: Press Ctrl+C to stop both."
 
-# --- monitor: exit when either process dies ---
 while true; do
     if ! kill -0 "$AVATAR_PID" 2>/dev/null; then
         wait "$AVATAR_PID"

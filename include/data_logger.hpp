@@ -13,148 +13,65 @@
 #include "common.hpp"
 
 struct ArmLogEntry {
-    double                 time;          // seconds since logger start (relative)
-    uint64_t               wall_clock_ns; // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
-    // mjData::time -- SIMULATED seconds. time/wall_clock_ns are both wall clocks
-    // and the sim does not run at real time, so q/dq are only mutually
-    // consistent against THIS column. Resample episodes on sim_time; use the
-    // wall clocks to line up operator commands, which arrive on wall time.
-    // 0 on hardware builds, which have no sim clock.
+    double                 time;          // s since logger start
+    uint64_t               wall_clock_ns; // UNIX epoch ns (system_clock)
+    // mjData::time (sim seconds), resample on this. 0 on hardware
     double                 sim_time;
     std::array<double, 7>  q;
     std::array<double, 7>  q_cmd;
     std::array<double, 7>  dq;
     std::array<double, 7>  tau_J;
-    // Torque actually handed to franka::Torques this tick, i.e. post rate-limit
-    // and post-saturation. tau_J is what the joints measured; this is what we
-    // asked for. Without it you cannot check d(tau_cmd)/dt against the FCI
-    // 1000 Nm/s discontinuity limit -- which is precisely the quantity the
-    // controller_torque_discontinuity reflex trips on.
+    // torque actually sent to franka::Torques (after rate limit + saturation)
     std::array<double, 7>  tau_cmd;
     std::array<double, 7>  tau_ext;
     std::array<double, 16> O_T_EE;
     std::array<double, 16> O_T_EE_cmd;
-    std::array<double, 16> O_T_EE_world;      // T_base_ * O_T_EE -- world-frame EE pose, additive alongside base-frame O_T_EE (see arm_control.cpp)
-    std::array<double, 16> O_T_EE_cmd_world;  // T_base_ * O_T_EE_cmd -- world-frame command target, same rationale
+    std::array<double, 16> O_T_EE_world;      // world frame, T_base_ * O_T_EE
+    std::array<double, 16> O_T_EE_cmd_world;  // world frame, T_base_ * O_T_EE_cmd
     std::array<double, 6>  F_ext;
     double                 gripper_width;
     double                 gripper_cmd;
     uint8_t                grasp_state;
-    // Nullspace posture reference actually used by cartesianImpedanceControl
-    // this tick (q0 when the optimizer is off), plus the optimizer's chosen
-    // orbit displacement, cost, joint-limit margin and swivel angle.
+    // nullspace posture ref used this tick (q0 if optimizer off) + optimizer outputs
     std::array<double, 7>  q_null_ref;
     double                 posture_s;
     double                 posture_cost;
     double                 posture_margin;
     double                 posture_swivel;
     SysState               state;
-    // 1 when O_T_EE_cmd / O_T_EE_cmd_world hold a pose that was actually
-    // commanded. 0 in HOMING / RECOVERING / IDLE / PAUSED / FAULT and in every
-    // fallback row, where no Cartesian target exists and those columns carry
-    // the measured pose instead.
-    //
-    // Before this column existed those states logged an identity target, which
-    // T_base_ turned into the arm's own mounting frame -- (0, -0.4, 1.277) with
-    // quaternion (0.5, 0.5, 0.5, 0.5) for arm_right. That is a well-formed pose
-    // sitting behind the robot, outside the safety workspace, and it accounted
-    // for two thirds of the rows in a session. Nothing in the file distinguished
-    // it from a real command.
+    // 1 if O_T_EE_cmd is a real command, 0 = columns hold the measured pose
     uint8_t                cmd_valid;
-    // 0 = written from inside the control callback, i.e. one row per control
-    //     tick (~1 kHz).
-    // 1 = written from the state thread (~200 Hz) because robot->control() was
-    //     not running: a ControlException, automaticErrorRecovery(),
-    //     waitForRest(), the re-entry dwell, or the blocking wait in
-    //     enterFaultAndWaitForReset().
-    //
-    // The file is therefore NOT uniformly sampled. Filter on this before
-    // resampling, and never interpolate across a run of log_src = 1.
+    // 0 = control callback (~1 kHz), 1 = state thread (~200 Hz) while control() isn't running.
+    // File is not uniformly sampled, don't interpolate across log_src = 1.
     uint8_t                log_src;
-    // The operator's grasp input exactly as it arrived on the wire: 1 while the
-    // controller grip is held, 0 otherwise, in every state.
-    //
-    // gripper_cmd above is NOT this. It is a commanded WIDTH, and it is ANDed
-    // with grasp_allowed_ (true only in ENGAGED and PAUSED), so outside those
-    // states a held grip is logged identically to an open hand. That makes the
-    // operator's intent unrecoverable from this file alone in exactly the
-    // windows -- homing, recovery, the moments around engagement -- where you
-    // would want to know whether they were still squeezing.
+    // raw operator grip input (1 = held) in every state, unlike gripper_cmd
     uint8_t                grasp_cmd;
-    // ArmCommandMsg::clutch as received, 1 = the operator was clutched and
-    // therefore repositioning their hand rather than demonstrating. The
-    // commanded pose does not advance through a clutch, so these rows are dead
-    // time: cut them before training or the policy learns to pause for no
-    // observable reason. 1 before the first command arrives.
+    // 1 = operator clutched (dead time, cut before training). 1 before first command
     uint8_t                clutch;
-    // header.sequence of the last ArmCommandMsg this arm actually CONSUMED,
-    // the same value echoed to the interface in ArmStateMsg. Logged here so an
-    // episode file can be aligned to the operator-side command log by sequence
-    // rather than by wall clock -- the two hosts are on different continents
-    // and their offset is the same order as the latency being measured.
-    //
-    // Holds the last consumed sequence while nothing is being consumed (not
-    // ENGAGED), and 0 until the first command arrives. Flat runs mean commands
-    // stopped being applied, not that they stopped arriving.
+    // sequence of last consumed ArmCommandMsg, for aligning with operator-side logs. 0 until first command
     uint32_t               applied_cmd_sequence;
-    // CommandAuthority for THIS arm (common.hpp): 0 POLICY, 1 HUMAN, 2 HOLD,
-    // 255 UNSET. Appended rather than slotted in beside clutch so a positional
-    // reader of an older file still lines up.
-    //
-    // 255 for the whole file means authority was never requested -- an ordinary
-    // teleoperation or autonomous session, recorded exactly as before. Any
-    // other value means the arm was under explicit authority, and the column is
-    // then the label a DAgger filter cuts on: which segments the operator drove
-    // and which the policy did.
-    //
-    // Cross-check it against `clutch`. The two are produced by different
-    // mechanisms -- this one by the avatar's gate, that one by a byte the
-    // interface put on the wire -- so HUMAN rows must carry clutch 0 and POLICY
-    // rows clutch 1. Rows where they disagree mean the two sides disagreed
-    // about who had the robot, and the labels on that segment cannot be
-    // trusted for training.
+    // CommandAuthority: 0 POLICY, 1 HUMAN, 2 HOLD, 255 UNSET. Appended at the end to keep old column order
     uint8_t                authority;
-    // Joint friction feedforward added to the command this tick (Nm), i.e. the
-    // part of tau_cmd that came from control.friction. Appended after authority
-    // for the same reason authority was: positional readers of older files keep
-    // lining up. All zeros when friction feedforward is disabled.
+    // friction feedforward part of tau_cmd, Nm
     std::array<double, 7>  tau_friction;
 };
 
-// One row per state-thread tick (~200 Hz), written by runStateHandler.
-//
-// This exists because ArmLogEntry cannot record the states that matter most.
-// arm.csv is written from inside the franka::Robot::control() callback, so the
-// moment control() throws -- ControlException, automaticErrorRecovery(), the
-// blocking wait in enterFaultAndWaitForReset() -- the writer is gone and the
-// log simply stops. FAULT and RECOVERING are therefore unrepresentable in
-// arm.csv by construction.
-//
-// On 2026-08-09 the avatar's arm.csv ended mid-ENGAGED at t=405.672 s with no
-// indication of why, while the process stayed alive and kept publishing for
-// another 12 s. This trace runs on the independent state thread and keeps
-// going across exactly those events, so the next fault has a record.
-//
-// Deliberately narrow: state, liveness and the freshness stamp. Anything
-// needing 1 kHz fidelity belongs in arm.csv.
+// One row per state-thread tick (~200 Hz), keeps logging through faults when arm.csv stops.
 struct ArmStateTraceEntry {
-    double   time;                  // seconds since logger start
+    double   time;                  // s since logger start
     uint64_t wall_clock_ns;         // state-thread tick time
-    uint64_t control_sample_ns;     // when the CONTROL thread last read the robot
-    double   control_age_ms;        // wall_clock_ns - control_sample_ns; grows if control stalls
-    uint32_t control_loop_entries;  // times control() has been (re-)entered; increments on every fault
-    uint32_t fault_count;           // consecutive-fault streak counter
+    uint64_t control_sample_ns;     // last robot read by the control thread
+    double   control_age_ms;        // grows if control stalls
+    uint32_t control_loop_entries;  // increments on every fault
+    uint32_t fault_count;           // consecutive faults
     SysState state;
     uint8_t  recovering;
 };
 
-// NOTE: no sim_time column here, unlike ArmLogEntry -- HeadControl reads state
-// through the Driver abstraction, which has no sim clock (and a real-hardware
-// implementation). To put head and arm rows on one grid, build the wall->sim
-// mapping from an arm CSV (which carries both clocks) and apply it here.
+// no sim_time here, map wall->sim time through the arm CSV
 struct HeadLogEntry {
-    double                time;          // seconds since logger start (relative)
-    uint64_t              wall_clock_ns; // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
+    double                time;          // s since logger start
+    uint64_t              wall_clock_ns; // UNIX epoch ns (system_clock)
     std::array<double, 2> q;
     std::array<double, 2> q_cmd;
     std::array<double, 2> dq;
@@ -195,10 +112,8 @@ public:
         meta_file_.close();
     }
 
-    // Close current files, open new ones at new_path, restart logging thread.
-    // Call this between episodes when you want a fresh file in a new folder.
+    // reopens files at new_path and restarts the logging thread, used between episodes
     void restart(const std::string& new_path) {
-        // Stop logging thread and flush
         bEnabled_ = false;
         bRunning_ = false;
         if (thread_.joinable()) thread_.join();
@@ -235,7 +150,7 @@ public:
         writeMarker("episode_end", reason);
     }
 
-    // Write episode config (pick/place pose, mode) to meta file once per episode
+    // writes an annotation row to the meta file
     void writeAnnotation(const std::string& label, uint8_t atype,
                          float confidence, float score, uint64_t frame_id) {
         double t = std::chrono::duration<double>(
@@ -347,7 +262,6 @@ private:
     std::chrono::high_resolution_clock::time_point startTime_;
 };
 
-
 inline std::string armLogHeader() {
     std::string h = "time;wall_clock_ns;sim_time;";
     for (int i = 0; i < 7;  ++i) h += "q_"          + std::to_string(i) + ";";
@@ -402,27 +316,16 @@ inline std::string armLogRow(const ArmLogEntry& e) {
     return r;
 }
 
-// One row per twin control tick while a Reconciler exists.
-//
-// Reconciler::Stats has always computed exactly the quantities needed to judge
-// whether the twin is a usable predictor -- innovation norm, the measured
-// forward/backward delays, the current regime, the hard-resync count, packets
-// received -- and getStats() had no callers anywhere in the codebase, so all
-// of it was discarded every tick.
-//
-// After the 2026-08-09 run these had to be reconstructed offline from
-// twin/arm.csv and avatar/arm.csv, which recovers the innovation but NOT the
-// replay through the scratch mjData and NOT the corrections actually applied.
-// Logging them directly turns that reconstruction into a cross-check.
+// One row per twin control tick, logs Reconciler::getStats().
 struct ReconcilerLogEntry {
     double   time;
     uint64_t wall_clock_ns;
     double   innovation_norm_rad;   // ||e|| = ||y - x_hat(t_s - d_f)||
-    double   measured_d_f_s;        // forward delay the reconciler actually observed
+    double   measured_d_f_s;        // forward delay
     double   measured_d_b_s;
     uint8_t  regime;                // 0 = Soft, 1 = Hard
     uint64_t hard_resync_count;     // cumulative
-    uint64_t packets_received;      // cumulative; flat => telemetry has stopped
+    uint64_t packets_received;      // cumulative
 };
 
 inline std::string reconcilerLogHeader() {
@@ -485,8 +388,8 @@ struct SceneLogEntry {
     static constexpr int MAX_OBJECTS = 4;
     static constexpr int MAX_BINS    = 4;
 
-    double   time          = 0.0;  // seconds since logger start (relative)
-    uint64_t wall_clock_ns = 0;    // UNIX epoch nanoseconds (system_clock, same source as intention timestamp_arrival_ns)
+    double   time          = 0.0;  // s since logger start
+    uint64_t wall_clock_ns = 0;    // UNIX epoch ns (system_clock)
     int      mode          = 0;
     int      seed          = 0;
 
@@ -500,12 +403,12 @@ struct SceneLogEntry {
     std::array<std::array<double, 3>, MAX_BINS> bin_pos{};
     std::array<std::array<double, 4>, MAX_BINS> bin_quat{};
 
-    // Per-object spawn config — constant per episode, repeated each row
+    // spawn config, constant per episode
     std::array<std::string, MAX_OBJECTS> object_colors;
-    std::array<double, MAX_OBJECTS> object_spawn_yaw{};    // Z-rotation at spawn (radians)
-    std::array<double, MAX_OBJECTS> object_scale{1.0, 1.0, 1.0, 1.0};  // uniform scale factor
+    std::array<double, MAX_OBJECTS> object_spawn_yaw{};    // rad
+    std::array<double, MAX_OBJECTS> object_scale{1.0, 1.0, 1.0, 1.0};
 
-    // Lighting — constant per episode, repeated each row for easy frame-level lookup
+    // lighting, constant per episode
     std::array<float, 3> light_main_pos        = {0.5f,  0.0f,  1.8f};
     std::array<float, 3> light_main_diffuse    = {0.8f,  0.8f,  0.8f};
     std::array<float, 3> light_main_specular   = {0.2f,  0.2f,  0.2f};

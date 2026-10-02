@@ -1,39 +1,14 @@
 #pragma once
 
-// Applies twin-role overlays onto already-loaded config YAML trees
-// (docs/twin_concept.md). Exists so avatar and twin can run as two local
-// processes against the SAME robot_config / pipeline_config files -- e.g.
-// for reconciler dev/testing -- without duplicating either file (and risking
-// the copies' physical/dynamics parameters, or camera/stream definitions,
-// drifting apart between roles).
-//
-// Two overlays live here:
-//
-//   applyTwinTransmissionOverlay -- robot_config: avatar.transmission and
-//   per-device transmission blocks (UDP command-channel ports).
-//
-//   applyTwinStreamerOverlay -- pipeline_config: shm names, the video
-//   stream/feedback/status ports, and episode_listener_port.
-//
-// Both are intentionally narrow, named-key merges (never a blind whole-file
-// merge): only keys actually present in the overlay file are overwritten;
-// anything not mentioned (remote_ip, frequency, bitrate_kbps, ...) is left
-// as-is from the base file.
-//
-// Deliberately header-only and yaml-cpp-only, matching twin/role.hpp's
-// constraint: must compile identically in every build configuration
-// (WITH_MUJOCO on/off, WITH_FRANKA on/off).
+// Applies twin-role overlays onto loaded robot/pipeline config trees, so avatar and twin can share one config file.
+// Only keys present in the overlay are overwritten.
 
 #include <stdexcept>
 #include <string>
 
 #include <yaml-cpp/yaml.h>
 
-// Recursively overwrites, in `target`, only the keys present in `overrides`.
-// A key whose value is a map in both `target` and `overrides` is merged
-// key-by-key (recursing); any other key (scalar, sequence, or a key not yet
-// present in target) is replaced outright. `target` must already be a real
-// map node (caller ensures this, e.g. sys_config["avatar"]).
+// Recursively overwrites only the keys present in overrides; maps are merged, everything else replaced.
 inline void mergeYamlNodeInto(YAML::Node target, const YAML::Node& overrides) {
     for (const auto& kv : overrides) {
         const std::string key = kv.first.as<std::string>();
@@ -46,16 +21,7 @@ inline void mergeYamlNodeInto(YAML::Node target, const YAML::Node& overrides) {
     }
 }
 
-// sys_config: the loaded robot_config tree (mutated in place).
-// overlay_path: path to the overlay YAML file, as found under
-//   config.yaml's twin_config.transmission_overlay.
-//
-// Overlay file schema (see config/robot_config_twin_overlay_local.yaml):
-//   avatar:
-//     <any avatar-level sub-block, e.g. transmission / pipeline_logger>: { ... }
-//   devices:
-//     - name: <device name, matched against the base config's devices[].name>
-//       <any device-level sub-block, e.g. transmission>: { ... }
+// Overlays avatar.* and per-device blocks (matched by devices[].name) from the transmission overlay file.
 inline void applyTwinTransmissionOverlay(YAML::Node sys_config, const std::string& overlay_path) {
     YAML::Node overlay = YAML::LoadFile(overlay_path);
 
@@ -86,27 +52,11 @@ inline void applyTwinTransmissionOverlay(YAML::Node sys_config, const std::strin
     }
 }
 
-// cfg: the loaded pipeline_config tree (mutated in place) -- same file both
-//   Simulation (avatar.exe, writer side) and streamer_main (avatar_pipeline.exe,
-//   reader side) load via config["streamer_config"].
-// overlay_path: path to the overlay YAML file, as found under
-//   config.yaml's twin_config.streamer_overlay.
-//
-// Overlay file schema (see config/pipeline_config_twin_overlay_local.yaml):
-//   episode_listener_port: <override>
-//   stream_cameras:
-//     - camera: <matched against base stream_cameras[].camera>
-//       shm_name: <override>
-//   cameras:
-//     - name: <matched against base cameras[].name>
-//       shm_name: <override>
-//       stereo_partner_shm: <override, only for the stereo entry>
-//       stream: { port, feedback_port, status_port, ... }
+// Overlays top-level keys, stream_cameras (by camera) and cameras (by name) from the streamer overlay file.
 inline void applyTwinStreamerOverlay(YAML::Node cfg, const std::string& overlay_path) {
     YAML::Node overlay = YAML::LoadFile(overlay_path);
 
-    // Top-level scalars (episode_listener_port, ...). stream_cameras/cameras
-    // are sequences matched by name below, not blindly replaced here.
+    // top-level keys; the two camera lists are merged by name below
     for (const auto& kv : overlay) {
         const std::string key = kv.first.as<std::string>();
         if (key == "stream_cameras" || key == "cameras") continue;

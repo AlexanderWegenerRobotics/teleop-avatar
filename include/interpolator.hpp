@@ -1,4 +1,4 @@
 #pragma once
-// Renamed to MotionGenerator — kept as a forwarding stub for any out-of-tree includes.
+// Forwarding stub, use MotionGenerator.
 #include "MotionGenerator.hpp"
 using Interpolator = MotionGenerator;

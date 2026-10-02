@@ -18,11 +18,7 @@
 Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
     YAML::Node sys_config = YAML::LoadFile(config["robot_config"].as<std::string>());
 
-    // Twin-role port overlay (see twin/config_overlay.hpp) -- only patches
-    // transmission send_port/receive_port fields, so avatar and twin can run
-    // locally against the same robot_config file without a duplicated copy.
-    // No-op for role == Avatar, and for role == Twin when the config doesn't
-    // define transmission_overlay (real cross-continent deployment).
+    // twin only: patch ports so avatar and twin can share one robot_config locally
     if (role_ == Role::Twin && config["transmission_overlay"]) {
         applyTwinTransmissionOverlay(sys_config, config["transmission_overlay"].as<std::string>());
         std::cout << "[AVATAR-INFO] Applied twin transmission overlay: "
@@ -106,7 +102,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         loop_rate_hz_ = 100.0;
     }
 
-    // ── Scene object geometry, published for external consumers ────────────
+    // scene objects for the orchestrator
     if (sys_config["avatar"]["scene_objects"]) {
         const auto& so = sys_config["avatar"]["scene_objects"];
         if (so["enabled"].as<bool>(false)) {
@@ -122,7 +118,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         }
     }
 
-    // ── Pipeline logger episode signaling ─────────────────────────────────
+    // pipeline logger episode signaling
     if (sys_config["avatar"]["pipeline_logger"]) {
         const auto& pl = sys_config["avatar"]["pipeline_logger"];
         if (pl["enabled"].as<bool>(false)) {
@@ -138,8 +134,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         }
     }
 
-    // ── Twin telemetry forward (role == Avatar only; harmless no-op
-    // otherwise, since maybeSend() is never called when role_ == Twin) ─────
+    // twin telemetry forward, avatar role only
     if (role_ == Role::Avatar && sys_config["avatar"]) {
         twin_telemetry_ = std::make_unique<TelemetryForwarder>(sys_config["avatar"]);
     }
@@ -171,15 +166,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             ArmControl* arm = getArm(dev_name);
             if (!arm) return;
 
-            // A reset takes the arm away from whoever held it. The policy must
-            // not keep commanding an arm that is recovering to home -- it would
-            // be fighting the recovery plan with a target from before the fault,
-            // and the operator asked for this arm to stop, not to change hands.
-            //
-            // HOLD rather than HUMAN: the reset is a request to make the arm
-            // safe, not a request to drive it. Whoever wants it next says so.
-            // Only if authority was already in use -- a reset in an ordinary
-            // session must not switch enforcement on behind the operator's back.
+            // reset takes the arm away from whoever held it -> HOLD, but only if authority is in use
             if (arm->getAuthority() != CommandAuthority::UNSET)
                 arm->setAuthority(CommandAuthority::HOLD, "arm_reset");
 
@@ -218,9 +205,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             std::cout << "[AVATAR-INFO]: Resume confirmed for " << dev_name << std::endl;
         });
 
-        // Payload: {"authority": uint8, "source": string, ["device": string]}.
-        // Omitting "device" addresses every arm, which is what the orchestrator
-        // does; the interface names one, because the clutch is per hand.
+        // payload: {authority, source, [device]}; no device = all arms
         cmd_channel_->registerHandler("authority_request", [this](const ReliableEnvelope& env, const msgpack::object& payload) {
             std::map<std::string, msgpack::object> fields;
             payload.convert(fields);
@@ -228,8 +213,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             auto auth_it = fields.find("authority");
             if (auth_it == fields.end()) return;
             const uint8_t raw = auth_it->second.as<uint8_t>();
-            // Unknown value: keep whatever the arm already holds. Falling back
-            // to a default here would let a malformed packet open a gate.
+            // unknown value: ignore, don't fall back to a default
             if (raw > static_cast<uint8_t>(CommandAuthority::HOLD)) {
                 std::cout << "[AVATAR-WARN]: authority_request with unknown authority "
                           << static_cast<int>(raw) << " ignored" << std::endl;
@@ -259,11 +243,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
                     reason = it->second.as<std::string>();
             }
 
-            // Do NOT call markEpisodeEnd here.  When reset_all is followed by an
-            // episode_restart (annotation flow), the episode_restart handler owns
-            // the final label and will close the episode with the correct reason.
-            // For standalone resets the episode will be closed by the subsequent
-            // state-machine transition (ENGAGED→IDLE or similar).
+            // no markEpisodeEnd here, episode_restart or the next state transition closes the episode
 
             for (auto& arm : arm_instances) {
                 arm->recovery().requestRecovery(RecoveryTrigger::OPERATOR_RESET, arm->getQ0());
@@ -310,8 +290,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             std::cout << "[AVATAR-INFO]: Episode restart (" << label << ")" << std::endl;
         });
 
-        // HUD readouts from the orchestrator (inference time, agreement). The
-        // interface is this channel's only peer, so the avatar relays them.
+        // orchestrator HUD readouts, relayed to the interface
         cmd_channel_->registerHandler("policy_status", [this](const ReliableEnvelope& env, const msgpack::object& payload) {
             msgpack::sbuffer buf;
             msgpack::pack(buf, payload);
@@ -360,9 +339,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         else if (role == "bin") bin_defs_.push_back(def);
     }
 
-    // A body_name that doesn't match the <body> in model_path fails silently
-    // everywhere downstream (no reset, no scene.csv pose, no intention slot),
-    // so say it once, loudly, at startup.
+    // a wrong body_name fails silently downstream, so warn once at startup
     if (const mjModel* m = sim_->mjModelPtr()) {
         for (const auto& def : object_defs_) {
             if (mj_name2id(m, mjOBJ_BODY, def.mujoco_body.c_str()) < 0)
@@ -417,7 +394,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         buf_cfg.extrinsics = extrinsics;
         if (dev["base_pose"] && dev["base_pose"]["position"]) {
             auto hp = dev["base_pose"]["position"].as<std::vector<double>>();
-            // base_pose is the head_frame root; add link_1(0.08) + link_2(0.06) z-offsets to reach tilt joint
+            // base_pose is the head root, + link_1 (0.08) + link_2 (0.06) to the tilt joint
             buf_cfg.head_position = Eigen::Vector3d(hp[0], hp[1], hp[2] + 0.08 + 0.06);
         }
         if (cam["gaze_sigma_px"])
@@ -444,10 +421,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
 
     writeCameraParams();
 
-    // ── Reconciler (role == Twin only) ──────────────────────────────────
-    // Constructed here (not in main.cpp) because it needs sim_, which only
-    // exists in this !WITH_FRANKA branch -- see role.hpp / reconciler.hpp
-    // header comments for why role: twin implicitly requires a MuJoCo build.
+    // reconciler, twin role only (needs sim_)
     if (role_ == Role::Twin) {
         if (!config["reconciler_config"])
             throw std::runtime_error("role: twin requires twin_config.reconciler_config in config.yaml");
@@ -495,8 +469,7 @@ void Avatar::start(){
                                                   current_episode_cfg_.mode,
                                                   current_episode_cfg_.color_bin_mapping);
 
-    // Re-announce the boot episode: the streamer process launches after us and may not
-    // have bound its episode socket for the first send (UDP, no retry). Streamer dedups.
+    // re-announce boot episode, streamer may not be listening yet (UDP, streamer dedups)
     std::thread([this]{
         for (int i = 0; i < 8; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -504,8 +477,7 @@ void Avatar::start(){
         }
     }).detach();
 
-    // Sets the orchestrator's tick rate, since tick_id is stamped once per
-    // iteration here. Parsed in the constructor; this is the command-rate knob.
+    // loop rate = orchestrator tick rate
     std::cout << "[AVATAR-INFO] loop rate " << loop_rate_hz_ << " Hz" << std::endl;
     const auto control_period = std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(
         std::chrono::duration<double>(1.0 / loop_rate_hz_));
@@ -530,8 +502,7 @@ void Avatar::start(){
     bRunning = true;
    
     while(bRunning){
-        // Top of tick, before anything else touches sim state (section 5 of
-        // docs/twin_concept.md): apply any pending reconciler correction.
+        // apply reconciler correction before anything touches sim state
         if (reconciler_) reconciler_->applyPendingCorrection();
 
         SysState cmd_state = cmd_requested_.load();
@@ -568,11 +539,7 @@ void Avatar::start(){
             last_heartbeat = now;
         }
 
-        // role == Avatar: forward real joint telemetry y(t_s) to a paired
-        // twin's reconciler (docs/twin_concept.md section 4). Works
-        // identically on real-hardware (WITH_FRANKA) and sim-as-avatar
-        // builds since it only reads ArmControl's current_state via the
-        // franka::Robot abstraction, never sim_ directly.
+        // avatar role: forward joint telemetry to the twin
         if (twin_telemetry_ && twin_telemetry_->enabled()) sendTwinTelemetry();
 
         #ifndef WITH_FRANKA
@@ -586,11 +553,7 @@ void Avatar::start(){
                 sim_->setFramePose("target_raw_" + side + "_frame", T.translation(), Eigen::Quaterniond(T.rotation()), 0.107);
             }
 
-            // role == Twin: feed the reconciler's ring buffer with the
-            // twin's own just-computed state + applied ctrl this tick
-            // (docs/twin_concept.md section 3). Order is fixed: arm_left
-            // then arm_right, matching TwinTelemetryMsg's q_left/q_right
-            // layout and Reconciler's default device_names.
+            // twin role: push own state + ctrl to the reconciler buffer, order arm_left then arm_right
             if (reconciler_) {
                 double q[kTwinDof] = {}, dq[kTwinDof] = {}, ctrl[kTwinDof] = {};
                 static const std::array<std::string, 2> kTwinDevices{"arm_left", "arm_right"};
@@ -605,10 +568,7 @@ void Avatar::start(){
                     std::chrono::system_clock::now().time_since_epoch()).count());
                 reconciler_->pushTwinState(t_ns, q, dq, ctrl);
 
-                // Drain the stats the reconciler has been computing all along.
-                // packets_received going flat is the tell that avatar telemetry
-                // has stopped -- the reconciler then predicts open-loop with no
-                // correction and, until this was logged, no way to say so.
+                // log reconciler stats; flat packets_received = telemetry stopped
                 if (reconciler_logger_) {
                     Reconciler::Stats st = reconciler_->getStats();
                     ReconcilerLogEntry rl{};
@@ -625,11 +585,7 @@ void Avatar::start(){
                 }
             }
 
-            // Outside the intention_buffer_ block below on purpose. The
-            // orchestrator's copy of authority rides SceneObjectsMsg, which the
-            // intention pipeline builds; the interface's does not, and a rig
-            // running without intention recognition still has an operator who
-            // needs the pill to be true.
+            // outside the intention_buffer_ block so it runs without intention recognition too
             publishAuthorityChanges();
             relayPolicyStatus();
 
@@ -683,10 +639,7 @@ void Avatar::start(){
                     s.T_world      = Eigen::Isometry3d::Identity();
                     s.T_world.translation() = p;
                     s.T_world.linear()      = q.toRotationMatrix();
-                    // Half-extents of the blue plastic bin (plastic_box_blue.xml):
-                    // X: outer wall at ±(0.0915+0.0015) = ±0.093 m
-                    // Y: outer wall at ±(0.0765+0.0015) = ±0.078 m
-                    // Z: wall height 0.080 m, half = 0.040 m (from bin base)
+                    // half-extents of plastic_box_blue.xml, m
                     s.half_extents = Eigen::Vector3d(0.093, 0.078, 0.040);
                     snap.slots.push_back(std::move(s));
                 }
@@ -715,7 +668,7 @@ void Avatar::start(){
                     }
                     entry.object_names[i] = object_defs_[i].name;
 
-                    // Spawn-time randomization params — look up by name in episode config
+                    // spawn params from episode config
                     auto cfg_it = std::find_if(
                         current_episode_cfg_.objects.begin(),
                         current_episode_cfg_.objects.end(),
@@ -872,7 +825,7 @@ void Avatar::sendTwinTelemetry() {
     if (!twin_telemetry_) return;
 
     TwinTelemetryMsg msg{};
-    msg.header.timestamp_ns = timestamp_ns();  // t_s -- sample time; both machines NTP-synced (section 2)
+    msg.header.timestamp_ns = timestamp_ns();  // sample time t_s
     msg.header.state        = state_.load();
     msg.header.device_id    = DeviceId::AVATAR;
 
@@ -977,7 +930,7 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
         }
 
 #ifndef WITH_FRANKA
-        // Randomize lighting from seed by default; explicit server values override below.
+        // lighting randomized from seed, server values override
         cfg.lighting.randomize(cfg.seed);
 
         if (fields.count("lighting")) {
@@ -1008,8 +961,7 @@ void Avatar::startNewEpisodeFolder() {
     std::snprintf(idx_buf, sizeof(idx_buf), "%03d", current_episode_idx_);
     std::string folder = log_base_dir_ + "/" + std::string(idx_buf);
     std::filesystem::create_directories(folder);
-    // Store the canonical absolute path so the pipeline process can use it directly,
-    // regardless of its own working directory.
+    // absolute path so the pipeline process can use it directly
     current_episode_folder_ = std::filesystem::absolute(folder).string();
 
     for (auto& arm : arm_instances) {
@@ -1099,8 +1051,7 @@ void Avatar::publishAuthorityChanges() {
         if (it != published_authority_.end() && it->second == now) continue;
         published_authority_[dev] = now;
 
-        // Packed field by field: the values are not the same type, so a
-        // std::map<string, X> cannot carry both.
+        // packed by hand since values have different types
         msgpack::sbuffer buf;
         msgpack::packer<msgpack::sbuffer> pk(&buf);
         pk.pack_map(2);
@@ -1131,16 +1082,7 @@ void Avatar::sendDeviceEvent(const std::string& device, const std::string& event
 void Avatar::updateStateMachine(SysState cmd_state){
     if (reset_all_pending_.load()) return;
 
-    // Remembered across the switch so that LEAVING ENGAGED -- by any route:
-    // idle, pause, stop, or anything added later -- parks every arm in HOLD.
-    //
-    // Outside ENGAGED nothing may command the arms anyway, so the policy is not
-    // being stopped so much as told. What this prevents is the policy silently
-    // still holding authority when the operator re-engages: the arms would come
-    // back under a policy that has been predicting against a frozen or homing
-    // robot for however long the pause lasted. After this, re-engaging leaves
-    // every arm in HOLD and the operator hands them over deliberately with
-    // RESUME -- which is the conscious re-enable the whole mode is built on.
+    // leaving ENGAGED by any route parks every arm in HOLD, so operator re-hands them deliberately
     const SysState state_before = state_.load();
 
     if(cmd_state == SysState::STOP){
@@ -1214,9 +1156,7 @@ void Avatar::updateStateMachine(SysState cmd_state){
 
     if (state_before == SysState::ENGAGED && state_.load() != SysState::ENGAGED) {
         for (ArmControl* arm : arm_instances) {
-            // UNSET means authority is not in use in this session; switching
-            // enforcement on here would gate an ordinary teleoperation run at
-            // the worst possible moment.
+            // UNSET = authority not in use this session, leave it
             if (arm->getAuthority() != CommandAuthority::UNSET)
                 arm->setAuthority(CommandAuthority::HOLD, "left_engaged");
         }

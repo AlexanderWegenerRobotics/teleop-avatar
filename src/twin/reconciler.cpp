@@ -18,12 +18,7 @@ ReconcilerConfig ReconcilerConfig::load(const YAML::Node& y) {
 
 #ifndef WITH_MUJOCO
 
-// ── No-MuJoCo stub ──────────────────────────────────────────────────────────
-// Keeps the symbol set complete for every build configuration, but a
-// Reconciler must never actually be constructed here: Avatar only builds one
-// for role: twin, and role: twin requires WITH_MUJOCO. This throws instead
-// of doing anything undefined, per the "don't crash without MuJoCo" build
-// requirement -- no MuJoCo header is included in this branch at all.
+// no-MuJoCo stub: role twin needs WITH_MUJOCO, so constructing one throws
 
 Reconciler::Reconciler(const ReconcilerConfig&, Simulation*, std::vector<std::string>) {
     throw std::runtime_error(
@@ -95,8 +90,7 @@ Reconciler::Reconciler(const ReconcilerConfig& cfg, Simulation* sim,
                                   std::to_string(cfg_.listen_port));
     }
 
-    // Short recv timeout so runReconcilerThread() can re-check running_
-    // promptly on stop() without a dedicated wakeup mechanism.
+    // short recv timeout so the thread notices stop()
 #ifdef _WIN32
     DWORD timeout_ms = 20;
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
@@ -143,9 +137,7 @@ void Reconciler::applyPendingCorrection() {
     uint64_t now = nowNs();
     double age_s = (now > c.computed_t_ns) ? secondsFromNs(now - c.computed_t_ns) : 0.0;
     if (age_s > cfg_.mailbox_stale_s) {
-        // Stale guard (section 5): reconciler thread stalled -- degrade
-        // gracefully to open-loop prediction instead of applying an
-        // ancient correction.
+        // reconciler stalled, fall back to open-loop prediction
         return;
     }
 
@@ -173,13 +165,12 @@ void Reconciler::runReconcilerThread() {
             std::memcpy(&msg, raw, sizeof(msg));
             handleTelemetry(msg);
         }
-        // n <= 0 on timeout/no-data -- loop back around and re-check running_.
     }
 }
 
 void Reconciler::handleTelemetry(const TwinTelemetryMsg& msg) {
     uint64_t now_ns = nowNs();
-    uint64_t t_s_ns = msg.header.timestamp_ns;  // hardware sample time (docs/twin_concept.md section 2)
+    uint64_t t_s_ns = msg.header.timestamp_ns;  // hardware sample time
 
     {
         std::lock_guard<std::mutex> lock(stats_mtx_);
@@ -196,15 +187,9 @@ void Reconciler::handleTelemetry(const TwinTelemetryMsg& msg) {
     }
 
     std::size_t n = buffer_.size();
-    if (n == 0) return;  // nothing buffered yet -- can't reconcile
+    if (n == 0) return;
 
-    // ── Matched-phase lookup (section 4): find the buffered twin sample
-    // whose own state is closest to y in joint space -- the reconciler's
-    // best estimate of "twin state at t_s". We don't have a direct
-    // timestamp-exchange channel to measure d_f independently (that needs
-    // round-trip instrumentation at the avatar's command receiver -- a
-    // natural follow-up); d_f is instead estimated operationally as
-    // t_s - matched.t_ns, consistent with x(t_s) ~= x_hat(t_s - d_f).
+    // matched phase: buffered sample closest to y in joint space. d_f estimated as t_s - matched.t_ns
     std::size_t best_idx  = 0;
     double      best_dist = -1.0;
     for (std::size_t i = 0; i < n; ++i) {
@@ -222,8 +207,7 @@ void Reconciler::handleTelemetry(const TwinTelemetryMsg& msg) {
     const TwinStateSample& matched = buffer_.at(best_idx);
     double d_f_s = (t_s_ns > matched.t_ns) ? secondsFromNs(t_s_ns - matched.t_ns) : 0.0;
 
-    // Innovation e = y - x_hat(t_s - d_f), joint space (catches
-    // nullspace/elbow drift invisible to an EE-only comparison).
+    // innovation e = y - x_hat(t_s - d_f), joint space so elbow drift shows up
     double e_norm_sq = 0.0;
     for (int k = 0; k < kTwinDof; ++k) {
         double diff = y[k] - matched.q[k];
@@ -231,10 +215,7 @@ void Reconciler::handleTelemetry(const TwinTelemetryMsg& msg) {
     }
     double e_norm = std::sqrt(e_norm_sq);
 
-    // ── Forward replay Phi_fhat: seed the scratch mjData at y, then
-    // re-step through the buffered ctrl history from the matched sample to
-    // now -- reusing the twin's actually-applied low-level commands rather
-    // than re-deriving the control law inside the reconciler.
+    // forward replay: seed scratch mjData at y, re-step the buffered ctrl up to now
     mjData* rd = static_cast<mjData*>(replay_data_);
     for (size_t d = 0; d < device_names_.size(); ++d) {
         std::vector<double> q0 (y     + d * kArmDof, y     + (d + 1) * kArmDof);
@@ -247,7 +228,7 @@ void Reconciler::handleTelemetry(const TwinTelemetryMsg& msg) {
             std::vector<double> ctrl(s.ctrl + d * kArmDof, s.ctrl + (d + 1) * kArmDof);
             sim_->replaySetCtrl(rd, device_names_[d], ctrl);
         }
-        sim_->replayAdvance(rd);  // one MuJoCo step per buffered sample in the window
+        sim_->replayAdvance(rd);
     }
 
     double x_tilde[kTwinDof]     = {};
@@ -261,19 +242,11 @@ void Reconciler::handleTelemetry(const TwinTelemetryMsg& msg) {
             x_tilde_dot[d * kArmDof + i] = dq[i];
     }
 
-    // ── Correction (section 4): filtered pull of the twin's *current*
-    // state toward x_tilde. The newest buffered sample is used as the
-    // proxy for "current" twin state (it lags true-current by at most one
-    // control tick -- negligible relative to correction_tau_s).
+    // pull current twin state (newest sample) toward x_tilde
     const TwinStateSample& x_hat_now = buffer_.at(n - 1);
 
     bool hard = e_norm > cfg_.epsilon_hard_rad;
-    // K = 1 - e^{-Delta_t/tau}; Delta_t ~= 1/reconciler_hz between ticks.
-    // Below epsilon_hard, corrections dissolve into this servo pull and
-    // fall below epsilon_soft/visual perception at steady state. Above
-    // epsilon_hard the model broke (unexpected contact, safety stop, joint
-    // limit) -- K=1 forces an immediate resync, flagged for a visible UI cue
-    // via regime=Hard (see Stats::last_regime / hard_resync_count).
+    // K = 1 - exp(-dt/tau), K = 1 (hard resync) above epsilon_hard
     double K = hard ? 1.0
                      : (1.0 - std::exp(-1.0 / (std::max(1, cfg_.reconciler_hz) * cfg_.correction_tau_s)));
 

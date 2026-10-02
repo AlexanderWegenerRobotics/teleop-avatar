@@ -9,15 +9,7 @@ namespace {
 
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
-// mj_contactForce returns a contact's 6D wrench in the contact frame, applied
-// to body(geom2) with the reaction on body(geom1). VERIFIED rather than
-// assumed: against a rotated, offset two-link arm pressed into a fixed block,
-// +1 makes tau_contact + tau_friction + tau_limit reconcile with
-// qfrc_constraint to 4e-14, and -1 leaves a residual of 64 Nm.
-//
-// That reconciliation is also the standing check in the log: the four tau_*
-// column groups must sum, and a sign error anywhere shows up there without a
-// rerun.
+// mj_contactForce acts on body(geom2), reaction on body(geom1); +1 verified against qfrc_constraint
 constexpr double kContactSignBody2 = +1.0;
 
 template <typename T, std::size_t N>
@@ -61,10 +53,6 @@ std::string wrenchTruthRow(const WrenchTruthEntry& e) {
     return r.str();
 }
 
-// ---------------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------------
-
 std::unique_ptr<WrenchTruth> WrenchTruth::create(
     const mjModel* m,
     const YAML::Node& sim_config,
@@ -88,15 +76,11 @@ std::unique_ptr<WrenchTruth> WrenchTruth::create(
     }
 
     const double rate_hz = gt["rate_hz"] ? gt["rate_hz"].as<double>() : 200.0;
-    // One file per arm, named like the existing per-arm logs so they sit
-    // together: ../log/arm_left_wrench_truth.csv.
+    // one file per arm, e.g. ../log/arm_left_wrench_truth.csv
     const std::string log_dir = gt["log_dir"]
         ? gt["log_dir"].as<std::string>() : std::string("../log/");
 
-    // base_pose lives in robot_config, per device. It is the ONLY thing that
-    // relates MuJoCo's world frame to the frame O_F_ext_hat_K is expressed in:
-    // franka::Model builds its pinocchio model from the URDF root, so pinocchio's
-    // world IS the arm base, and base_quat is used there only to rotate gravity.
+    // base_pose from robot_config is the only link between MuJoCo world and the arm base frame
     auto findRobotDevice = [&robot_config](const std::string& name) -> YAML::Node {
         if (robot_config["devices"]) {
             for (const auto& d : robot_config["devices"])
@@ -125,10 +109,7 @@ std::unique_ptr<WrenchTruth> WrenchTruth::create(
         a.jnt  = it->second;
         for (int j : a.jnt) a.dof.push_back(m->jnt_dofadr[j]);
 
-        // Subtree anchor: the body carrying this arm's first joint. Everything
-        // attached downstream -- links, the hand device, the wrist camera -- is
-        // a descendant, so contacts on any of them are picked up without a body
-        // list that would rot the moment the end effector changes.
+        // body of the first joint, everything attached downstream counts as this arm
         a.root_body = m->jnt_bodyid[a.jnt.front()];
 
         const YAML::Node rdev = findRobotDevice(name);
@@ -151,8 +132,7 @@ std::unique_ptr<WrenchTruth> WrenchTruth::create(
                       << std::endl;
         }
 
-        // Optional. Joint space needs nothing but the DOF list, so a missing or
-        // misspelt EE body costs only the Cartesian columns, not the run.
+        // optional, without it only the Cartesian columns are missing
         if (dev_node["ee_body"]) {
             const std::string ee = dev_node["ee_body"].as<std::string>();
             a.ee_body = mj_name2id(m, mjOBJ_BODY, ee.c_str());
@@ -166,8 +146,7 @@ std::unique_ptr<WrenchTruth> WrenchTruth::create(
                       << "' - joint-space columns only." << std::endl;
         }
 
-        // A bad path must not take the simulation down with it: this is a
-        // validation aid, not a dependency.
+        // bad path must not crash the sim
         const std::string path = log_dir + name + "_wrench_truth.csv";
         try {
             a.logger = std::make_unique<DataLogger<WrenchTruthEntry>>(
@@ -217,10 +196,6 @@ bool WrenchTruth::isInSubtree(int body, int root) const {
     return body == root;
 }
 
-// ---------------------------------------------------------------------------
-// Sampling
-// ---------------------------------------------------------------------------
-
 void WrenchTruth::restartLoggers(const std::string& folder) {
     for (Arm& a : arms_) {
         if (!a.logger) continue;
@@ -238,8 +213,7 @@ void WrenchTruth::restartLoggers(const std::string& folder) {
 void WrenchTruth::sample(const mjData* d) {
     if (!d) return;
     if (d->time < next_sample_time_) return;
-    // Anchor forward from the deadline, and resynchronise after a reset or a
-    // seek so a rewound clock does not stall sampling until it catches up.
+    // resync after reset/seek
     next_sample_time_ = (d->time > next_sample_time_ + 1.0) ? d->time + period_
                                                             : next_sample_time_ + period_;
 
@@ -253,17 +227,13 @@ void WrenchTruth::sample(const mjData* d) {
 
         const std::size_t n = a.dof.size();
 
-        // --- qfrc_constraint verbatim, and the two parts of it that are not
-        //     contact. MuJoCo solves dry friction and joint limits as
-        //     constraints too, so the raw column is not external force.
+        // qfrc_constraint, split off the friction and limit parts
         for (std::size_t i = 0; i < n && i < 7; ++i)
             e.tau_constraint[i] = d->qfrc_constraint[a.dof[i]];
 
         for (int k = 0; k < d->nefc; ++k) {
             const int type = d->efc_type[k];
-            // Both of these have a constraint Jacobian row that is a unit
-            // vector on a single DOF, so their contribution to qfrc_constraint
-            // is just efc_force -- no need to touch efc_J, sparse or dense.
+            // single-DOF unit Jacobian rows, so contribution = efc_force
             if (type == mjCNSTR_FRICTION_DOF) {
                 const int dof = d->efc_id[k];
                 for (std::size_t i = 0; i < n && i < 7; ++i)
@@ -272,11 +242,7 @@ void WrenchTruth::sample(const mjData* d) {
                 const int jid = d->efc_id[k];
                 if (jid >= 0 && jid < m_->njnt) {
                     const int dof = m_->jnt_dofadr[jid];
-                    // A limit row's Jacobian is -1 at the upper limit and +1 at
-                    // the lower one, so the sign has to come from which limit is
-                    // active -- taking efc_force verbatim gets the upper limit
-                    // exactly backwards. Verified against qfrc_constraint by
-                    // driving a joint into each stop in turn.
+                    // Jacobian is -1 at upper limit, +1 at lower, so sign depends on which limit is active
                     const double mid = 0.5 * (m_->jnt_range[2 * jid] + m_->jnt_range[2 * jid + 1]);
                     const double s   = (d->qpos[m_->jnt_qposadr[jid]] > mid) ? -1.0 : 1.0;
                     for (std::size_t i = 0; i < n && i < 7; ++i)
@@ -285,7 +251,7 @@ void WrenchTruth::sample(const mjData* d) {
             }
         }
 
-        // --- contacts -> joint torque, and the net wrench about the EE -------
+        // contacts -> joint torque and net wrench about the EE
         Eigen::Vector3d F_w = Eigen::Vector3d::Zero();
         Eigen::Vector3d M_w = Eigen::Vector3d::Zero();
 
@@ -301,13 +267,12 @@ void WrenchTruth::sample(const mjData* d) {
 
             const bool in1 = isInSubtree(b1, a.root_body);
             const bool in2 = isInSubtree(b2, a.root_body);
-            if (!in1 && !in2) continue;   // nothing to do with this arm
+            if (!in1 && !in2) continue;
 
             mjtNum w_contact[6] = {};
             mj_contactForce(m_, d, c, w_contact);
 
-            // Contact frame -> world. contact.frame holds the frame axes as
-            // rows, so world = frame^T * contact.
+            // contact.frame has axes as rows, so world = frame^T * contact
             mjtNum f_w[3], t_w[3];
             mju_mulMatTVec(f_w, con.frame, w_contact,     3, 3);
             mju_mulMatTVec(t_w, con.frame, w_contact + 3, 3, 3);
@@ -315,10 +280,7 @@ void WrenchTruth::sample(const mjData* d) {
             const Eigen::Vector3d fw(f_w[0], f_w[1], f_w[2]);
             const Eigen::Vector3d tw(t_w[0], t_w[1], t_w[2]);
 
-            // Jacobians at the contact point for both bodies. Differencing them
-            // makes a self-collision (both bodies on this arm) cancel correctly
-            // and makes a contact against the world cost nothing extra: the
-            // static body's Jacobian is zero.
+            // difference of both bodies' Jacobians handles self-collision and world contacts
             mj_jac(m_, d, jacp1_.data(), jacr1_.data(), con.pos, b1);
             mj_jac(m_, d, jacp2_.data(), jacr2_.data(), con.pos, b2);
 
@@ -335,10 +297,7 @@ void WrenchTruth::sample(const mjData* d) {
             ++e.ncon_arm;
 
             if (want_cart && (in1 != in2)) {
-                // Force ON the arm. A contact with both bodies on this arm is
-                // internal and contributes nothing to the net external wrench,
-                // which is why it is excluded here but NOT above -- in joint
-                // space a self-collision does produce real joint torque.
+                // force on the arm, self-collisions are internal and excluded here (not in joint space)
                 const double s = in2 ? kContactSignBody2 : -kContactSignBody2;
                 const Eigen::Vector3d p(con.pos[0], con.pos[1], con.pos[2]);
                 F_w += s * fw;
@@ -357,10 +316,9 @@ void WrenchTruth::sample(const mjData* d) {
                 e.ref_point_world[i] = ref[i];
             }
 
-            // EE pose in the arm base frame, for the kinematic cross-check
-            // against O_T_EE in arm.csv.
+            // EE pose in base frame, cross-check against O_T_EE
             Eigen::Matrix3d R_we;
-            // mjData::xmat is row-major; Eigen defaults to column-major.
+            // xmat is row-major
             for (int r = 0; r < 3; ++r)
                 for (int cc = 0; cc < 3; ++cc)
                     R_we(r, cc) = d->xmat[9 * a.ee_body + 3 * r + cc];

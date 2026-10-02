@@ -8,8 +8,7 @@
 #include <gst/gst.h>
 #include <yaml-cpp/yaml.h>
 
-// Winsock must be initialised before any socket() call on Windows.
-// Include platform_socket.hpp first so winsock2.h beats any windows.h pull-in.
+// must come before anything that pulls in windows.h
 #include "network/platform_socket.hpp"
 
 #include "pipeline/camera_channel.hpp"
@@ -17,19 +16,11 @@
 #include "twin/role.hpp"
 #include "twin/config_overlay.hpp"
 
-// ---------------------------------------------------------------------------
-// Global state (signal handler needs access)
-// ---------------------------------------------------------------------------
-
 static std::vector<std::unique_ptr<CameraChannel>> g_channels;
 static std::unique_ptr<EpisodeController>           g_episode_ctrl;
 static std::atomic<bool>                            g_running{true};
 
 static void onSignal(int) { g_running = false; }
-
-// ---------------------------------------------------------------------------
-// YAML parsing helpers
-// ---------------------------------------------------------------------------
 
 static StreamerConfig parseStreamConfig(const YAML::Node& n, int default_fps) {
     StreamerConfig c;
@@ -81,7 +72,6 @@ static CameraChannelConfig parseCameraConfig(const YAML::Node& n) {
         c.stream_enabled = n["stream"]["enabled"].as<bool>(false);
         if (c.stream_enabled) {
             c.stream = parseStreamConfig(n["stream"], c.fps);
-            // Propagate source dims so the streamer can rescale if needed.
             c.stream.source_width  = c.source_width;
             c.stream.source_height = c.source_height;
         }
@@ -96,10 +86,6 @@ static CameraChannelConfig parseCameraConfig(const YAML::Node& n) {
     return c;
 }
 
-// ---------------------------------------------------------------------------
-// main
-// ---------------------------------------------------------------------------
-
 int main(int argc, char** argv) {
 #ifdef _WIN32
     WSADATA wsa{};
@@ -109,11 +95,7 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    // --avatar/--twin select which role's config sub-tree to use, same flag
-    // and same meaning as avatar.exe (see twin/role.hpp) -- launch.bat passes
-    // the same flag to both processes. Any other positional argument is
-    // treated as a config.yaml path override (legacy behavior, kept for
-    // scripts/tests that relied on it).
+    // --avatar/--twin pick the role, any other arg overrides the config path
     std::string global_config_path = "../config/config.yaml";
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -166,11 +148,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Twin-role shm/port overlay (see twin/config_overlay.hpp) -- lets avatar
-    // and twin each run their own avatar_pipeline locally from the same
-    // pipeline_config file without shm-name/port collisions. No-op for
-    // role == Avatar, and for role == Twin when the config doesn't define
-    // streamer_overlay (real cross-continent deployment).
+    // twin overlay avoids shm/port collisions when avatar and twin run on one machine
     if (resolved.role == Role::Twin && resolved.node["streamer_overlay"]) {
         try {
             applyTwinStreamerOverlay(cfg, resolved.node["streamer_overlay"].as<std::string>());
@@ -185,14 +163,11 @@ int main(int argc, char** argv) {
         }
     }
 
-    // GStreamer must be initialised once before any VideoStreamer is constructed.
     gst_init(nullptr, nullptr);
 
-    // ── Stereo mode flag ──────────────────────────────────────────────────
     bool stereo = cfg["stereo"].as<bool>(false);
     std::cout << "[INFO] Stereo mode: " << (stereo ? "enabled" : "disabled") << std::endl;
 
-    // ── Build camera channels ──────────────────────────────────────────────
     if (!cfg["cameras"] || !cfg["cameras"].IsSequence()) {
         std::cerr << "[ERROR] 'cameras' sequence missing from config" << std::endl;
         return 1;
@@ -200,11 +175,8 @@ int main(int argc, char** argv) {
 
     try {
         for (const auto& cam_node : cfg["cameras"]) {
-            // Filter by eye tag: in mono mode keep "mono" entries (or entries
-            // with no eye key); in stereo mode keep "left" and "right" entries.
             std::string eye = cam_node["eye"].as<std::string>("mono");
-            // "stereo" = single side-by-side combined stream (new approach).
-            // "left"/"right" = legacy two-stream approach (kept for compatibility).
+            // "stereo" = combined side-by-side stream, "left"/"right" = two separate streams
             bool active = (eye == "aux") ||
                           (stereo ? (eye == "stereo" || eye == "left" || eye == "right")
                                   : (eye == "mono"));
@@ -228,7 +200,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // ── Episode controller ─────────────────────────────────────────────────
     int ep_port = cfg["episode_listener_port"].as<int>(7000);
     g_episode_ctrl = std::make_unique<EpisodeController>(ep_port);
 
@@ -241,11 +212,9 @@ int main(int argc, char** argv) {
         for (auto& ch : g_channels) ch->onEpisodeEnd(sess, idx, reason);
     });
 
-    // ── Signal handling ────────────────────────────────────────────────────
     std::signal(SIGINT,  onSignal);
     std::signal(SIGTERM, onSignal);
 
-    // ── Start ──────────────────────────────────────────────────────────────
     try {
         g_episode_ctrl->start();
         for (auto& ch : g_channels) ch->start();
@@ -260,7 +229,6 @@ int main(int argc, char** argv) {
         std::cerr << "[ERROR] " << e.what() << std::endl;
     }
 
-    // ── Shutdown ───────────────────────────────────────────────────────────
     std::cout << "[INFO] Shutting down..." << std::endl;
     for (auto& ch : g_channels) ch->stop();
     g_episode_ctrl->stop();

@@ -67,8 +67,7 @@ Driver::Error Driver::control(const Driver::CallbackFunctionTorque& driver_callb
     sim->setDeviceActive(name_, false);
     return return_val;
 #else
-    // Placeholder for real TUM head hardware control loop.
-    // Replace with actual hardware driver calls when head hardware is available.
+    // placeholder until the real head hardware driver exists
     Driver::Error return_val = Driver::Error::kNoError;
     while (bRunning) {
         driver_callback_torque(state, command);

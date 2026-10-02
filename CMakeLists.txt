@@ -8,25 +8,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/cmake/options.local.cmake")
     include(${CMAKE_SOURCE_DIR}/cmake/options.local.cmake)
 endif()
 
-# Default to an OPTIMISED build, not Debug.
-#
-# This is a 1 kHz torque-control loop whose inner loop is Eigen and Pinocchio --
-# both header-only and both entirely dependent on inlining. Measured on one
-# cartesianImpedanceControl tick's Eigen half alone (7x7 LDLT with 7 RHS, the
-# 6x6 solve, the nullspace projector): 200 us at -g versus 1.8 us at
-# -O3 -DNDEBUG. 111x. Pinocchio's crba/computeCoriolisMatrix/Jacobians are more
-# templated still.
-#
-# With the old Debug default the control loop body cost ~1.7 ms, so it delivered
-# 579 Hz against a 1 kHz target -- and because the deadline was missed every
-# tick, every latency measured on such a build was inflated with no warning that
-# anything was wrong. This only ever bit single-config generators (Makefiles,
-# Ninja): on Windows the multi-config generators ignore CMAKE_BUILD_TYPE and
-# pick at build time, which is why the same tree behaved correctly there.
-#
-# RelWithDebInfo rather than Release: -O2 -g -DNDEBUG is within a few percent of
-# -O3 here and keeps usable stack traces for a system that has to be debugged
-# when it faults on hardware.
+# default to optimized build, Debug is ~100x slower in Eigen/Pinocchio and misses 1 kHz
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
   message(STATUS "CMAKE_BUILD_TYPE not set -- defaulting to RelWithDebInfo")
@@ -46,11 +28,8 @@ add_definitions(-DCOAL_DISABLE_HPP_FCL_WARNINGS)
 # ── Platform setup ────────────────────────────────────────────────────────────
 if(WIN32)
     message(STATUS "Platform: Windows")
-    # M_PI, NOMINMAX, minimum Windows version (7+)
     add_compile_definitions(_USE_MATH_DEFINES NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601)
-    # Suppress common MSVC noise
     add_compile_options(/wd4244 /wd4267 /wd4996 /wd4305)
-    # Force winsock2.h to be the first header in every TU
     add_compile_options(/FI "${CMAKE_SOURCE_DIR}/include/win_preamble.hpp")
 elseif(APPLE)
     message(STATUS "Platform: macOS")
@@ -59,16 +38,12 @@ elseif(UNIX)
 endif()
 
 # ── Conda/miniforge prefix ────────────────────────────────────────────────────
-# When pinocchio (and other conda packages) are needed, prepend the active conda
-# env to CMAKE_PREFIX_PATH so we get consistent package versions (e.g. yaml-cpp 0.8
-# instead of the Ubuntu 22.04 system yaml-cpp 0.7 which lacks the :: target).
+# prefer conda env packages (e.g. yaml-cpp 0.8 over system 0.7)
 if(DEFINED ENV{CONDA_PREFIX})
     list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
 elseif(EXISTS "/home/ceti/miniforge3")
     list(PREPEND CMAKE_PREFIX_PATH "/home/ceti/miniforge3")
 endif()
-# Prefer locally-installed packages (e.g. newer Poco with move semantics)
-# over system packages to keep headers and libraries consistent.
 if(UNIX AND EXISTS "/usr/local/lib/cmake")
     list(PREPEND CMAKE_PREFIX_PATH "/usr/local")
 endif()
@@ -85,14 +60,12 @@ if(BUILD_WITH_MUJOCO)
     find_package(tinyxml2 REQUIRED)
     find_package(glfw3 REQUIRED)
 
-    # MuJoCo root: cmake arg (-DMUJOCO_ROOT=...) > env var > platform default
     if(NOT DEFINED MUJOCO_ROOT)
         if(DEFINED ENV{MUJOCO_ROOT})
             set(MUJOCO_ROOT "$ENV{MUJOCO_ROOT}")
         elseif(WIN32)
             set(MUJOCO_ROOT "C:/dev/mujoco-3.14.0")
         else()
-            # Mac and Linux share the same convention from the original dev setup
             set(MUJOCO_ROOT "$ENV{HOME}/Workspace/tools/mujoco")
         endif()
     endif()
@@ -101,23 +74,18 @@ if(BUILD_WITH_MUJOCO)
     add_library(mujoco SHARED IMPORTED GLOBAL)
 
     if(WIN32)
-        # Windows: import lib + DLL
         set_target_properties(mujoco PROPERTIES
             IMPORTED_IMPLIB               "${MUJOCO_ROOT}/lib/mujoco.lib"
             IMPORTED_LOCATION             "${MUJOCO_ROOT}/bin/mujoco.dll"
             INTERFACE_INCLUDE_DIRECTORIES "${MUJOCO_ROOT}/include"
         )
     elseif(APPLE)
-        # macOS: support both flat install (lib/libmujoco*.dylib + include/) and
-        # framework bundle (Versions/A/libmujoco*.dylib + Headers/)
+        # flat install or framework bundle
         file(GLOB _mj_lib LIST_DIRECTORIES false
             "${MUJOCO_ROOT}/lib/libmujoco*.dylib"
             "${MUJOCO_ROOT}/Versions/A/libmujoco*.dylib"
         )
         list(GET _mj_lib 0 _mj_lib_path)
-        # Flat install: include/mujoco/mujoco.h → point to include/
-        # Framework bundle: mujoco symlink → Headers/, so <mujoco/mujoco.h>
-        #   resolves via MUJOCO_ROOT/mujoco/mujoco.h → Headers/mujoco.h
         if(EXISTS "${MUJOCO_ROOT}/include")
             set(_mj_include "${MUJOCO_ROOT}/include")
         else()
@@ -128,7 +96,6 @@ if(BUILD_WITH_MUJOCO)
             INTERFACE_INCLUDE_DIRECTORIES "${_mj_include}"
         )
     else()
-        # Linux: glob for the versioned .so
         file(GLOB _mj_lib LIST_DIRECTORIES false "${MUJOCO_ROOT}/lib/libmujoco.so.*")
         list(GET _mj_lib 0 _mj_lib_path)
         set_target_properties(mujoco PROPERTIES
@@ -139,8 +106,6 @@ if(BUILD_WITH_MUJOCO)
 
 endif()
 
-# Pinocchio provides our custom dynamics model (franka::Model in sim_env/model.hpp).
-# Needed for MuJoCo simulation and retained for real-robot builds for now.
 if(BUILD_WITH_MUJOCO)
     set(COAL_DISABLE_HPP_FCL_WARNINGS ON CACHE BOOL "" FORCE)
     find_package(pinocchio REQUIRED)
@@ -150,9 +115,7 @@ if(BUILD_WITH_FRANKA)
     find_package(Franka REQUIRED)
 endif()
 
-# PkgConfig and GStreamer only needed for the streamer target
 if(BUILD_STREAMER)
-    # On Windows, point pkg-config at the GStreamer MSVC development tree
     if(WIN32 AND DEFINED ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64})
         set(ENV{PKG_CONFIG_PATH}
             "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}/lib/pkgconfig")
@@ -220,8 +183,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 if(WIN32)
-    # Winsock (required by Poco::Net and our UDP code)
-    # winmm: timeBeginPeriod/timeEndPeriod for 1ms timer resolution
+    # winmm for 1ms timer resolution
     target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 mswsock winmm)
 endif()
 
@@ -241,8 +203,7 @@ if(BUILD_WITH_MUJOCO)
     )
     target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_MUJOCO)
 
-    # On Windows, ensure the tinyxml2 DLL used at link time is also the one
-    # deployed next to the exe — prevents ABI mismatch when multiple versions exist.
+    # deploy the same tinyxml2 DLL we link against
     if(WIN32)
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -262,7 +223,6 @@ endif()
 if(BUILD_STREAMER)
     find_package(PkgConfig REQUIRED)
     if(UNIX AND NOT APPLE)
-        # Use pkg-config to find the system serial HDF5, avoiding Windows/conda paths
         pkg_check_modules(HDF5_SYS REQUIRED hdf5-serial)
         set(HDF5_INCLUDE_DIRS ${HDF5_SYS_INCLUDE_DIRS})
         set(HDF5_C_LIBRARIES  ${HDF5_SYS_LIBRARIES})
@@ -336,7 +296,6 @@ if(BUILD_STREAMER)
 
     target_compile_definitions(avatar_pipeline PRIVATE BUILD_STREAMER)
 
-    # On Windows, tell the linker where GStreamer's import libs live
     if(WIN32 AND DEFINED ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64})
         target_link_directories(avatar_pipeline PRIVATE
             "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}/lib")

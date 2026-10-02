@@ -89,7 +89,6 @@ void StreamQualityController::run() {
         return;
     }
 
-    // Set non-blocking
 #ifdef _WIN32
     u_long nb = 1;
     ioctlsocket(recv_fd, FIONBIO, &nb);

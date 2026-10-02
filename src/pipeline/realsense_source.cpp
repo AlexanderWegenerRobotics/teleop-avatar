@@ -43,12 +43,10 @@ static float readOpt(const rs2::sensor& s, rs2_option o) {
 }
 
 RealSenseSource::~RealSenseSource() {
-    // Stop streaming thread and pipeline cleanly.
     stop();
 }
 
-// Latency-relevant colour sensor settings. Every option is checked with supports()
-// and wrapped in try/catch: D435i and D455 expose slightly different option sets.
+// Latency-related color sensor options. D435i and D455 support different sets, so check each.
 void RealSenseSource::configureColorSensor(rs2::pipeline_profile& profile) {
     try {
         rs2::device dev = profile.get_device();
@@ -61,8 +59,7 @@ void RealSenseSource::configureColorSensor(rs2::pipeline_profile& profile) {
         for (rs2::sensor& s : dev.query_sensors()) {
             if (!s.is<rs2::color_sensor>()) continue;
 
-            // Auto-exposure priority ON lets the camera drop below the requested fps in
-            // dim light to lengthen exposure. Always off: fps must stay fixed.
+            // off so the camera never drops fps to lengthen exposure
             if (s.supports(RS2_OPTION_AUTO_EXPOSURE_PRIORITY)) {
                 s.set_option(RS2_OPTION_AUTO_EXPOSURE_PRIORITY, 0.f);
                 std::cout << "[RealSenseSource] auto_exposure_priority=0" << std::endl;
@@ -109,7 +106,6 @@ void RealSenseSource::configureColorSensor(rs2::pipeline_profile& profile) {
 }
 
 void RealSenseSource::start(FrameCallback cb) {
-    // Open pipeline once and launch capture thread.
     cb_ = cb;
 
     rs2::config cfg;
@@ -133,7 +129,6 @@ void RealSenseSource::start(FrameCallback cb) {
 }
 
 void RealSenseSource::stop() {
-    // Signal thread to exit, join, then stop pipeline.
     bRunning_ = false;
     if (thread_.joinable()) thread_.join();
     try { pipe_.stop(); } catch (...) {}
@@ -143,11 +138,7 @@ uint32_t RealSenseSource::width()  const { return static_cast<uint32_t>(width_);
 uint32_t RealSenseSource::height() const { return static_cast<uint32_t>(height_); }
 
 void RealSenseSource::run() {
-    // Pull color frames from pipeline and forward via callback.
-
-    // Periodic camera-latency report: sensor timestamp -> frame in our hands.
-    // This is the part of the video path that the embedded pixel timestamp
-    // (set at encode push) cannot see.
+    // periodically report sensor timestamp -> arrival latency
     constexpr int kReportEvery = 150;              // ~5 s at 30 fps
     int      n = 0;
     double   sum_ms = 0.0, min_ms = 1e9, max_ms = 0.0;
@@ -173,11 +164,8 @@ void RealSenseSource::run() {
             domain_logged = true;
         }
 
-        // SYSTEM_TIME and GLOBAL_TIME are both host wall-clock (system_clock) in ms:
-        // GLOBAL_TIME is the device's hardware timestamp translated into host time by
-        // librealsense. Either one therefore includes exposure/readout/USB delivery.
-        // HARDWARE_CLOCK is the device's free-running clock -> fall back to arrival.
-        // Sanity bound: if the translated time is >1 s away from now, don't trust it.
+        // SYSTEM/GLOBAL_TIME are host wall clock in ms, HARDWARE_CLOCK is not -> use arrival.
+        // ignore sensor time if it is more than 1 s off from now
         uint64_t capture_time_ns = arrival_ns;
         bool     have_sensor_time = false;
         if (domain == RS2_TIMESTAMP_DOMAIN_SYSTEM_TIME || domain == RS2_TIMESTAMP_DOMAIN_GLOBAL_TIME) {

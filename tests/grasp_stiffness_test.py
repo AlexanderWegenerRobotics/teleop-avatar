@@ -1,19 +1,7 @@
 #!/usr/bin/env python3
-"""Grasp stiffness regression test for models/mujoco/robots/franka_fr3/hand.xml.
+"""Grasp stiffness regression test for franka_fr3/hand.xml on the FMB bar; expect moved < 0.3 mm, twist < 1 deg.
 
-Loads the real hand model (meshes included), fixes it in an otherwise empty
-world with the same <option> the SceneBuilder generates, closes it on a
-37 x 37 x 200 mm bar (FMB board-1 bar: 0.2738 kg, PLA friction 0.3), then
-loads the bar and reports how far it moves in the fingers. Run it after any
-change to the hand model, the SceneBuilder <option>, or the timestep.
-
-    python tests/grasp_stiffness_test.py            # defaults: dt 1 ms
-    python tests/grasp_stiffness_test.py --dt 0.0005
-
-Expected with the 2026-09 hand model (kp 30 kN/m, 70 N cap, stiff pads,
-impratio 10, dt 1 ms): every "moved" number below 0.3 mm, twist under 1 deg,
-10 s hold drift under 0.2 mm, close 80 -> 37 mm in roughly 0.4 s.
-The pre-2026-09 model (kp 1 kN/m, soft pads) dropped the bar at 20 N.
+    python tests/grasp_stiffness_test.py [--dt 0.0005]
 """
 import argparse
 import os
@@ -25,7 +13,7 @@ import mujoco
 HERE = os.path.dirname(os.path.abspath(__file__))
 HAND_XML = os.path.join(HERE, "..", "models", "mujoco", "robots", "franka_fr3", "hand.xml")
 
-# Same as Simulation::setGripper: width -> ctrl in (0, 255) on the half-width.
+# same mapping as Simulation::setGripper, ctrl 0..255 on half-width
 def ctrl_for_width(w):
     half = np.clip(w, 0.006, 0.08) / 2.0
     return half / 0.04 * 255.0
@@ -80,7 +68,7 @@ def main():
     m.opt.gravity[:] = 0
     step(0.05)
 
-    # close exactly as ArmControl::applyGripper does in sim: setWidth(0)
+    # close like ArmControl::applyGripper in sim: setWidth(0)
     d.ctrl[0] = ctrl_for_width(0.0)
     t_close = None
     for i in range(int(1.5 / dt)):

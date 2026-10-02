@@ -1,13 +1,13 @@
-episode_listener_port: 8100   # base: 7100
+episode_listener_port: 8100
 
 stream_cameras:
   - camera:   "desk_cam"
-    shm_name: "avatar_cam_twin"   # base: avatar_cam
+    shm_name: "avatar_cam_twin"
 
 cameras:
   - name:     "desk_cam"
-    shm_name: "avatar_cam_twin"   # base: avatar_cam
+    shm_name: "avatar_cam_twin"
     stream:
-      port:          5904   # base: 5004
-      feedback_port: 5905   # base: 5005
-      status_port:   5907   # base: 5007
+      port:          5904
+      feedback_port: 5905
+      status_port:   5907

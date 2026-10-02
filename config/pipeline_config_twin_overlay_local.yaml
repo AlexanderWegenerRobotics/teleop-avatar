@@ -1,47 +1,47 @@
-episode_listener_port: 8100   # base: 7100
+episode_listener_port: 8100
 
 stream_cameras:
   - camera:   "head_head_cam"
-    shm_name: "avatar_cam_twin"              # base: avatar_cam
+    shm_name: "avatar_cam_twin"
 
   - camera:   "head_head_cam_left"
-    shm_name: "avatar_cam_left_twin"         # base: avatar_cam_left
+    shm_name: "avatar_cam_left_twin"
 
   - camera:   "head_head_cam_right"
-    shm_name: "avatar_cam_right_twin"        # base: avatar_cam_right
+    shm_name: "avatar_cam_right_twin"
 
   - camera:   "camera_right_rgb"
-    shm_name: "avatar_wrist_cam_right_twin"  # base: avatar_wrist_cam_right
+    shm_name: "avatar_wrist_cam_right_twin"
 
   - camera:   "camera_left_rgb"
-    shm_name: "avatar_wrist_cam_left_twin"   # base: avatar_wrist_cam_left
+    shm_name: "avatar_wrist_cam_left_twin"
 
 cameras:
   - name:     "head_cam"
-    shm_name: "avatar_cam_twin"              # base: avatar_cam
+    shm_name: "avatar_cam_twin"
     stream:
-      port:          5904   # base: 5004
-      feedback_port: 5905   # base: 5005
-      status_port:   5907   # base: 5007
+      port:          5904
+      feedback_port: 5905
+      status_port:   5907
 
   - name:     "wrist_cam_right"
-    shm_name: "avatar_wrist_cam_right_twin"  # base: avatar_wrist_cam_right
+    shm_name: "avatar_wrist_cam_right_twin"
     stream:
-      port:          5910   # base: 5010
-      feedback_port: 5911   # base: 5011
-      status_port:   5912   # base: 5012
+      port:          5910
+      feedback_port: 5911
+      status_port:   5912
 
   - name:     "wrist_cam_left"
-    shm_name: "avatar_wrist_cam_left_twin"   # base: avatar_wrist_cam_left
+    shm_name: "avatar_wrist_cam_left_twin"
     stream:
-      port:          5913   # base: 5013
-      feedback_port: 5914   # base: 5014
-      status_port:   5915   # base: 5015
+      port:          5913
+      feedback_port: 5914
+      status_port:   5915
 
   - name:               "head_cam_stereo"
-    shm_name:           "avatar_cam_left_twin"    # base: avatar_cam_left
-    stereo_partner_shm: "avatar_cam_right_twin"   # base: avatar_cam_right
+    shm_name:           "avatar_cam_left_twin"
+    stereo_partner_shm: "avatar_cam_right_twin"
     stream:
-      port:          5904   # base: 5004
-      feedback_port: 5905   # base: 5005
-      status_port:   5907   # base: 5007
+      port:          5904
+      feedback_port: 5905
+      status_port:   5907

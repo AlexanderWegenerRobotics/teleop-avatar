@@ -53,15 +53,15 @@ struct StateSnapshot {
     float head_pan  = 0.0f;
     float head_tilt = 0.0f;
 
-    std::vector<ObjectSlot> slots;   // max 10: 2 EEF + up to 4 pick + 4 place
+    std::vector<ObjectSlot> slots;   // max 10: 2 EE + 4 pick + 4 place
 };
 
 struct GazeSampleMsg {
     uint64_t frame_id             = 0;
-    float    gaze_px_x            = 0.0f;  // native pixels as sent by the gaze client (see IntentionBuffer::fuseGaze)
+    float    gaze_px_x            = 0.0f;  // native pixels from the gaze client
     float    gaze_px_y            = 0.0f;
-    uint64_t timestamp_ns         = 0;  // operator-side capture time (sent over network)
-    uint64_t timestamp_arrival_ns = 0;  // avatar-side receive time (stamped locally, not serialised)
+    uint64_t timestamp_ns         = 0;  // operator-side capture time
+    uint64_t timestamp_arrival_ns = 0;  // avatar-side receive time, not serialised
 
     MSGPACK_DEFINE_MAP(frame_id, gaze_px_x, gaze_px_y, timestamp_ns)
 };
@@ -71,13 +71,13 @@ struct IntentionSample {
     uint64_t timestamp_ns         = 0;  // operator-side gaze capture time
     uint64_t timestamp_arrival_ns = 0;  // avatar-side gaze receive time
     bool     gaze_valid           = false;
-    float    gaze_px_x    = 0.0f;  // normalized ray coord (u-cx)/fx -- NOT a pixel; resolution/lens-agnostic
-    float    gaze_px_y    = 0.0f;  // normalized ray coord (v-cy)/fy
+    float    gaze_px_x    = 0.0f;  // normalized (u-cx)/fx, not pixels
+    float    gaze_px_y    = 0.0f;  // normalized (v-cy)/fy
     std::vector<float>       slot_belief;
     std::vector<uint8_t>     slot_types;
     std::vector<std::string> slot_names;
-    std::vector<float>       slot_px_u;      // normalized ray coord (u-cx)/fx per slot (-1000 if behind camera)
-    std::vector<float>       slot_px_v;      // normalized ray coord (v-cy)/fy per slot (-1000 if behind camera)
+    std::vector<float>       slot_px_u;      // normalized, -1000 if behind camera
+    std::vector<float>       slot_px_v;      // normalized, -1000 if behind camera
     Eigen::Isometry3d T_ee_left;
     Eigen::Isometry3d T_ee_right;
     float gripper_left  = 0.0f;
@@ -91,13 +91,13 @@ struct IntentionLogEntry {
     uint64_t timestamp_ns;          // operator-side gaze capture time
     uint64_t timestamp_arrival_ns;  // avatar-side gaze receive time
     uint8_t  gaze_valid;
-    float    gaze_px_x;  // normalized ray coord (u-cx)/fx -- NOT a pixel; resolution/lens-agnostic
+    float    gaze_px_x;  // normalized (u-cx)/fx, not pixels
     float    gaze_px_y;  // normalized ray coord (v-cy)/fy
     std::array<float,       11> slot_belief;
     std::array<uint8_t,     10> slot_types;
-    std::array<std::string, 10> slot_names;  // object/ee name per slot (episode-config order)
-    std::array<float,       10> slot_px_u;   // normalized ray coord (u-cx)/fx per slot (-1000 if behind camera)
-    std::array<float,       10> slot_px_v;   // normalized ray coord (v-cy)/fy per slot (-1000 if behind camera)
+    std::array<std::string, 10> slot_names;  // episode-config order
+    std::array<float,       10> slot_px_u;   // normalized, -1000 if behind camera
+    std::array<float,       10> slot_px_v;   // normalized, -1000 if behind camera
     std::array<double, 3> ee_left_pos;
     std::array<double, 3> ee_right_pos;
     float gripper_left;

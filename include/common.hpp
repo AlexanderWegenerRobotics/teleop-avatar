@@ -24,31 +24,13 @@ enum class GraspState : uint8_t {
     LOST = 2
 };
 
-// Which command channel is allowed to move an arm. PER ARM, deliberately: the
-// clutch is already per-arm at the interface, so the operator can correct one
-// hand while the policy keeps driving the other.
-//
-// The avatar owns this. It is the only process both the VR interface and the
-// orchestrator talk to, and the only place transmission_ and
-// transmission_absolute_ physically converge, so it is the only place that can
-// ENFORCE a mutex rather than politely request one.
-//
-// Values match EControlAuthority (teleop_vr_interface Public/Shared/AvatarTypes.h)
-// and the `authority` column in arm.csv, so one vocabulary runs end to end.
-//
-// UNSET is not a fourth mode, it is the absence of the feature: until someone
-// sends an authority_request for this arm, both channels behave exactly as they
-// did before authority existed. Without it, switching enforcement on would
-// break every existing autonomous and playback run -- they never ask for
-// authority, so a HUMAN default would gate the policy out and a POLICY default
-// would gate the operator out. The first request latches enforcement on for the
-// session and it never returns to UNSET, because returning would re-open both
-// gates at exactly the moment something has gone wrong.
+// Which channel may move an arm, per arm. Values match EControlAuthority in the VR interface.
+// UNSET = no request yet, both channels pass; the first request latches enforcement on.
 enum class CommandAuthority : uint8_t {
-    POLICY = 0,   // transmission_absolute_ only (orchestrator)
-    HUMAN  = 1,   // transmission_ only (VR interface)
-    HOLD   = 2,   // neither; the arm holds its last target
-    UNSET  = 255  // unclaimed; both channels behave as they did before
+    POLICY = 0,   // orchestrator (absolute channel)
+    HUMAN  = 1,   // VR interface
+    HOLD   = 2,   // neither, arm holds last target
+    UNSET  = 255
 };
 
 inline const char* toString(CommandAuthority a) {
@@ -103,27 +85,7 @@ using Vector2   = Eigen::Matrix<double, 2, 1>;
 struct MsgHeader {
     uint32_t sequence;
     uint64_t timestamp_ns;
-    // Wall-clock instant at which the DATA in this message was sampled, as
-    // opposed to timestamp_ns, which is stamped when the packet is handed to
-    // the socket.
-    //
-    // The two are normally within a millisecond of each other and the
-    // distinction looks academic. It is not. Arm state is published from the
-    // 200 Hz state thread while the robot is read by the 1 kHz control
-    // thread. If the control thread stops -- franka::ControlException,
-    // automaticErrorRecovery(), a blocking FAULT wait -- the state thread
-    // happily keeps transmitting the last pose it saw, with a fresh
-    // timestamp_ns and an incrementing sequence every time. Every
-    // transport-level metric on the receiving side then reports a healthy
-    // link, because there IS a healthy link; it is carrying stale data.
-    //
-    // This happened on 2026-08-09: the avatar's control loop died at
-    // t=404.7 s and the operator kept commanding it for another 2.5 s with
-    // data_msg_rate_hz pinned at 200.1 and data_latency_ms at 50.4.
-    //
-    // Consumers should compute staleness as (now - sample_time_ns) and alarm
-    // on it. Zero means the sender predates this field; treat as unknown
-    // rather than as "very stale".
+    // When the data was sampled (timestamp_ns is send time). Use for staleness; 0 = unknown.
     uint64_t sample_time_ns;
     SysState state;
     FaultCode fault_code;
@@ -135,20 +97,7 @@ struct ArmCommandMsg {
     float position[3];
     float quaternion[4];
     float gripper;
-    // Operator clutch, 1 = CLUTCHED. While clutched the operator's hand is
-    // decoupled from the setpoint: the retarget origin follows the hand, the
-    // commanded pose stops advancing, and the operator is repositioning their
-    // arm rather than demonstrating anything. Commands are still sent, so the
-    // sequence numbering stays continuous through a clutch.
-    //
-    // On the wire purely so the avatar can log it. Reconstructing it later
-    // means joining the avatar's per-episode files against one continuous
-    // operator-side stream recorded on another continent's clock, which is
-    // not a join worth trusting for training data.
-    //
-    // Senders that are never clutched (orchestrator playback, the autonomous
-    // policy path) send 0.
-    uint8_t clutch;
+    uint8_t clutch;   // 1 = clutched, only sent for logging
 };
  
 struct ArmStateMsg {
@@ -160,40 +109,10 @@ struct ArmStateMsg {
     uint8_t recovering;
     float gripper_width;
     GraspState grasp_state;
-    // header.sequence of the most recent ArmCommandMsg this arm actually
-    // CONSUMED (not merely received). Echoed back so the operator side can
-    // measure round-trip latency against its own clock.
-    //
-    // Every other latency figure in this system is a difference between
-    // timestamps taken on two different machines, so it carries the hosts'
-    // clock offset as an unknown additive error -- and that offset is the same
-    // order of magnitude as the latency being measured. Echoing the sequence
-    // lets the interface compute
-    //     rtt = receive_time - send_time(applied_cmd_sequence)
-    // entirely on one clock, where the offset cancels exactly.
-    //
-    // 0 = no command consumed yet (e.g. not ENGAGED). Treat as unknown rather
-    // than as zero latency.
+    // Sequence of the last consumed command, for single-clock RTT. 0 = none yet.
     uint32_t applied_cmd_sequence;
-    // Network-delay echo. applied_cmd_sequence above measures command-to-
-    // effect: its round trip includes up to one control tick plus up to one
-    // state period (5 ms at 200 Hz) that the command spends waiting INSIDE the
-    // avatar, so halving it overstates the network by a few ms, and it only
-    // advances while a command is actually consumed.
-    //
-    // These two let the interface separate the wire from the avatar:
-    //   echo_cmd_sequence  header.sequence of the newest ArmCommandMsg this
-    //                      stream has RECEIVED (consumed or not)
-    //   echo_hold_us       microseconds between that command arriving at the
-    //                      avatar's socket and THIS packet being sent, taken
-    //                      on the avatar's clock
-    // so, entirely on the interface's clock,
-    //   network_rtt = (recv_time - send_time(echo_cmd_sequence)) - echo_hold_us
-    //   network one-way delay = network_rtt / 2
-    // Neither host's clock offset enters. Filled by UdpStream::doSend at the
-    // moment of sending, so the hold includes the send-thread wait.
-    //
-    // 0 / 0 = nothing received yet. Treat as unknown, not as zero delay.
+    // Network-delay echo: newest received cmd seq + how long it sat here (us, avatar clock).
+    // network_rtt = (recv_time - send_time(echo_cmd_sequence)) - echo_hold_us. 0/0 = unknown.
     uint32_t echo_cmd_sequence;
     uint32_t echo_hold_us;
 };
@@ -212,18 +131,10 @@ struct HeadStateMsg {
  
 #pragma pack(pop)
 
-// The wire contract, not a description of the structs above. These same five
-// numbers appear in teleop_vr_interface's Public/Shared/protocol.hpp and in
-// teleop_orchestrator/live/wire.py; changing a struct in one place without the
-// other two is the 2026-09-14 failure. UdpStream::runRecv accepts a packet only
-// when n == sizeof(TRecv), so a stale sender is dropped on size and the device
-// reads as absent rather than misconfigured.
-//
-// This copy had no asserts at all until the clutch field was added, which is
-// why it was the one place a field could move silently.
+// Wire contract, must match protocol.hpp (VR interface) and live/wire.py (orchestrator).
 static_assert(sizeof(MsgHeader)      == 23,  "MsgHeader size mismatch");
 static_assert(sizeof(ArmCommandMsg)  == 56,  "ArmCommandMsg size mismatch");
-static_assert(sizeof(ArmStateMsg)    == 125, "ArmStateMsg size mismatch");  // 117 -> 125: + echo_cmd_sequence, echo_hold_us
+static_assert(sizeof(ArmStateMsg)    == 125, "ArmStateMsg size mismatch");
 static_assert(sizeof(HeadCommandMsg) == 31,  "HeadCommandMsg size mismatch");
 static_assert(sizeof(HeadStateMsg)   == 31,  "HeadStateMsg size mismatch");
 

@@ -35,14 +35,7 @@ HeadControl::HeadControl(const YAML::Node& device_config, const std::string& ses
         transmission_ = std::make_unique<HeadStream>(stream_cfg);
     }
 
-    // Second command channel, mirroring arm_control.cpp's transmission_absolute.
-    // Same struct, same ABSOLUTE joint-target semantics as transmission_ above
-    // -- the split is about PEERS, not frames: each transport has one remote
-    // peer, so the interface and an autonomous policy need one each.
-    //
-    // HeadStateMsg is published here too (see runStateHandler), which is what
-    // lets a second process read head state at all; before this channel
-    // existed the orchestrator's head socket received nothing, ever.
+    // second channel for the policy, same absolute targets
     if (device_config["transmission_absolute"]) {
         UdpStreamConfig stream_cfg;
         stream_cfg.transport.remote_ip   = device_config["transmission_absolute"]["remote_ip"].as<std::string>();
@@ -91,30 +84,11 @@ void HeadControl::runStateHandler(){
     SysState prev_state = state_;
     Vector2 q_current = Vector2::Zero();
     bool has_cmd = false;
-    // Always ABSOLUTE joint space, whichever channel it came from. Both
-    // channels are normalized here, at arrival, so there is exactly one
-    // representation downstream and the planner below cannot be handed a
-    // target whose frame it has to guess.
     Vector2 q_target_pending = Vector2::Zero();
 
     while(bRunning){
 
-        // BOTH channels carry ABSOLUTE joint targets. q0_ is not added to
-        // either; in this file it now means one thing only -- the pose homing
-        // drives to.
-        //
-        // The two channels exist because the transport is point-to-point: one
-        // remote peer each, so two senders need two channels. That is the same
-        // reason the arms have two. It is NOT a frame distinction, and it was
-        // briefly treated as one, which cost two separate bugs in one evening:
-        // the policy's absolute prediction went out on a channel that added
-        // q0 (neck 23 degrees low), and then the interface's re-anchored head
-        // target did the same and ratcheted a further 0.4 rad down on every
-        // single takeover.
-        //
-        // The interface has an absolute target too: it re-anchors on the
-        // measured neck pose at handover and adds the operator's HMD delta to
-        // it, so what it sends is a joint angle, not an offset.
+        // both channels carry absolute joint targets, q0_ is not added
         if (transmission_ && transmission_->hasNew()) {
             const HeadCommandMsg m = transmission_->getRecvData();
             q_target_pending(0) = static_cast<double>(m.pan);
@@ -122,10 +96,7 @@ void HeadControl::runStateHandler(){
             has_cmd = true;
         }
 
-        // Read second on purpose: if both channels deliver in the same tick,
-        // two processes are commanding the head at once, which is a handover
-        // bug elsewhere -- and of the two, the policy is the one that only
-        // sends while it believes it holds the robot.
+        // read second so the policy wins if both arrive in the same tick
         if (transmission_absolute_ && transmission_absolute_->hasNew()) {
             const HeadCommandMsg m = transmission_absolute_->getRecvData();
             q_target_pending(0) = static_cast<double>(m.pan);
@@ -160,10 +131,6 @@ void HeadControl::runStateHandler(){
             HeadStateMsg state_msg{};
             state_msg.pan   = static_cast<float>(q(0));
             state_msg.tilt  = static_cast<float>(q(1));
-            // Published on BOTH channels, as the arms do. Each transport has a
-            // single remote peer, so a second listener can only be served by a
-            // second channel -- without this the orchestrator can never see
-            // head state while the VR interface is connected.
             if (transmission_) transmission_->setSendData(state_msg);
             if (transmission_absolute_) transmission_absolute_->setSendData(state_msg);
         }
@@ -266,7 +233,7 @@ void HeadControl::runControlHandler() {
             Vector2 e = q_cmd - q;
             Vector2 tau_cmd = kp_.cwiseProduct(e) - kd_.cwiseProduct(dq);
 
-            // joint limit proximity — scale down torque that drives into limits
+            // zero torque that drives into a joint limit
             for (int i = 0; i < 2; ++i) {
                 if ((q(i) >= q_max[i] && tau_cmd(i) > 0.0) ||
                     (q(i) <= q_min[i] && tau_cmd(i) < 0.0))
