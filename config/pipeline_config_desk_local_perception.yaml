@@ -1,0 +1,45 @@
+enabled: true
+stereo: false
+stream_fps: 20
+stream_width: 1280
+stream_height: 960
+stream_cameras:
+- camera: desk_cam
+  shm_name: avatar_cam
+  eye: mono
+- camera: perception_cam_1
+  shm_name: /perception_cam_1
+  eye: aux
+  width: 1280
+  height: 720
+- camera: perception_cam_2
+  shm_name: /perception_cam_2
+  eye: aux
+  width: 1280
+  height: 720
+episode_listener_port: 7100
+cameras:
+- name: desk_cam
+  eye: mono
+  source_type: v4l2
+  v4l2_device: /dev/video6
+  shm_name: avatar_cam
+  fps: 30
+  source_width: 1280
+  source_height: 720
+  stream:
+    enabled: true
+    host: 127.0.0.1
+    port: 5004
+    feedback_port: 5005
+    status_port: 5007
+    status_interval_ms: 500
+    bitrate_kbps: 4000
+    fec_percentage: 10
+    width: 1280
+    height: 720
+  log:
+    enabled: true
+    output_dir: logs
+    width: 640
+    height: 480

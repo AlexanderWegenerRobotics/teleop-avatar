@@ -1,0 +1,107 @@
+<mujoco model="panda hand">
+  <compiler angle="radian" meshdir="../../robots/franka_fr3/assets" autolimits="true" texturedir="tags" />
+  <option integrator="implicitfast" />
+  <default>
+    <default class="panda">
+      <material specular="0.5" shininess="0.25" />
+      <joint armature="0.1" damping="1" axis="0 0 1" range="-2.8973 2.8973" />
+      <general dyntype="none" biastype="affine" ctrlrange="-2.8973 2.8973" forcerange="-87 87" />
+      <default class="finger">
+        <joint axis="0 1 0" type="slide" range="0.003 0.04" damping="700" />
+      </default>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" />
+      </default>
+      <default class="collision">
+        <geom type="mesh" group="3" />
+        <default class="fingertip_pad_collision_1">
+          <geom type="box" size="0.0085 0.004 0.0085" pos="0 0.0055 0.0445" friction="1.3 0.05 0.01" condim="6" margin="0.0004" solref="0.002 2" solimp="0.95 0.99 0.001" priority="1" />
+        </default>
+        <default class="fingertip_pad_collision_2">
+          <geom type="box" size="0.003 0.002 0.003" pos="0.0055 0.005 0.05" friction="1.3 0.05 0.01" condim="6" margin="0.0004" solref="0.002 2" solimp="0.95 0.99 0.001" priority="1" />
+        </default>
+        <default class="fingertip_pad_collision_3">
+          <geom type="box" size="0.003 0.002 0.003" pos="-0.0055 0.005 0.05" friction="1.3 0.05 0.01" condim="6" margin="0.0004" solref="0.002 2" solimp="0.95 0.99 0.001" priority="1" />
+        </default>
+        <default class="fingertip_pad_collision_4">
+          <geom type="box" size="0.003 0.002 0.0035" pos="0.0055 0.005 0.0395" friction="1.3 0.05 0.01" condim="6" margin="0.0004" solref="0.002 2" solimp="0.95 0.99 0.001" priority="1" />
+        </default>
+        <default class="fingertip_pad_collision_5">
+          <geom type="box" size="0.003 0.002 0.0035" pos="-0.0055 0.005 0.0395" friction="1.3 0.05 0.01" condim="6" margin="0.0004" solref="0.002 2" solimp="0.95 0.99 0.001" priority="1" />
+        </default>
+      </default>
+    </default>
+  </default>
+  <asset>
+    <material class="panda" name="white" rgba="1 1 1 1" />
+    <material class="panda" name="off_white" rgba="0.901961 0.921569 0.929412 1" />
+    <material class="panda" name="black" rgba="0.25 0.25 0.25 1" />
+    <mesh name="hand_c" file="hand.stl" />
+    <mesh file="hand_0.obj" />
+    <mesh file="hand_1.obj" />
+    <mesh file="hand_2.obj" />
+    <mesh file="hand_3.obj" />
+    <mesh file="hand_4.obj" />
+    <mesh file="finger_0.obj" />
+    <mesh file="finger_1.obj" />
+    <texture name="calib_charuco_tex" type="2d" file="charuco_board.png" />
+    <material name="calib_charuco_mat" texture="calib_charuco_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="calib_charuco_mesh" vertex="-0.09 0.066 0 0.09 0.066 0 0.09 -0.066 0 -0.09 -0.066 0 -0.09 0.066 -0.0005 0.09 0.066 -0.0005 0.09 -0.066 -0.0005 -0.09 -0.066 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <material name="calib_mount_mat" rgba="0.15 0.15 0.15 1" specular="0.1" />
+    <mesh name="calib_mount" file="../../../props/perception/charuco_mount.stl" />
+  </asset>
+  <worldbody>
+    <body name="hand" childclass="panda" quat="0 0 0 1">
+      <inertial mass="0.73" pos="-0.01 0 0.03" diaginertia="0.001 0.0025 0.0017" />
+      <geom mesh="hand_0" material="off_white" class="visual" />
+      <geom mesh="hand_1" material="black" class="visual" />
+      <geom mesh="hand_2" material="black" class="visual" />
+      <geom mesh="hand_3" material="white" class="visual" />
+      <geom mesh="hand_4" material="off_white" class="visual" />
+      <geom mesh="hand_c" class="collision" />
+      <body name="left_finger" pos="0 0 0.0584">
+        <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7" />
+        <joint name="finger_joint1" class="finger" />
+        <geom mesh="finger_0" material="off_white" class="visual" />
+        <geom mesh="finger_1" material="black" class="visual" />
+        <geom mesh="finger_0" class="collision" />
+        <geom class="fingertip_pad_collision_1" />
+        <geom class="fingertip_pad_collision_2" />
+        <geom class="fingertip_pad_collision_3" />
+        <geom class="fingertip_pad_collision_4" />
+        <geom class="fingertip_pad_collision_5" />
+      </body>
+      <body name="right_finger" pos="0 0 0.0584" quat="0 0 0 1">
+        <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7" />
+        <joint name="finger_joint2" class="finger" />
+        <geom mesh="finger_0" material="off_white" class="visual" />
+        <geom mesh="finger_1" material="black" class="visual" />
+        <geom mesh="finger_0" class="collision" />
+        <geom class="fingertip_pad_collision_1" />
+        <geom class="fingertip_pad_collision_2" />
+        <geom class="fingertip_pad_collision_3" />
+        <geom class="fingertip_pad_collision_4" />
+        <geom class="fingertip_pad_collision_5" />
+      </body>
+      <geom name="calib_charuco" type="mesh" mesh="calib_charuco_mesh" material="calib_charuco_mat" pos="0 0.10357 0.0637615" quat="0 0 0.707107 0.707107" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="calib_mount" type="mesh" mesh="calib_mount" material="calib_mount_mat" contype="0" conaffinity="0" group="2" density="0" />
+    </body>
+  </worldbody>
+  <contact>
+    <exclude body1="hand" body2="left_finger" />
+    <exclude body1="hand" body2="right_finger" />
+    <exclude body1="left_finger" body2="right_finger" />
+  </contact>
+  <tendon>
+    <fixed name="split">
+      <joint joint="finger_joint1" coef="0.5" />
+      <joint joint="finger_joint2" coef="0.5" />
+    </fixed>
+  </tendon>
+  <equality>
+    <joint joint1="finger_joint1" joint2="finger_joint2" solimp="0.99 0.99 0.001" solref="0.002 1" />
+  </equality>
+  <actuator>
+    <general class="panda" name="actuator8" tendon="split" forcerange="-70 70" ctrlrange="0 255" gainprm="4.70588 0 0" biasprm="0 -30000 -100" />
+  </actuator>
+</mujoco>

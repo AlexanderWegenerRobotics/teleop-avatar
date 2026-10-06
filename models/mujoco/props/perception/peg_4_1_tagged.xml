@@ -1,0 +1,59 @@
+<mujoco model="peg_v1_4">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true" meshdir="../board_1" texturedir="tags" />
+  <default>
+    <default class="peg_v1_4">
+      <default class="vis">
+        <geom contype="0" conaffinity="0" group="2" density="0" material="peg_v1_4_mat" />
+      </default>
+      <default class="col">
+        <geom contype="1" conaffinity="1" group="3" priority="0" friction="0.3 0.02 0.001" solref="0.002 1" solimp="0.995 0.995 0.0001" condim="6" rgba="0.1 0.5 0.1 0.5" />
+      </default>
+    </default>
+  </default>
+  <asset>
+    <material name="peg_v1_4_mat" rgba="0.1 0.5 0.1 1.0" />
+    <texture name="peg_4_1_tag_38_tex" type="2d" file="tag_38.png" />
+    <material name="peg_4_1_tag_38_mat" texture="peg_4_1_tag_38_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_4_1_tag_38_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_4_1_tag_39_tex" type="2d" file="tag_39.png" />
+    <material name="peg_4_1_tag_39_mat" texture="peg_4_1_tag_39_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_4_1_tag_39_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_4_1_tag_40_tex" type="2d" file="tag_40.png" />
+    <material name="peg_4_1_tag_40_mat" texture="peg_4_1_tag_40_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_4_1_tag_40_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_4_1_tag_41_tex" type="2d" file="tag_41.png" />
+    <material name="peg_4_1_tag_41_mat" texture="peg_4_1_tag_41_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_4_1_tag_41_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_4_1_tag_42_tex" type="2d" file="tag_42.png" />
+    <material name="peg_4_1_tag_42_mat" texture="peg_4_1_tag_42_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_4_1_tag_42_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_4_1_tag_43_tex" type="2d" file="tag_43.png" />
+    <material name="peg_4_1_tag_43_mat" texture="peg_4_1_tag_43_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_4_1_tag_43_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_4_1_tag_44_tex" type="2d" file="tag_44.png" />
+    <material name="peg_4_1_tag_44_mat" texture="peg_4_1_tag_44_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_4_1_tag_44_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+  </asset>
+  <worldbody>
+    <body name="peg_v1_4" pos="0 0 0" childclass="peg_v1_4">
+      <freejoint name="peg_v1_4_joint" />
+      <geom name="peg_v1_4_vis_foot_neg" type="box" class="vis" pos="0.000000 -0.050500 0.022500" size="0.016000 0.031000 0.022500" />
+      <geom name="peg_v1_4_vis_foot_pos" type="box" class="vis" pos="0.000000 0.050500 0.022500" size="0.016000 0.031000 0.022500" />
+      <geom name="peg_v1_4_vis_arch_neg" type="box" class="vis" pos="0.000000 -0.024500 0.058500" size="0.016000 0.005000 0.013500" />
+      <geom name="peg_v1_4_vis_arch_pos" type="box" class="vis" pos="0.000000 0.024500 0.058500" size="0.016000 0.005000 0.013500" />
+      <geom name="peg_v1_4_vis_top" type="box" class="vis" pos="0.000000 0.000000 0.086000" size="0.016000 0.029500 0.014000" />
+      <geom name="peg_v1_4_col_foot_neg" type="box" class="col" pos="0.000000 -0.050500 0.022500" size="0.016000 0.031000 0.022500" />
+      <geom name="peg_v1_4_col_foot_pos" type="box" class="col" pos="0.000000 0.050500 0.022500" size="0.016000 0.031000 0.022500" />
+      <geom name="peg_v1_4_col_arch_neg" type="box" class="col" pos="0.000000 -0.024500 0.058500" size="0.016000 0.005000 0.013500" />
+      <geom name="peg_v1_4_col_arch_pos" type="box" class="col" pos="0.000000 0.024500 0.058500" size="0.016000 0.005000 0.013500" />
+      <geom name="peg_v1_4_col_top" type="box" class="col" pos="0.000000 0.000000 0.086000" size="0.016000 0.029500 0.014000" />
+      <geom name="peg_4_1_tag_38" type="mesh" mesh="peg_4_1_tag_38_mesh" material="peg_4_1_tag_38_mat" pos="0 0 0.1002" quat="1 0 0 0" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_4_1_tag_39" type="mesh" mesh="peg_4_1_tag_39_mesh" material="peg_4_1_tag_39_mat" pos="0 -0.0817 0.0225" quat="0.707107 0.707107 0 0" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_4_1_tag_40" type="mesh" mesh="peg_4_1_tag_40_mesh" material="peg_4_1_tag_40_mat" pos="0 0.0817 0.0225" quat="0 0 0.707107 0.707107" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_4_1_tag_41" type="mesh" mesh="peg_4_1_tag_41_mesh" material="peg_4_1_tag_41_mat" pos="0.0162 -0.0505 0.0225" quat="0.5 0.5 0.5 0.5" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_4_1_tag_42" type="mesh" mesh="peg_4_1_tag_42_mesh" material="peg_4_1_tag_42_mat" pos="0.0162 0.0505 0.0225" quat="0.5 0.5 0.5 0.5" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_4_1_tag_43" type="mesh" mesh="peg_4_1_tag_43_mesh" material="peg_4_1_tag_43_mat" pos="-0.0162 -0.0505 0.0225" quat="0.5 0.5 -0.5 -0.5" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_4_1_tag_44" type="mesh" mesh="peg_4_1_tag_44_mesh" material="peg_4_1_tag_44_mat" pos="-0.0162 0.0505 0.0225" quat="0.5 0.5 -0.5 -0.5" contype="0" conaffinity="0" group="2" density="0" />
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,36 @@
+# sim_config_*.yaml -> objects:
+  - name: perception_reference
+    type: static
+    model_path: "../models/mujoco/props/perception/perception_reference.xml"
+    pose:
+      position: [0, 0, 0]
+      orientation: [1, 0, 0, 0]
+
+# sim_config_*.yaml -> cameras:
+  - name: perception_cam_1
+    enabled: True
+    type: fixed
+    pos: [1.15, -0.3, 1.05]
+    look_at: [0.72, 0, 0.72]
+    fovy: 42
+  - name: perception_cam_2
+    enabled: True
+    type: fixed
+    pos: [1.15, 0.3, 1.05]
+    look_at: [0.72, 0, 0.72]
+    fovy: 42
+
+# pipeline_config_*.yaml -> stream_cameras:
+  - camera:   "perception_cam_1"
+    shm_name: "/perception_cam_1"
+    eye:      "aux"
+    width:    1280
+    height:   720
+  - camera:   "perception_cam_2"
+    shm_name: "/perception_cam_2"
+    eye:      "aux"
+    width:    1280
+    height:   720
+
+# sim_config_*.yaml -> devices: hand_left -> model_path:
+#   "../models/mujoco/props/perception/hand_tagged.xml"

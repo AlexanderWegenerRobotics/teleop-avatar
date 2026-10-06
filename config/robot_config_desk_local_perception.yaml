@@ -1,0 +1,122 @@
+avatar:
+  loop_rate_hz: 100
+  log_dir: ../logs
+  transmission:
+    remote_ip: 127.0.0.1
+    send_port: 8000
+    receive_port: 7000
+    frequency: 20
+  pipeline_logger:
+    enabled: true
+    host: 127.0.0.1
+    port: 7100
+  self_collision:
+    enabled: false
+    d_min: 0.1
+    alpha: 3.0
+    beta: 0.1
+  scene_objects:
+    enabled: true
+    host: 127.0.0.1
+    port: 7200
+devices:
+- name: arm_left
+  type: arm
+  enabled: true
+  franka_ip: 172.16.0.2
+  transmission:
+    remote_ip: 127.0.0.1
+    send_port: 8001
+    receive_port: 7001
+    frequency: 200
+  transmission_absolute:
+    remote_ip: 127.0.0.1
+    send_port: 8011
+    receive_port: 7011
+    frequency: 200
+  gripper:
+    grasp_confirm_tolerance_m: 0.005
+    grasp_confirm_time_s: 0.05
+    grasp_force_n: 40
+    grasp_speed: 0.1
+  base_pose:
+    position: [0.2, 0, 0.703]
+    orientation: [1, 0, 0, 0]
+  controller_axis_map:
+  - [1, 0, 0]
+  - [0, -1, 0]
+  - [0, 0, -1]
+  q0: [0.0, -0.4, 0.0, -2.4, 0.0, 2.0, 0.785]
+  max_torque: [87, 87, 87, 87, 12, 12, 12]
+  max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
+  q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
+  q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+  dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]
+  control:
+    kp_joint: [600, 600, 600, 600, 250, 150, 50]
+    kd_joint: [50, 50, 50, 50, 30, 25, 15]
+    kp_idle: [240, 240, 240, 240, 100, 60, 20]
+    kd_idle: [32, 32, 32, 32, 19, 16, 9]
+    kp_cart: [800, 800, 800, 40, 40, 40]
+    kd_cart: [40, 40, 40, 12, 12, 12]
+    eta_lin: 0.9
+    eta_rot: 0.9
+    ff_force_max: 30.0
+    ff_torque_max: 8.0
+    kp_null: [40, 40, 40, 40, 8, 8, 8]
+    kd_null: [3, 3, 3, 3, 1, 1, 1]
+    posture:
+      enabled: true
+      window_rad: 0.3
+      samples: 7
+      lead_rad: 0.15
+      filter_tau_s: 0.2
+      margin_rad: 0.25
+      manip_floor: 0.0
+      swivel_offset_deg: 0.0
+      k_height: 0.0
+      k_lateral: 0.0
+    kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
+    kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
+    authority_stale_ms: 1000.0
+  safety:
+    workspace_min: [0.4, -0.4, 0.1]
+    workspace_max: [1.2, 0.4, 1.6]
+    table_height_world: 0.6754
+    ee_fingertip_length: 0.127
+    table_safety_margin: 0.01
+    max_command_velocity: 0.7
+    max_command_angular_velocity: 2.0
+    max_command_acceleration: 5.0
+    max_command_angular_acceleration: 25.0
+    max_target_lead: 0.05
+    max_target_lead_rot: 0.08
+    max_tilt_angle: 1.74533
+    collision_lower_torque: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+    collision_upper_torque: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+    collision_lower_force: [70.0, 70.0, 70.0, 50.0, 50.0, 50.0]
+    collision_upper_force: [70.0, 70.0, 70.0, 50.0, 50.0, 50.0]
+    collision_reflex_enabled: true
+    collision_persist_ticks: 5
+    joint_limit_buffer: 0.25
+    joint_limit_torque_frac: 0.4
+  control_mode: cartesian_impedance
+  ik:
+    kp_p: [12.0, 12.0, 12.0]
+    kp_o: 3
+    v_lin_max: 0.8
+    v_ang_max: 0.8
+    lambda: 0.01
+    mu: 0.01
+    kp_posture: [2, 2, 2, 2, 2, 2, 2]
+    qd_max: [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]
+    t_brake: 0.1
+    a_max: 15.0
+    gamma: 0.05
+    wtask: [1, 1, 1, 1, 1, 1]
+- name: hand_left
+  type: gripper
+  enabled: true
+  base_pose:
+    position: [0, 0, 0]
+    orientation: [1, 0, 0, 0]

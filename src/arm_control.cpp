@@ -726,6 +726,7 @@ void ArmControl::runStateHandler(){
             state_msg.quaternion[2] = static_cast<float>(q_ee_world.y());
             state_msg.quaternion[3] = static_cast<float>(q_ee_world.z());
             state_msg.recovering    = (state_ == SysState::RECOVERING) ? 1 : 0;
+            for (int i = 0; i < 7; ++i) state_msg.joint_positions[i] = static_cast<float>(rs.q[i]);
             state_msg.gripper_width = static_cast<float>(gripper_width_.load());
             state_msg.grasp_state   = grasp_state_.load();
             // When the control thread last read the robot, stops advancing if it dies.

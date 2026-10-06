@@ -1,0 +1,51 @@
+<mujoco model="peg_v1_1">
+  <compiler angle="radian" autolimits="true" inertiafromgeom="true" meshdir="../board_1" texturedir="tags" />
+  <default>
+    <default class="peg_v1_1">
+      <default class="vis">
+        <geom contype="0" conaffinity="0" group="2" density="0" material="peg_v1_1_mat" />
+      </default>
+      <default class="col">
+        <geom contype="1" conaffinity="1" group="3" priority="0" friction="0.3 0.02 0.001" solref="0.002 1" solimp="0.995 0.995 0.0001" condim="6" rgba="0.1 0.1 0.5 0.5" />
+      </default>
+    </default>
+  </default>
+  <asset>
+    <material name="peg_v1_1_mat" rgba="0.1 0.1 0.5 1.0" />
+    <texture name="peg_1_2_tag_16_tex" type="2d" file="tag_16.png" />
+    <material name="peg_1_2_tag_16_mat" texture="peg_1_2_tag_16_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_1_2_tag_16_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_1_2_tag_17_tex" type="2d" file="tag_17.png" />
+    <material name="peg_1_2_tag_17_mat" texture="peg_1_2_tag_17_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_1_2_tag_17_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_1_2_tag_18_tex" type="2d" file="tag_18.png" />
+    <material name="peg_1_2_tag_18_mat" texture="peg_1_2_tag_18_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_1_2_tag_18_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_1_2_tag_19_tex" type="2d" file="tag_19.png" />
+    <material name="peg_1_2_tag_19_mat" texture="peg_1_2_tag_19_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_1_2_tag_19_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_1_2_tag_20_tex" type="2d" file="tag_20.png" />
+    <material name="peg_1_2_tag_20_mat" texture="peg_1_2_tag_20_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_1_2_tag_20_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+    <texture name="peg_1_2_tag_21_tex" type="2d" file="tag_21.png" />
+    <material name="peg_1_2_tag_21_mat" texture="peg_1_2_tag_21_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <mesh name="peg_1_2_tag_21_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
+  </asset>
+  <worldbody>
+    <body name="peg_v1_1" pos="0 0 0" childclass="peg_v1_1">
+      <freejoint name="peg_v1_1_joint" />
+      <geom name="peg_v1_1_vis_base" type="box" class="vis" pos="0.000000 0.000000 0.017500" size="0.016000 0.051000 0.017500" />
+      <geom name="peg_v1_1_vis_upright_neg" type="box" class="vis" pos="0.000000 -0.035125 0.067500" size="0.016000 0.015875 0.032500" />
+      <geom name="peg_v1_1_vis_upright_pos" type="box" class="vis" pos="0.000000 0.035125 0.067500" size="0.016000 0.015875 0.032500" />
+      <geom name="peg_v1_1_col_base" type="box" class="col" pos="0.000000 0.000000 0.017500" size="0.016000 0.051000 0.017500" />
+      <geom name="peg_v1_1_col_upright_neg" type="box" class="col" pos="0.000000 -0.035125 0.067500" size="0.016000 0.015875 0.032500" />
+      <geom name="peg_v1_1_col_upright_pos" type="box" class="col" pos="0.000000 0.035125 0.067500" size="0.016000 0.015875 0.032500" />
+      <geom name="peg_1_2_tag_16" type="mesh" mesh="peg_1_2_tag_16_mesh" material="peg_1_2_tag_16_mat" pos="0 -0.035125 0.1002" quat="1 0 0 0" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_1_2_tag_17" type="mesh" mesh="peg_1_2_tag_17_mesh" material="peg_1_2_tag_17_mat" pos="0 0.035125 0.1002" quat="1 0 0 0" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_1_2_tag_18" type="mesh" mesh="peg_1_2_tag_18_mesh" material="peg_1_2_tag_18_mat" pos="0 -0.0512 0.0675" quat="0.707107 0.707107 0 0" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_1_2_tag_19" type="mesh" mesh="peg_1_2_tag_19_mesh" material="peg_1_2_tag_19_mat" pos="0 0.0512 0.0675" quat="0 0 0.707107 0.707107" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_1_2_tag_20" type="mesh" mesh="peg_1_2_tag_20_mesh" material="peg_1_2_tag_20_mat" pos="0.0162 0 0.0175" quat="0.5 0.5 0.5 0.5" contype="0" conaffinity="0" group="2" density="0" />
+      <geom name="peg_1_2_tag_21" type="mesh" mesh="peg_1_2_tag_21_mesh" material="peg_1_2_tag_21_mat" pos="-0.0162 0 0.0175" quat="0.5 0.5 -0.5 -0.5" contype="0" conaffinity="0" group="2" density="0" />
+    </body>
+  </worldbody>
+</mujoco>

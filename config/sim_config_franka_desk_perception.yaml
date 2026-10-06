@@ -1,0 +1,85 @@
+rendering:
+  enabled: true
+  fps: 15
+simulation:
+  timestep: 0.001
+  control_frequency: 1000
+  model_path: ../models/mujoco/scenes/world_scene.xml
+  task_config: ../config/tasks/empty.yaml
+devices:
+- name: arm_left
+  model_path: ../models/mujoco/robots/franka_fr3/fr3_torque.xml
+  urdf_path: ../models/urdf/franka_fr3/fr3_franka_hand.urdf
+  root_body: link0
+  urdf_ee_name: fr3_hand
+  gripper_actuator: actuator8
+- name: hand_left
+  model_path: ../models/mujoco/props/perception/hand_tagged.xml
+  root_body: hand
+  gripper_actuator: actuator8
+  attach_to: arm_left_fr3_link7
+  attach_offset:
+    position: [0, 0, 0.107]
+    orientation: [0.9239, 0, 0, -0.3827]
+objects:
+- name: table
+  type: static
+  model_path: ../models/mujoco/props/table.xml
+  pose:
+    position: [0.4, 0, 0]
+    orientation: [1, 0, 0, 0]
+- name: background_front
+  type: static
+  model_path: ../models/mujoco/props/background.xml
+  pose:
+    position: [-2.0, 0, 0]
+    orientation: [1, 0, 0, 0]
+- name: background_left
+  type: static
+  model_path: ../models/mujoco/props/background.xml
+  pose:
+    position: [0, 1.5, 0]
+    orientation: [0.7071, 0, 0, 0.7071]
+- name: background_right
+  type: static
+  model_path: ../models/mujoco/props/background.xml
+  pose:
+    position: [0, -1.5, 0]
+    orientation: [0.7071, 0, 0, 0.7071]
+- name: perception_reference
+  type: static
+  model_path: ../models/mujoco/props/perception/perception_reference.xml
+  pose:
+    position: [0, 0, 0]
+    orientation: [1, 0, 0, 0]
+cameras:
+- name: workspace_overview_1
+  enabled: false
+  type: fixed
+  pos: [1.5, 0, 0.8]
+  look_at: [0.4, 0.0, 0.4]
+  fovy: 90
+- name: workspace_overview_2
+  enabled: false
+  type: fixed
+  pos: [0.3, 0.3, 1.9]
+  look_at: [0.0, 0.0, 0.4]
+  fovy: 90
+- name: desk_cam
+  enabled: true
+  type: fixed
+  pos: [0.0, -0.45, 1.5]
+  look_at: [0.7, 0.05, 0.72]
+  fovy: 60
+- name: perception_cam_1
+  enabled: true
+  type: fixed
+  pos: [1.1, -0.35, 1.2]
+  look_at: [0.7, 0.0, 0.76]
+  fovy: 42.0
+- name: perception_cam_2
+  enabled: true
+  type: fixed
+  pos: [1.1, 0.35, 1.2]
+  look_at: [0.7, 0.0, 0.76]
+  fovy: 42.0

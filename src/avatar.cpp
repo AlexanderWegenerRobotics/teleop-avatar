@@ -589,7 +589,7 @@ void Avatar::start(){
             publishAuthorityChanges();
             relayPolicyStatus();
 
-            if (intention_buffer_) {
+            if (intention_buffer_ || scene_objects_port_ != 0) {
                 StateSnapshot snap;
                 snap.frame_id    = sim_->getFrameId();
                 snap.tick_id     = tick_id;
@@ -606,10 +606,12 @@ void Avatar::start(){
                 snap.gripper_left  = static_cast<float>(sim_->getGripperWidth("hand_left"));
                 snap.gripper_right = static_cast<float>(sim_->getGripperWidth("hand_right"));
 
-                DeviceState head_state = sim_->getDeviceState("head");
-                if (head_state.q.size() >= 2) {
-                    snap.head_pan  = static_cast<float>(head_state.q[0]);
-                    snap.head_tilt = static_cast<float>(head_state.q[1]);
+                if (intention_buffer_) {
+                    DeviceState head_state = sim_->getDeviceState("head");
+                    if (head_state.q.size() >= 2) {
+                        snap.head_pan  = static_cast<float>(head_state.q[0]);
+                        snap.head_tilt = static_cast<float>(head_state.q[1]);
+                    }
                 }
 
                 for (const auto& so : current_episode_cfg_.objects) {
@@ -644,7 +646,7 @@ void Avatar::start(){
                     snap.slots.push_back(std::move(s));
                 }
 
-                intention_buffer_->snapshot(snap);
+                if (intention_buffer_) intention_buffer_->snapshot(snap);
                 sendSceneObjects(snap);
             }
 
