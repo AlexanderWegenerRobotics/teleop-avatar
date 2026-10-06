@@ -107,6 +107,7 @@ Simulation::Simulation(const YAML::Node& config, Role role) {
             sc.shm_name    = entry["shm_name"].as<std::string>("");
             sc.width       = entry["width"].as<int>(0);
             sc.height      = entry["height"].as<int>(0);
+            if (entry["distortion"]) sc.distortion = entry["distortion"].as<std::vector<double>>();
             if (!sc.camera_name.empty() && !sc.shm_name.empty())
                 stream_cameras_.push_back(std::move(sc));
         }
@@ -422,6 +423,7 @@ void Simulation::initOffscreenStreaming() {
     mjr_makeContext(model, &stream_con_, mjFONTSCALE_100);
 
     shm_writers_.clear();
+    stream_lens_.assign(stream_cameras_.size(), RemapTable());
     for (const auto& sc : stream_cameras_) {
 #ifndef _WIN32
         shm_unlink(sc.shm_name.c_str());
@@ -483,6 +485,20 @@ void Simulation::renderStreamFrame() {
         const uint64_t capture_time_ns = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
+
+        // simulated lens: same distortion model the perception calibration estimates
+        if (!sc.distortion.empty() && stream_lens_[i].empty()) {
+            LensModel lens = LensModel::pinholeFromFovy(cw, ch, model->cam_fovy[cam_id]);
+            for (size_t k = 0; k < std::min<size_t>(5, sc.distortion.size()); ++k) lens.dist[k] = sc.distortion[k];
+            stream_lens_[i] = RemapTable::distort(lens);
+            std::cout << "[Streaming] " << sc.camera_name << ": lens distortion applied" << std::endl;
+        }
+        if (!stream_lens_[i].empty()) {
+            lens_pixels_.resize(pixels.size());
+            stream_lens_[i].apply(pixels.data(), lens_pixels_.data());
+            shm_writers_[i]->write(lens_pixels_.data(), lens_pixels_.size(), capture_time_ns);
+            continue;
+        }
 
         shm_writers_[i]->write(pixels.data(), pixels.size(), capture_time_ns);
     }

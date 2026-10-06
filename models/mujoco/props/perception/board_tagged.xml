@@ -14,34 +14,34 @@
     <material name="board_v1_mat" rgba="0.6 0.55 0.5 1.0" />
     <mesh name="board_v1_vis" file="board_v1.stl" scale="0.001 0.001 0.001" />
     <texture name="board_tag_0_tex" type="2d" file="tag_0.png" />
-    <material name="board_tag_0_mat" texture="board_tag_0_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_0_mat" texture="board_tag_0_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_0_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_1_tex" type="2d" file="tag_1.png" />
-    <material name="board_tag_1_mat" texture="board_tag_1_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_1_mat" texture="board_tag_1_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_1_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_2_tex" type="2d" file="tag_2.png" />
-    <material name="board_tag_2_mat" texture="board_tag_2_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_2_mat" texture="board_tag_2_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_2_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_3_tex" type="2d" file="tag_3.png" />
-    <material name="board_tag_3_mat" texture="board_tag_3_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_3_mat" texture="board_tag_3_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_3_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_4_tex" type="2d" file="tag_4.png" />
-    <material name="board_tag_4_mat" texture="board_tag_4_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_4_mat" texture="board_tag_4_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_4_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_5_tex" type="2d" file="tag_5.png" />
-    <material name="board_tag_5_mat" texture="board_tag_5_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_5_mat" texture="board_tag_5_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_5_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_6_tex" type="2d" file="tag_6.png" />
-    <material name="board_tag_6_mat" texture="board_tag_6_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_6_mat" texture="board_tag_6_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_6_mesh" vertex="-0.02 0.02 0 0.02 0.02 0 0.02 -0.02 0 -0.02 -0.02 0 -0.02 0.02 -0.0005 0.02 0.02 -0.0005 0.02 -0.02 -0.0005 -0.02 -0.02 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_7_tex" type="2d" file="tag_7.png" />
-    <material name="board_tag_7_mat" texture="board_tag_7_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_7_mat" texture="board_tag_7_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_7_mesh" vertex="-0.02 0.02 0 0.02 0.02 0 0.02 -0.02 0 -0.02 -0.02 0 -0.02 0.02 -0.0005 0.02 0.02 -0.0005 0.02 -0.02 -0.0005 -0.02 -0.02 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_8_tex" type="2d" file="tag_8.png" />
-    <material name="board_tag_8_mat" texture="board_tag_8_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_8_mat" texture="board_tag_8_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_8_mesh" vertex="-0.02 0.02 0 0.02 0.02 0 0.02 -0.02 0 -0.02 -0.02 0 -0.02 0.02 -0.0005 0.02 0.02 -0.0005 0.02 -0.02 -0.0005 -0.02 -0.02 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="board_tag_9_tex" type="2d" file="tag_9.png" />
-    <material name="board_tag_9_mat" texture="board_tag_9_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="board_tag_9_mat" texture="board_tag_9_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="board_tag_9_mesh" vertex="-0.02 0.02 0 0.02 0.02 0 0.02 -0.02 0 -0.02 -0.02 0 -0.02 0.02 -0.0005 0.02 0.02 -0.0005 0.02 -0.02 -0.0005 -0.02 -0.02 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
   </asset>
   <worldbody>

@@ -13,22 +13,22 @@
   <asset>
     <material name="peg_v1_1_mat" rgba="0.1 0.1 0.5 1.0" />
     <texture name="peg_1_2_tag_16_tex" type="2d" file="tag_16.png" />
-    <material name="peg_1_2_tag_16_mat" texture="peg_1_2_tag_16_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_1_2_tag_16_mat" texture="peg_1_2_tag_16_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_1_2_tag_16_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_1_2_tag_17_tex" type="2d" file="tag_17.png" />
-    <material name="peg_1_2_tag_17_mat" texture="peg_1_2_tag_17_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_1_2_tag_17_mat" texture="peg_1_2_tag_17_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_1_2_tag_17_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_1_2_tag_18_tex" type="2d" file="tag_18.png" />
-    <material name="peg_1_2_tag_18_mat" texture="peg_1_2_tag_18_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_1_2_tag_18_mat" texture="peg_1_2_tag_18_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_1_2_tag_18_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_1_2_tag_19_tex" type="2d" file="tag_19.png" />
-    <material name="peg_1_2_tag_19_mat" texture="peg_1_2_tag_19_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_1_2_tag_19_mat" texture="peg_1_2_tag_19_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_1_2_tag_19_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_1_2_tag_20_tex" type="2d" file="tag_20.png" />
-    <material name="peg_1_2_tag_20_mat" texture="peg_1_2_tag_20_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_1_2_tag_20_mat" texture="peg_1_2_tag_20_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_1_2_tag_20_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_1_2_tag_21_tex" type="2d" file="tag_21.png" />
-    <material name="peg_1_2_tag_21_mat" texture="peg_1_2_tag_21_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_1_2_tag_21_mat" texture="peg_1_2_tag_21_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_1_2_tag_21_mesh" vertex="-0.0146667 0.0146667 0 0.0146667 0.0146667 0 0.0146667 -0.0146667 0 -0.0146667 -0.0146667 0 -0.0146667 0.0146667 -0.0005 0.0146667 0.0146667 -0.0005 0.0146667 -0.0146667 -0.0005 -0.0146667 -0.0146667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
   </asset>
   <worldbody>

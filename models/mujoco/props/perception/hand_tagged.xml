@@ -45,7 +45,7 @@
     <mesh file="finger_0.obj" />
     <mesh file="finger_1.obj" />
     <texture name="calib_charuco_tex" type="2d" file="charuco_board.png" />
-    <material name="calib_charuco_mat" texture="calib_charuco_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="calib_charuco_mat" texture="calib_charuco_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0.5" />
     <mesh name="calib_charuco_mesh" vertex="-0.09 0.066 0 0.09 0.066 0 0.09 -0.066 0 -0.09 -0.066 0 -0.09 0.066 -0.0005 0.09 0.066 -0.0005 0.09 -0.066 -0.0005 -0.09 -0.066 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <material name="calib_mount_mat" rgba="0.15 0.15 0.15 1" specular="0.1" />
     <mesh name="calib_mount" file="../../../props/perception/charuco_mount.stl" />

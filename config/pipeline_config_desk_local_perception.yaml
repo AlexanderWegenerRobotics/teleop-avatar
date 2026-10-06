@@ -7,6 +7,7 @@ stream_cameras:
 - camera: desk_cam
   shm_name: avatar_cam
   eye: mono
+  distortion: [0.06, -0.03]
 - camera: perception_cam_1
   shm_name: /perception_cam_1
   eye: aux
@@ -43,3 +44,4 @@ cameras:
     output_dir: logs
     width: 640
     height: 480
+  undistort: ../../teleop-perception/calib/undistort_sim_desk_cam.yaml

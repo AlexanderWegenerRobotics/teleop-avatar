@@ -15,6 +15,7 @@
 #include <Eigen/Geometry>
 
 #include "pipeline/shared_memory.hpp"
+#include "pipeline/lens.hpp"
 #include "sim_env/scene_builder.hpp"
 #include "intention/intention_sample.hpp"
 #include "twin/role.hpp"
@@ -184,8 +185,11 @@ private:
         std::string shm_name;
         int width  = 0;   // 0 = use global stream_width_
         int height = 0;   // 0 = use global stream_height_
+        std::vector<double> distortion;   // optional lens model (k1 k2 p1 p2 k3) applied before the shm write
     };
     std::vector<std::unique_ptr<SharedMemoryWriter>> shm_writers_;
+    std::vector<RemapTable> stream_lens_;
+    std::vector<uint8_t>    lens_pixels_;
 
     mjvScene    scn_;
     mjvOption   vopt_;

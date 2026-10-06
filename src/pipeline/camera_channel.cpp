@@ -75,6 +75,42 @@ void CameraChannel::start() {
     source_->start([this](const uint8_t* rgb, uint32_t w, uint32_t h, uint64_t capture_time_ns) {
         const uint64_t frame_id = frame_count_.fetch_add(1, std::memory_order_relaxed);
 
+        if (!config_.raw_shm.empty()) {
+            if (!raw_writer_) {
+#ifndef _WIN32
+                shm_unlink(config_.raw_shm.c_str());
+#endif
+                raw_writer_ = std::make_unique<SharedMemoryWriter>(config_.raw_shm, w, h);
+                std::cout << "[CameraChannel:" << config_.name << "] raw frames -> shm " << config_.raw_shm << std::endl;
+            }
+            raw_writer_->write(rgb, static_cast<size_t>(w) * h * 3, capture_time_ns);
+        }
+        if (!undistort_checked_) {
+            undistort_checked_ = true;
+            if (!config_.undistort_file.empty()) {
+                LensModel cam, out;
+                if (!loadUndistortFile(config_.undistort_file, cam, out))
+                    std::cerr << "[CameraChannel:" << config_.name << "] no undistortion file "
+                              << config_.undistort_file << ", streaming raw frames" << std::endl;
+                else if (cam.width != static_cast<int>(w) || cam.height != static_cast<int>(h))
+                    std::cerr << "[CameraChannel:" << config_.name << "] undistortion file is for " << cam.width
+                              << "x" << cam.height << " but frames are " << w << "x" << h
+                              << ", streaming raw frames" << std::endl;
+                else {
+                    undistort_ = RemapTable::undistort(cam, out);
+                    undistorted_.resize(static_cast<size_t>(out.width) * out.height * 3);
+                    std::cout << "[CameraChannel:" << config_.name << "] undistorting to pinhole fx="
+                              << out.fx << " (" << config_.undistort_file << ")" << std::endl;
+                }
+            }
+        }
+        if (!undistort_.empty()) {
+            undistort_.apply(rgb, undistorted_.data());
+            rgb = undistorted_.data();
+            w = static_cast<uint32_t>(undistort_.width());
+            h = static_cast<uint32_t>(undistort_.height());
+        }
+
         if (streamer_) streamer_->pushFrame(rgb, w, h, capture_time_ns);
 
         // fall back to now if the source gave no capture time

@@ -5,6 +5,7 @@
 #include <string>
 
 #include "pipeline/camera_source.hpp"
+#include "pipeline/lens.hpp"
 #include "pipeline/video_streamer.hpp"
 #include "pipeline/video_logger.hpp"
 
@@ -24,6 +25,11 @@ struct CameraChannelConfig {
     int         exposure_100us  = 0;
     bool        auto_exposure   = true;
     int         gain            = -1;
+
+    // calibration file from teleop-perception; frames are resampled to its ideal pinhole before stream/log
+    std::string undistort_file;
+    // optional shm name where the raw (not undistorted) frames are published, e.g. for calibration
+    std::string raw_shm;
 
     // mujoco only: send left|right side by side as one 2x width stream
     bool        stereo_combined    = false;
@@ -58,6 +64,10 @@ private:
     std::unique_ptr<CameraSource> source_;
     std::unique_ptr<VideoStreamer> streamer_;
     std::unique_ptr<VideoLogger>  logger_;
+    std::unique_ptr<SharedMemoryWriter> raw_writer_;
+    RemapTable                    undistort_;
+    std::vector<uint8_t>          undistorted_;
+    bool                          undistort_checked_ = false;
 
     std::atomic<uint64_t> frame_count_{0};
     int logging_idx_ = -1;   // -1 = not logging

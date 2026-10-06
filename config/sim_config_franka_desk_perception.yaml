@@ -68,8 +68,8 @@ cameras:
 - name: desk_cam
   enabled: true
   type: fixed
-  pos: [0.0, -0.45, 1.5]
-  look_at: [0.7, 0.05, 0.72]
+  pos: [0.1, -0.4, 1.35]
+  look_at: [0.65, 0.0, 0.78]
   fovy: 60
 - name: perception_cam_1
   enabled: true

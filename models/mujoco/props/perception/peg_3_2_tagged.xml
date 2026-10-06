@@ -13,28 +13,28 @@
   <asset>
     <material name="peg_v1_3_mat" rgba="0.5 0.1 0.1 1.0" />
     <texture name="peg_3_2_tag_30_tex" type="2d" file="tag_30.png" />
-    <material name="peg_3_2_tag_30_mat" texture="peg_3_2_tag_30_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_3_2_tag_30_mat" texture="peg_3_2_tag_30_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_3_2_tag_30_mesh" vertex="-0.0166667 0.0166667 0 0.0166667 0.0166667 0 0.0166667 -0.0166667 0 -0.0166667 -0.0166667 0 -0.0166667 0.0166667 -0.0005 0.0166667 0.0166667 -0.0005 0.0166667 -0.0166667 -0.0005 -0.0166667 -0.0166667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_3_2_tag_31_tex" type="2d" file="tag_31.png" />
-    <material name="peg_3_2_tag_31_mat" texture="peg_3_2_tag_31_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_3_2_tag_31_mat" texture="peg_3_2_tag_31_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_3_2_tag_31_mesh" vertex="-0.0166667 0.0166667 0 0.0166667 0.0166667 0 0.0166667 -0.0166667 0 -0.0166667 -0.0166667 0 -0.0166667 0.0166667 -0.0005 0.0166667 0.0166667 -0.0005 0.0166667 -0.0166667 -0.0005 -0.0166667 -0.0166667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_3_2_tag_32_tex" type="2d" file="tag_32.png" />
-    <material name="peg_3_2_tag_32_mat" texture="peg_3_2_tag_32_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_3_2_tag_32_mat" texture="peg_3_2_tag_32_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_3_2_tag_32_mesh" vertex="-0.0166667 0.0166667 0 0.0166667 0.0166667 0 0.0166667 -0.0166667 0 -0.0166667 -0.0166667 0 -0.0166667 0.0166667 -0.0005 0.0166667 0.0166667 -0.0005 0.0166667 -0.0166667 -0.0005 -0.0166667 -0.0166667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_3_2_tag_33_tex" type="2d" file="tag_33.png" />
-    <material name="peg_3_2_tag_33_mat" texture="peg_3_2_tag_33_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_3_2_tag_33_mat" texture="peg_3_2_tag_33_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_3_2_tag_33_mesh" vertex="-0.0166667 0.0166667 0 0.0166667 0.0166667 0 0.0166667 -0.0166667 0 -0.0166667 -0.0166667 0 -0.0166667 0.0166667 -0.0005 0.0166667 0.0166667 -0.0005 0.0166667 -0.0166667 -0.0005 -0.0166667 -0.0166667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_3_2_tag_34_tex" type="2d" file="tag_34.png" />
-    <material name="peg_3_2_tag_34_mat" texture="peg_3_2_tag_34_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_3_2_tag_34_mat" texture="peg_3_2_tag_34_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_3_2_tag_34_mesh" vertex="-0.0166667 0.0166667 0 0.0166667 0.0166667 0 0.0166667 -0.0166667 0 -0.0166667 -0.0166667 0 -0.0166667 0.0166667 -0.0005 0.0166667 0.0166667 -0.0005 0.0166667 -0.0166667 -0.0005 -0.0166667 -0.0166667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_3_2_tag_35_tex" type="2d" file="tag_35.png" />
-    <material name="peg_3_2_tag_35_mat" texture="peg_3_2_tag_35_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_3_2_tag_35_mat" texture="peg_3_2_tag_35_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_3_2_tag_35_mesh" vertex="-0.0166667 0.0166667 0 0.0166667 0.0166667 0 0.0166667 -0.0166667 0 -0.0166667 -0.0166667 0 -0.0166667 0.0166667 -0.0005 0.0166667 0.0166667 -0.0005 0.0166667 -0.0166667 -0.0005 -0.0166667 -0.0166667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_3_2_tag_36_tex" type="2d" file="tag_36.png" />
-    <material name="peg_3_2_tag_36_mat" texture="peg_3_2_tag_36_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_3_2_tag_36_mat" texture="peg_3_2_tag_36_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_3_2_tag_36_mesh" vertex="-0.0166667 0.0166667 0 0.0166667 0.0166667 0 0.0166667 -0.0166667 0 -0.0166667 -0.0166667 0 -0.0166667 0.0166667 -0.0005 0.0166667 0.0166667 -0.0005 0.0166667 -0.0166667 -0.0005 -0.0166667 -0.0166667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
     <texture name="peg_3_2_tag_37_tex" type="2d" file="tag_37.png" />
-    <material name="peg_3_2_tag_37_mat" texture="peg_3_2_tag_37_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" />
+    <material name="peg_3_2_tag_37_mat" texture="peg_3_2_tag_37_tex" rgba="1 1 1 1" specular="0" shininess="0" reflectance="0" emission="0" />
     <mesh name="peg_3_2_tag_37_mesh" vertex="-0.0166667 0.0166667 0 0.0166667 0.0166667 0 0.0166667 -0.0166667 0 -0.0166667 -0.0166667 0 -0.0166667 0.0166667 -0.0005 0.0166667 0.0166667 -0.0005 0.0166667 -0.0166667 -0.0005 -0.0166667 -0.0166667 -0.0005" texcoord="0 0 1 0 1 1 0 1 0 0 1 0 1 1 0 1" face="0 2 1 0 3 2 7 5 6 7 4 5 0 5 4 0 1 5 1 6 5 1 2 6 2 7 6 2 3 7 3 4 7 3 0 4" />
   </asset>
   <worldbody>
