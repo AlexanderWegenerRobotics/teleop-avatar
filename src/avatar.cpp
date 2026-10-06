@@ -407,7 +407,46 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
             buf_cfg.rho_tgt            = cam["rho_tgt"].as<float>(0.95f);
 
         intention_buffer_ = std::make_unique<IntentionBuffer>(buf_cfg);
+        break;
+    }
 
+    if (!intention_buffer_ && sys_config["avatar"]["intention"] && sys_config["avatar"]["intention"]["camera"]) {
+        auto icfg = sys_config["avatar"]["intention"];
+        const std::string cam_name = icfg["camera"].as<std::string>();
+
+        CameraIntrinsics intrinsics = sim_->getCameraIntrinsics(cam_name);
+        CameraExtrinsics extrinsics = sim_->getCameraExtrinsics(cam_name);
+
+        IntentionBufferConfig buf_cfg;
+        buf_cfg.intrinsics    = intrinsics;
+        buf_cfg.extrinsics    = extrinsics;
+        buf_cfg.static_camera = true;
+        buf_cfg.R_world_cam   = extrinsics.orientation.toRotationMatrix();
+        buf_cfg.cam_pos_world = extrinsics.position;
+
+        const int gaze_w = icfg["gaze_image_width"].as<int>(intrinsics.width);
+        const int gaze_h = icfg["gaze_image_height"].as<int>(intrinsics.height);
+        buf_cfg.gaze_scale_u = gaze_w > 0 ? static_cast<float>(intrinsics.width)  / gaze_w : 1.0f;
+        buf_cfg.gaze_scale_v = gaze_h > 0 ? static_cast<float>(intrinsics.height) / gaze_h : 1.0f;
+
+        if (icfg["gaze_sigma_px"])
+            buf_cfg.gaze_sigma_px      = icfg["gaze_sigma_px"].as<float>(30.0f);
+        if (icfg["belief_temperature"])
+            buf_cfg.belief_temperature = icfg["belief_temperature"].as<float>(1.0f);
+        if (icfg["rho_ee"])
+            buf_cfg.rho_ee             = icfg["rho_ee"].as<float>(0.85f);
+        if (icfg["rho_tgt"])
+            buf_cfg.rho_tgt            = icfg["rho_tgt"].as<float>(0.95f);
+
+        intention_buffer_ = std::make_unique<IntentionBuffer>(buf_cfg);
+        intention_static_camera_ = true;
+
+        std::cout << "[AVATAR-INFO] intention: static camera '" << cam_name << "' "
+                  << intrinsics.width << "x" << intrinsics.height
+                  << ", gaze scale " << buf_cfg.gaze_scale_u << " x " << buf_cfg.gaze_scale_v << std::endl;
+    }
+
+    if (intention_buffer_) {
         IntentionRecognizerConfig rec_cfg;
         rec_cfg.log_path   = log_base_dir_ + "/intention_log.csv";
         rec_cfg.session_id = session_id_;
@@ -416,7 +455,6 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         intention_buffer_->setCallback([this](const IntentionSample& s) {
             if (intention_recognizer_) intention_recognizer_->push(s);
         });
-        break;
     }
 
     writeCameraParams();
@@ -606,7 +644,7 @@ void Avatar::start(){
                 snap.gripper_left  = static_cast<float>(sim_->getGripperWidth("hand_left"));
                 snap.gripper_right = static_cast<float>(sim_->getGripperWidth("hand_right"));
 
-                if (intention_buffer_) {
+                if (intention_buffer_ && !intention_static_camera_) {
                     DeviceState head_state = sim_->getDeviceState("head");
                     if (head_state.q.size() >= 2) {
                         snap.head_pan  = static_cast<float>(head_state.q[0]);
@@ -948,6 +986,7 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
             parseArr("fill_diffuse",       cfg.lighting.fill_diffuse);
             if (lmap.count("headlight_diffuse")) parseArr("headlight_diffuse", cfg.lighting.headlight_diffuse);
             if (lmap.count("headlight_ambient")) parseArr("headlight_ambient", cfg.lighting.headlight_ambient);
+            if (lmap.count("main_target"))       parseArr("main_target",       cfg.lighting.main_target);
         }
 #endif
     } catch (const std::exception& e) {

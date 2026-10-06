@@ -129,6 +129,7 @@ private:
 
     std::unique_ptr<IntentionBuffer>     intention_buffer_;
     std::unique_ptr<IntentionRecognizer> intention_recognizer_;
+    bool intention_static_camera_ = false;
 
     // pipeline logger episode signaling
     std::string logger_host_;

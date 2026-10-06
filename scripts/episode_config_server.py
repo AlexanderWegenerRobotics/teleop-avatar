@@ -38,12 +38,18 @@ SPAWN_MODES = ("random", "fixed")
 
 MODE_WEIGHTS = {0: 0.5, 1: 0.5}
 
-LIGHT_MAIN_X         = (0.2,  0.8)
-LIGHT_MAIN_Y         = (-0.4, 0.4)
-LIGHT_MAIN_Z         = (1.4,  2.0)
-LIGHT_MAIN_INTENSITY = (0.6,  1.0)
+LIGHT_TARGET         = (0.8, 0.0, 0.72)
+LIGHT_MAIN_DIST      = (1.2, 1.5)
+LIGHT_MAIN_ELEV_DEG  = (45.0, 65.0)
+LIGHT_MAIN_AZIM_DEG  = (-135.0, 135.0)
+LIGHT_MAIN_INTENSITY = (0.25, 0.45)
 LIGHT_MAIN_WARMTH    = (-1.0, 1.0)
-LIGHT_FILL_INTENSITY = (0.1,  0.35)
+LIGHT_FILL_INTENSITY = (0.15, 0.3)
+LIGHT_HEAD_DIFFUSE   = (0.1,  0.2)
+LIGHT_HEAD_AMBIENT   = (0.5,  0.6)
+LIGHT_FILL_POS       = (1.2,  0.5, 1.0)
+LIGHT_UP_BUDGET      = 1.4
+LIGHT_HEAD_UP_COS    = 0.7
 
 
 def load_sim_config(path: str) -> dict:
@@ -126,9 +132,33 @@ def build_bin_positions(sim_cfg: dict) -> list:
     return positions
 
 
+def _fill_up_cos():
+    d = [t - p for t, p in zip(LIGHT_TARGET, LIGHT_FILL_POS)]
+    n = math.sqrt(sum(c * c for c in d))
+    return max(0.0, -d[2] / n)
+
+
 def sample_lighting(rng):
+    """Key light aimed at LIGHT_TARGET from 45-65 deg elevation; total light on an
+    upward face is capped at LIGHT_UP_BUDGET so top faces never clip to white."""
+    dist  = rng.uniform(*LIGHT_MAIN_DIST)
+    elev  = math.radians(rng.uniform(*LIGHT_MAIN_ELEV_DEG))
+    azim  = math.radians(rng.uniform(*LIGHT_MAIN_AZIM_DEG))
+    tx, ty, tz = LIGHT_TARGET
+    main_pos = [tx + dist * math.cos(elev) * math.cos(azim),
+                ty + dist * math.cos(elev) * math.sin(azim),
+                tz + dist * math.sin(elev)]
+
     intensity = rng.uniform(*LIGHT_MAIN_INTENSITY)
     warmth    = rng.uniform(*LIGHT_MAIN_WARMTH)
+    fill_i    = rng.uniform(*LIGHT_FILL_INTENSITY)
+    head_d    = rng.uniform(*LIGHT_HEAD_DIFFUSE)
+    head_a    = rng.uniform(*LIGHT_HEAD_AMBIENT)
+
+    up = (intensity * math.sin(elev) + fill_i * _fill_up_cos()
+          + head_d * LIGHT_HEAD_UP_COS + head_a)
+    k = min(1.0, LIGHT_UP_BUDGET / up)
+    intensity, fill_i, head_d, head_a = (v * k for v in (intensity, fill_i, head_d, head_a))
 
     def clamp(v): return max(0.0, min(1.0, v))
 
@@ -136,15 +166,15 @@ def sample_lighting(rng):
                      clamp(intensity * (1.0 + 0.05 * warmth)),
                      clamp(intensity * (1.0 - 0.20 * warmth))]
     main_specular = [clamp(v * 0.25) for v in main_diffuse]
-    fill_i        = rng.uniform(*LIGHT_FILL_INTENSITY)
 
     return {
-        "main_pos":      [rng.uniform(*LIGHT_MAIN_X),
-                          rng.uniform(*LIGHT_MAIN_Y),
-                          rng.uniform(*LIGHT_MAIN_Z)],
-        "main_diffuse":  main_diffuse,
-        "main_specular": main_specular,
-        "fill_diffuse":  [fill_i, fill_i, fill_i],
+        "main_pos":          main_pos,
+        "main_target":       list(LIGHT_TARGET),
+        "main_diffuse":      main_diffuse,
+        "main_specular":     main_specular,
+        "fill_diffuse":      [fill_i] * 3,
+        "headlight_diffuse": [head_d] * 3,
+        "headlight_ambient": [head_a] * 3,
     }
 
 
@@ -311,6 +341,7 @@ def load_recorded_episode(folder: Path, model_paths: dict) -> dict:
         "objects": objects,
         "lighting": _lighting_from_row(row),
     }
+    episode["lighting"].setdefault("main_target", list(LIGHT_TARGET))
     return episode
 
 
@@ -422,10 +453,13 @@ def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=Tr
                 lt = episode["lighting"]
                 mp = lt["main_pos"]
                 log.info(
-                    "  lighting | main_pos=(%.2f,%.2f,%.2f) diffuse=(%.2f,%.2f,%.2f) fill=%.2f",
+                    "  lighting | main_pos=(%.2f,%.2f,%.2f) diffuse=(%.2f,%.2f,%.2f) fill=%.2f "
+                    "head=%.2f amb=%.2f",
                     mp[0], mp[1], mp[2],
                     lt["main_diffuse"][0], lt["main_diffuse"][1], lt["main_diffuse"][2],
                     sum(lt["fill_diffuse"]) / 3,
+                    sum(lt.get("headlight_diffuse", [0, 0, 0])) / 3,
+                    sum(lt.get("headlight_ambient", [0, 0, 0])) / 3,
                 )
 
             except Exception as e:

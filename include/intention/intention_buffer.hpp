@@ -18,6 +18,13 @@ struct IntentionBufferConfig {
     CameraIntrinsics  intrinsics;
     CameraExtrinsics  extrinsics;
     Eigen::Vector3d head_position = Eigen::Vector3d(0.0, 0.0, 1.844);  // tilt joint height
+
+    bool            static_camera = false;
+    Eigen::Matrix3d R_world_cam   = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d cam_pos_world = Eigen::Vector3d::Zero();
+
+    float gaze_scale_u = 0.5f;
+    float gaze_scale_v = 1.0f;
 };
 
 class IntentionBuffer {

@@ -1,7 +1,10 @@
 <mujoco model="board_v1">
   <!-- Collision primitives verified against board_v1.stl: exact, 0.00 cm^3 of
        difference in either direction. Geometry unchanged. Only solimp was made
-       to match the peg files, so the averaged contact equals what is written. -->
+       to match the peg files, so the averaged contact equals what is written.
+       Visual geoms are the collision boxes (exact, so the STL is no longer drawn).
+       The base plate (pocket floor) uses a darker material as baked ambient
+       occlusion, which the MuJoCo renderer cannot compute. -->
   <compiler angle="radian" meshdir="../assets/board_1" autolimits="true"/>
 
   <default>
@@ -18,14 +21,47 @@
   </default>
 
   <asset>
-    <material name="board_v1_mat" rgba="0.6 0.55 0.5 1.0"/>
-    <mesh name="board_v1_vis" file="board_v1.stl" scale="0.001 0.001 0.001"/>
+    <material name="board_v1_mat" rgba="0.42 0.49 0.55 1.0" specular="0.1" shininess="0.2"/>
+    <material name="board_v1_floor_mat" rgba="0.32 0.37 0.42 1.0" specular="0.05" shininess="0.1"/>
   </asset>
 
   <worldbody>
     <body name="board_v1" pos="0 0 0" childclass="board_v1">
       <inertial pos="0 0 0" mass="1.0" diaginertia="1 1 1"/>
-      <geom type="mesh" mesh="board_v1_vis" class="vis" pos="-0.115 -0.115 0"/>
+      <geom name="board_v1_vis0" type="box" pos="0.00000 0.00000 0.00250" size="0.11500 0.11500 0.00250" class="vis" material="board_v1_floor_mat"/>
+      <geom name="board_v1_vis1" type="box" pos="0.00000 -0.09875 0.02250" size="0.11500 0.01625 0.01750" class="vis"/>
+      <geom name="board_v1_vis2" type="box" pos="-0.06600 -0.06725 0.02250" size="0.04900 0.01525 0.01750" class="vis"/>
+      <geom name="board_v1_vis3" type="box" pos="0.06600 -0.06725 0.02250" size="0.04900 0.01525 0.01750" class="vis"/>
+      <geom name="board_v1_vis4" type="box" pos="-0.10000 -0.03525 0.02250" size="0.01500 0.01675 0.01750" class="vis"/>
+      <geom name="board_v1_vis5" type="box" pos="-0.03400 -0.03525 0.02250" size="0.01700 0.01675 0.01750" class="vis"/>
+      <geom name="board_v1_vis6" type="box" pos="0.03400 -0.03525 0.02250" size="0.01700 0.01675 0.01750" class="vis"/>
+      <geom name="board_v1_vis7" type="box" pos="0.10000 -0.03525 0.02250" size="0.01500 0.01675 0.01750" class="vis"/>
+      <geom name="board_v1_vis8" type="box" pos="-0.10000 0.00000 0.02250" size="0.01500 0.01850 0.01750" class="vis"/>
+      <geom name="board_v1_vis9" type="box" pos="0.00000 0.00000 0.02250" size="0.05100 0.01850 0.01750" class="vis"/>
+      <geom name="board_v1_vis10" type="box" pos="0.10000 0.00000 0.02250" size="0.01500 0.01850 0.01750" class="vis"/>
+      <geom name="board_v1_vis11" type="box" pos="-0.10000 0.03525 0.02250" size="0.01500 0.01675 0.01750" class="vis"/>
+      <geom name="board_v1_vis12" type="box" pos="-0.03400 0.03525 0.02250" size="0.01700 0.01675 0.01750" class="vis"/>
+      <geom name="board_v1_vis13" type="box" pos="0.03400 0.03525 0.02250" size="0.01700 0.01675 0.01750" class="vis"/>
+      <geom name="board_v1_vis14" type="box" pos="0.10000 0.03525 0.02250" size="0.01500 0.01675 0.01750" class="vis"/>
+      <geom name="board_v1_vis15" type="box" pos="-0.06600 0.06725 0.02250" size="0.04900 0.01525 0.01750" class="vis"/>
+      <geom name="board_v1_vis16" type="box" pos="0.06600 0.06725 0.02250" size="0.04900 0.01525 0.01750" class="vis"/>
+      <geom name="board_v1_vis17" type="box" pos="0.00000 0.09875 0.02250" size="0.11500 0.01625 0.01750" class="vis"/>
+      <geom name="board_v1_vis18" type="box" pos="0.00000 -0.09875 0.04500" size="0.11500 0.01625 0.00500" class="vis"/>
+      <geom name="board_v1_vis19" type="box" pos="-0.10850 0.00000 0.04500" size="0.00650 0.08250 0.00500" class="vis"/>
+      <geom name="board_v1_vis20" type="box" pos="0.10850 0.00000 0.04500" size="0.00650 0.08250 0.00500" class="vis"/>
+      <geom name="board_v1_vis21" type="box" pos="0.00000 0.09875 0.04500" size="0.11500 0.01625 0.00500" class="vis"/>
+      <geom name="board_v1_vis22" type="box" pos="0.03400 0.05150 0.02500" size="0.01700 0.03100 0.02500" class="vis"/>
+      <geom name="board_v1_vis23" type="box" pos="0.09350 0.05150 0.02500" size="0.00850 0.03100 0.02500" class="vis"/>
+      <geom name="board_v1_vis24" type="box" pos="0.06800 0.06725 0.02500" size="0.01700 0.01525 0.02500" class="vis"/>
+      <geom name="board_v1_vis25" type="box" pos="-0.03400 -0.05150 0.02500" size="0.01700 0.03100 0.02500" class="vis"/>
+      <geom name="board_v1_vis26" type="box" pos="-0.09350 -0.05150 0.02500" size="0.00850 0.03100 0.02500" class="vis"/>
+      <geom name="board_v1_vis27" type="box" pos="-0.06800 -0.06725 0.02500" size="0.01700 0.01525 0.02500" class="vis"/>
+      <geom name="board_v1_vis28" type="box" pos="0.03400 -0.05150 0.02500" size="0.01700 0.03100 0.02500" class="vis"/>
+      <geom name="board_v1_vis29" type="box" pos="0.09350 -0.05150 0.02500" size="0.00850 0.03100 0.02500" class="vis"/>
+      <geom name="board_v1_vis30" type="box" pos="0.06800 -0.06725 0.02500" size="0.01700 0.01525 0.02500" class="vis"/>
+      <geom name="board_v1_vis31" type="box" pos="-0.03400 0.05150 0.02500" size="0.01700 0.03100 0.02500" class="vis"/>
+      <geom name="board_v1_vis32" type="box" pos="-0.09350 0.05150 0.02500" size="0.00850 0.03100 0.02500" class="vis"/>
+      <geom name="board_v1_vis33" type="box" pos="-0.06800 0.06725 0.02500" size="0.01700 0.01525 0.02500" class="vis"/>
       <geom name="board_v1_col0" type="box" pos="0.00000 0.00000 0.00250" size="0.11500 0.11500 0.00250" class="col"/>
       <geom name="board_v1_col1" type="box" pos="0.00000 -0.09875 0.02250" size="0.11500 0.01625 0.01750" class="col"/>
       <geom name="board_v1_col2" type="box" pos="-0.06600 -0.06725 0.02250" size="0.04900 0.01525 0.01750" class="col"/>

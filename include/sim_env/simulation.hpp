@@ -4,6 +4,8 @@
 #include <atomic>
 #include <mutex>
 #include <random>
+#include <algorithm>
+#include <cmath>
 #include <vector>
 #include <string>
 
@@ -22,41 +24,58 @@
 #include "sim_env/wrench_truth.hpp"
 
 struct LightingConfig {
-    float main_pos[3]           = {0.5f,  0.0f,  1.8f};
-    float main_diffuse[3]       = {0.8f,  0.8f,  0.8f};
-    float main_specular[3]      = {0.2f,  0.2f,  0.2f};
-    float fill_diffuse[3]       = {0.25f, 0.25f, 0.25f};
-    float headlight_diffuse[3]  = {0.4f,  0.4f,  0.4f};
-    float headlight_ambient[3]  = {0.25f, 0.25f, 0.25f};
+    float main_pos[3]           = {1.3f,  0.0f,  1.85f};
+    float main_target[3]        = {0.8f,  0.0f,  0.72f};
+    float main_diffuse[3]       = {0.35f, 0.35f, 0.35f};
+    float main_specular[3]      = {0.09f, 0.09f, 0.09f};
+    float fill_diffuse[3]       = {0.2f,  0.2f,  0.2f};
+    float headlight_diffuse[3]  = {0.15f, 0.15f, 0.15f};
+    float headlight_ambient[3]  = {0.55f, 0.55f, 0.55f};
+    float main_cutoff           = 30.0f;
+    float main_exponent         = 30.0f;
+    float fill_cutoff           = 80.0f;
+    float fill_exponent         = 1.0f;
 
     void randomize(int seed) {
         std::mt19937 rng(static_cast<uint32_t>(seed));
         auto u = [&](float lo, float hi) {
             return std::uniform_real_distribution<float>(lo, hi)(rng);
         };
+        constexpr float kDeg = 3.14159265f / 180.0f;
 
-        // keep height fixed so shadow direction stays consistent
-        main_pos[0] = u(0.3f, 0.8f);
-        main_pos[1] = u(-0.3f, 0.3f);
-        main_pos[2] = 1.8f;
+        float dist = u(1.2f, 1.5f);
+        float elev = u(45.0f, 65.0f) * kDeg;
+        float azim = u(-135.0f, 135.0f) * kDeg;
+        main_pos[0] = main_target[0] + dist * std::cos(elev) * std::cos(azim);
+        main_pos[1] = main_target[1] + dist * std::cos(elev) * std::sin(azim);
+        main_pos[2] = main_target[2] + dist * std::sin(elev);
 
-        float kd = u(0.6f, 1.4f);
-        float tint = u(-0.05f, 0.05f);  // warm/cool shift
-        main_diffuse[0] = kd + tint;
-        main_diffuse[1] = kd;
-        main_diffuse[2] = kd - tint;
+        float kd   = u(0.25f, 0.45f);
+        float warm = u(-1.0f, 1.0f);
+        float fd   = u(0.15f, 0.3f);
+        float hd   = u(0.1f, 0.2f);
+        float ha   = u(0.5f, 0.6f);
 
-        float ks = u(0.1f, 0.3f);
-        main_specular[0] = main_specular[1] = main_specular[2] = ks;
+        const float fill_pos[3] = {1.2f, 0.5f, 1.0f};
+        float fdx = main_target[0] - fill_pos[0];
+        float fdy = main_target[1] - fill_pos[1];
+        float fdz = main_target[2] - fill_pos[2];
+        float fill_up = std::max(0.0f, -fdz / std::sqrt(fdx * fdx + fdy * fdy + fdz * fdz));
 
-        float fd = u(0.1f, 0.55f);
-        fill_diffuse[0] = fill_diffuse[1] = fill_diffuse[2] = fd;
+        float up = kd * std::sin(elev) + fd * fill_up + hd * 0.7f + ha;
+        float k  = std::min(1.0f, 1.4f / up);
+        kd *= k; fd *= k; hd *= k; ha *= k;
 
-        float hd = u(0.2f, 0.7f);
-        headlight_diffuse[0] = headlight_diffuse[1] = headlight_diffuse[2] = hd;
-
-        float ha = u(0.15f, 0.5f);
-        headlight_ambient[0] = headlight_ambient[1] = headlight_ambient[2] = ha;
+        auto clamp01 = [](float v) { return std::max(0.0f, std::min(1.0f, v)); };
+        main_diffuse[0] = clamp01(kd * (1.0f + 0.15f * warm));
+        main_diffuse[1] = clamp01(kd * (1.0f + 0.05f * warm));
+        main_diffuse[2] = clamp01(kd * (1.0f - 0.20f * warm));
+        for (int i = 0; i < 3; ++i) {
+            main_specular[i]     = clamp01(main_diffuse[i] * 0.25f);
+            fill_diffuse[i]      = fd;
+            headlight_diffuse[i] = hd;
+            headlight_ambient[i] = ha;
+        }
     }
 };
 
@@ -248,4 +267,4 @@ private:
         std::vector<std::array<mjtNum, 6>> original_bvh_aabb;    // body BVH nodes
     };
     std::unordered_map<std::string, BodyScaleCache> body_scale_cache_;
-};
+};
