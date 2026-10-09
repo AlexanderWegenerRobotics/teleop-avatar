@@ -224,6 +224,8 @@ private:
     double max_target_lead_rot_{0.0};
     std::chrono::steady_clock::time_point last_leash_log_time_{};
     std::chrono::steady_clock::time_point last_leash_rot_log_time_{};
+    int    leash_count_{0}, leash_rot_count_{0};
+    double leash_max_{0.0}, leash_rot_max_{0.0};
     double ee_fingertip_length_;
     double max_tilt_angle_;
     double cmd_dt_;

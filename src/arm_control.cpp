@@ -1627,11 +1627,15 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
             double lead_norm = lead.norm();
             if (lead_norm > max_target_lead_ && lead_norm > 1e-9) {
                 p_target = ee_pos + (max_target_lead_ / lead_norm) * lead;
-                if (cmd_now - last_leash_log_time_ > std::chrono::seconds(1)) {
+                ++leash_count_;
+                leash_max_ = std::max(leash_max_, lead_norm);
+                if (cmd_now - last_leash_log_time_ > std::chrono::seconds(30)) {
                     last_leash_log_time_ = cmd_now;
-                    std::cout << "[WARN] " << name_ << ": target leashed - operator "
-                              << lead_norm * 1000.0 << " mm ahead of the arm, capped at "
-                              << max_target_lead_ * 1000.0 << " mm.\n";
+                    std::cout << "[WARN] " << name_ << ": target leashed " << leash_count_
+                              << "x in the last 30 s (operator up to " << leash_max_ * 1000.0
+                              << " mm ahead of the arm, capped at " << max_target_lead_ * 1000.0 << " mm).\n";
+                    leash_count_ = 0;
+                    leash_max_ = 0.0;
                 }
             }
         }
@@ -1642,11 +1646,16 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
             const double lead_ang = ee_rot.angularDistance(q_target);
             if (lead_ang > max_target_lead_rot_ && lead_ang > 1e-9) {
                 q_target = ee_rot.slerp(max_target_lead_rot_ / lead_ang, q_target).normalized();
-                if (cmd_now - last_leash_rot_log_time_ > std::chrono::seconds(1)) {
+                ++leash_rot_count_;
+                leash_rot_max_ = std::max(leash_rot_max_, lead_ang);
+                if (cmd_now - last_leash_rot_log_time_ > std::chrono::seconds(30)) {
                     last_leash_rot_log_time_ = cmd_now;
-                    std::cout << "[WARN] " << name_ << ": rotation leashed - operator "
-                              << lead_ang * 180.0 / M_PI << " deg ahead of the wrist, capped at "
-                              << max_target_lead_rot_ * 180.0 / M_PI << " deg.\n";
+                    std::cout << "[WARN] " << name_ << ": rotation leashed " << leash_rot_count_
+                              << "x in the last 30 s (operator up to " << leash_rot_max_ * 180.0 / M_PI
+                              << " deg ahead of the wrist, capped at " << max_target_lead_rot_ * 180.0 / M_PI
+                              << " deg).\n";
+                    leash_rot_count_ = 0;
+                    leash_rot_max_ = 0.0;
                 }
             }
         }

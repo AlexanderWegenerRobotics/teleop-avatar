@@ -304,12 +304,6 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
     constexpr double alpha = (omega * dt) / (1.0 + omega * dt);
 
     auto next_control_time = std::chrono::high_resolution_clock::now();
-    auto tick_prev = next_control_time;
-    // achieved rate, reported every kRateReportTicks
-    constexpr int kRateReportTicks = 5000;
-    double dt_sum  = 0.0;   // wall s
-    double sim_sum = 0.0;   // sim s
-    int    dt_n    = 0;
 
     Duration dur;
 
@@ -339,19 +333,6 @@ void Robot::control(std::function<Torques(const RobotState&, Duration)> control_
                                                    : device_state.time - sim_time_prev_;
             sim_time_prev_ = device_state.time;
             if (dt_sim < 0.0 || dt_sim > 0.1) dt_sim = 0.0;   // reset/seek guard
-
-            const auto tick_now = std::chrono::high_resolution_clock::now();
-            dt_sum += std::chrono::duration<double>(tick_now - tick_prev).count();
-            sim_sum += dt_sim;
-            tick_prev = tick_now;
-            if (++dt_n >= kRateReportTicks) {
-                std::cout << "[SIM] " << name_ << ": control loop " << (dt_sum / dt_n) * 1e3
-                          << " ms wall / " << (sim_sum / dt_n) * 1e3 << " ms sim per tick ("
-                          << (dt_sum > 0 ? sim_sum / dt_sum : 0.0) << "x real time)" << std::endl;
-                dt_sum = 0.0;
-                sim_sum = 0.0;
-                dt_n   = 0;
-            }
 
             populateRobotState(device_state, dt_sim);
 
