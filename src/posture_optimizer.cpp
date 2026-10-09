@@ -28,6 +28,9 @@ void PostureOptimizer::init(const PostureConfig& cfg, const Vector7& q_min, cons
     q_max_  = q_max;
     R_base_ = R_base;
     g_base_ = R_base.transpose() * Eigen::Vector3d(0, 0, -1);
+    Eigen::Vector3d side_world(cfg_.side_dir[0], cfg_.side_dir[1], cfg_.side_dir[2]);
+    have_side_ = cfg_.k_side > 0.0 && side_world.norm() > 1e-6;
+    side_base_ = have_side_ ? Eigen::Vector3d(R_base.transpose() * side_world.normalized()) : Eigen::Vector3d::Zero();
     kin_    = std::move(kin);
 
     ArmGeometry g = geometry(q0);
@@ -76,7 +79,7 @@ PostureOptimizer::ArmGeometry PostureOptimizer::geometry(const Vector7& q) const
 
     Eigen::Vector3d se = g.p_e - g.p_s;
     Eigen::Vector3d e_raw = se - se.dot(g.u) * g.u;
-    if (e_raw.norm() < 1e-6) return g;
+    if (e_raw.norm() < 5e-3) return g;
     g.e = e_raw.normalized();
 
     Eigen::Vector3d r_raw = g_base_ - g_base_.dot(g.u) * g.u;
@@ -100,7 +103,14 @@ double PostureOptimizer::swivelTarget(const ArmGeometry& g) const {
 
 double PostureOptimizer::cost(const ArmGeometry& g, double phi_target) const {
     Eigen::Vector3d e_target = std::cos(phi_target) * g.r + std::sin(phi_target) * g.t;
-    return 1.0 - g.e.dot(e_target);
+    return 1.0 - g.e.dot(e_target) + sideCost(g);
+}
+
+double PostureOptimizer::sideCost(const ArmGeometry& g) const {
+    if (!have_side_) return 0.0;
+    Eigen::Vector3d d = side_base_ - side_base_.dot(g.u) * g.u;
+    if (d.norm() < 1e-3) return 0.0;
+    return cfg_.k_side * (1.0 - g.e.dot(d.normalized()));
 }
 
 double PostureOptimizer::jointMargin(const Vector7& q) const {
@@ -110,19 +120,9 @@ double PostureOptimizer::jointMargin(const Vector7& q) const {
     return m;
 }
 
-double PostureOptimizer::manipulability(const Matrix6x7& J) {
-    Eigen::Matrix<double, 6, 6> JJt = J * J.transpose();
-    double det = JJt.determinant();
-    return det > 0.0 ? std::sqrt(det) : 0.0;
-}
-
-Vector7 PostureOptimizer::nullspaceTangent(const Matrix6x7& J) {
-    Eigen::JacobiSVD<Matrix6x7> svd(J, Eigen::ComputeFullV);
-    Vector7 v = svd.matrixV().col(6);
-    if (have_v_prev_ && v.dot(v_prev_) < 0.0) v = -v;
-    v_prev_      = v;
-    have_v_prev_ = true;
-    return v;
+double PostureOptimizer::sigmaMin(const Matrix6x7& J) {
+    Eigen::JacobiSVD<Matrix6x7> svd(J);
+    return svd.singularValues()(5);
 }
 
 // Damped Gauss-Newton on the EE pose error to pull q + s*v back onto the self-motion manifold.
@@ -154,10 +154,14 @@ Vector7 PostureOptimizer::update(const Vector7& q, double dt) {
     const double ds = cfg_.window_rad / c;
 
     Matrix6x7 J0 = kin_.jacobian(q);
-    Vector7   v  = nullspaceTangent(J0);
+    Eigen::JacobiSVD<Matrix6x7> svd0(J0, Eigen::ComputeFullV);
+    Vector7 v = svd0.matrixV().col(6);
+    if (have_v_prev_ && v.dot(v_prev_) < 0.0) v = -v;
+    v_prev_      = v;
+    have_v_prev_ = true;
     Eigen::Isometry3d x_ref = kin_.pose(franka::Frame::kEndEffector, q);
 
-    std::vector<double>  s(n), cst(n), mrg(n), mnp(n);
+    std::vector<double>  s(n), cst(n), mrg(n), sig(n), def_m(n), def_s(n), sd(n, 0.0);
     std::vector<bool>    feas(n);
     std::vector<Vector7> qs(n);
     double phi_now = 0.0, phi_target = 0.0;
@@ -167,12 +171,14 @@ Vector7 PostureOptimizer::update(const Vector7& q, double dt) {
         qs[k] = (k == c) ? q : projectToManifold(q + s[k] * v, x_ref);
         ArmGeometry g = geometry(qs[k]);
         mrg[k]  = jointMargin(qs[k]);
-        mnp[k]  = (cfg_.manip_floor > 0.0 || k == c) ? manipulability(kin_.jacobian(qs[k])) : 0.0;
-        feas[k] = g.ok && mrg[k] >= cfg_.margin_rad
-                       && (cfg_.manip_floor <= 0.0 || mnp[k] >= cfg_.manip_floor);
+        sig[k]  = (k == c) ? svd0.singularValues()(5) : sigmaMin(kin_.jacobian(qs[k]));
+        def_m[k] = std::max(cfg_.margin_rad - mrg[k], 0.0) / cfg_.margin_rad;
+        def_s[k] = cfg_.sigma_floor > 0.0 ? std::max(cfg_.sigma_floor - sig[k], 0.0) / cfg_.sigma_floor : 0.0;
+        feas[k]  = g.ok && def_m[k] <= 0.0 && def_s[k] <= 0.0;
         if (g.ok) {
             double phi_t = swivelTarget(g);
             cst[k] = cost(g, phi_t);
+            sd[k]  = sideCost(g);
             if (k == c) {
                 phi_now    = std::atan2(g.e.dot(g.t), g.e.dot(g.r));
                 phi_target = phi_t;
@@ -202,17 +208,26 @@ Vector7 PostureOptimizer::update(const Vector7& q, double dt) {
         }
         s_opt = std::clamp(s_opt, s[lo], s[hi]);
     } else {
-        // already inside the margin: go to the sample with the most margin
+        const std::vector<double>& def = (def_m[c] > 0.0) ? def_m : def_s;
+        int most = c;
         for (int k = 0; k < n; ++k) {
-            if (mrg[k] > mrg[best] + 1e-9 ||
-                (std::abs(mrg[k] - mrg[best]) <= 1e-9 && std::abs(s[k]) < std::abs(s[best])))
-                best = k;
+            if (def[k] < def[most] - 1e-9 ||
+                (std::abs(def[k] - def[most]) <= 1e-9 && std::abs(s[k]) < std::abs(s[most])))
+                most = k;
+        }
+        best = most;
+        if (have_side_) {
+            const bool up = sd[n - 1] < sd[0];
+            int side_best = -1;
+            for (int k = 0; k < n; ++k) {
+                if (k == c || (k > c) != up) continue;
+                if (side_best < 0 || def[k] < def[side_best] - 1e-9) side_best = k;
+            }
+            if (side_best >= 0 && def[side_best] <= def[c] + 0.01 && def[side_best] <= def[most] + 0.08)
+                best = side_best;
         }
         s_opt = s[best];
     }
-
-    if (best != c && cfg_.manip_floor <= 0.0)
-        mnp[best] = manipulability(kin_.jacobian(qs[best]));
 
     double alpha = (cfg_.filter_tau_s > 0.0) ? std::clamp(dt / cfg_.filter_tau_s, 0.0, 1.0) : 1.0;
     s_filt_ += alpha * (s_opt - s_filt_);
@@ -226,7 +241,7 @@ Vector7 PostureOptimizer::update(const Vector7& q, double dt) {
     snap_.s_opt         = s_cmd;
     snap_.cost          = cst[best];
     snap_.margin        = mrg[best];
-    snap_.manip         = mnp[best];
+    snap_.sigma         = sig[best];
     snap_.feasible      = feas[best];
     snap_.swivel        = phi_now;
     snap_.swivel_target = phi_target;

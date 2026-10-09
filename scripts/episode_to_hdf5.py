@@ -14,6 +14,8 @@ import sys
 
 import numpy as np
 
+MAX_SCENE_OBJECTS = 8
+
 SCHEMA_VERSION = 2
 
 try:
@@ -385,7 +387,7 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
             sel = nearest_idx(ts, grid)
             sg = f.create_group("scene")
 
-            for kind, count in (("obj", 4), ("bin", 4)):
+            for kind, count in (("obj", MAX_SCENE_OBJECTS), ("bin", 4)):
                 for i in range(count):
                     pose_cols = [f"{kind}{i}_{c}" for c in ("x", "y", "z", "qw", "qx", "qy", "qz")]
                     if all(c in hdr for c in pose_cols):
@@ -394,7 +396,7 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
                         if np.any(np.abs(vals) > 1e-9):
                             sg.create_dataset(f"{kind}{i}_pose", data=vals)
 
-            for i in range(4):
+            for i in range(MAX_SCENE_OBJECTS):
                 for field in ("spawn_yaw", "scale"):
                     col = f"obj{i}_{field}"
                     if col in hdr:
@@ -403,7 +405,7 @@ def convert(folder, out_path, rate, scale, cameras, camera_params_path=None):
 
             if scene_rows:
                 first = scene_rows[0]
-                for i in range(4):
+                for i in range(MAX_SCENE_OBJECTS):
                     col = f"obj{i}_color"
                     if col in first and first[col]:
                         sg.create_dataset(f"obj{i}_color",

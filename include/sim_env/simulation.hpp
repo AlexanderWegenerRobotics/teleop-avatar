@@ -116,6 +116,8 @@ public:
     void setDeviceActive(const std::string& deviceName, bool state);
     void setFramePose(const std::string& name, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat, double z_offset=0.0);
     void setFreeBodyPose(const std::string& bodyName, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat);
+    struct FreeBodyPose { std::string body; Eigen::Vector3d pos; Eigen::Quaterniond quat; };
+    void setFreeBodyPoses(const std::vector<FreeBodyPose>& poses);
     bool getFreeBodyPose(const std::string& bodyName, Eigen::Vector3d& pos, Eigen::Quaterniond& quat);
     CameraIntrinsics  getCameraIntrinsics(const std::string& cam_name) const;
     CameraExtrinsics  getCameraExtrinsics(const std::string& cam_name) const;

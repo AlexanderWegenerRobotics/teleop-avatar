@@ -1,7 +1,10 @@
 """
 UDP server that randomizes (or replays) object spawns per episode for the Avatar.
 msgpack protocol: {"type": "request_episode_config"} -> {seed, mode (0 uni, 1 bi), color_bin_mapping, objects, lighting}
-spawn modes: random (sorting) | fixed (task-config poses, scale 1.0, sends quat; FMB)
+spawn modes: random (sorting) | fixed (task-config poses, scale 1.0, sends quat)
+           | scatter (FMB: collision-free random poses at scale 1.0, plus 0-N spare parts)
+spares: role=object entries with `spare: true` in the task config. Their task-config pose is
+        the parking pose (under the table); unused spares are sent in "parked".
 """
 
 import argparse
@@ -16,6 +19,8 @@ from pathlib import Path
 
 import msgpack
 import yaml
+
+import scatter_spawn
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("episode_config_server")
@@ -34,7 +39,7 @@ DEFAULT_SPAWN = {
     "mode":            "random",   # "random" | "fixed"
 }
 
-SPAWN_MODES = ("random", "fixed")
+SPAWN_MODES = ("random", "fixed", "scatter")
 
 MODE_WEIGHTS = {0: 0.5, 1: 0.5}
 
@@ -96,7 +101,18 @@ def _yaw_from_quat(q) -> float:
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
-def build_object_defs(sim_cfg: dict) -> list:
+def _footprint(obj: dict, quat, base_dir: Path):
+    mp = obj.get("model_path")
+    if not mp or base_dir is None:
+        return None
+    path = (base_dir / mp).resolve()
+    if not path.exists():
+        log.warning("model not found for footprint: %s", path)
+        return None
+    return scatter_spawn.footprint(path, quat)
+
+
+def build_object_defs(sim_cfg: dict, base_dir: Path = None) -> list:
     objects = []
     for obj in sim_cfg.get("objects", []):
         if obj.get("role") == "object":
@@ -107,10 +123,23 @@ def build_object_defs(sim_cfg: dict) -> list:
                 "model_path": obj.get("model_path", ""),
                 "default_pos":  pos,
                 "default_quat": quat,
+                "spare":      bool(obj.get("spare", False)),
+                "fp":         _footprint(obj, quat or [1, 0, 0, 0], base_dir),
             })
     if not objects:
         log.warning("No objects with role=object found — check your task config.")
     return objects
+
+
+def build_obstacles(sim_cfg: dict, base_dir: Path) -> list:
+    obstacles = []
+    for obj in sim_cfg.get("objects", []):
+        if obj.get("role") in ("board", "fixture", "bin"):
+            pos, quat = _default_pose(obj)
+            if pos is None:
+                continue
+            obstacles.append((_footprint(obj, [1, 0, 0, 0], base_dir), pos, quat))
+    return scatter_spawn.obstacle_rects(obstacles)
 
 
 def build_bin_mapping(sim_cfg: dict) -> dict:
@@ -208,26 +237,82 @@ def _sample_mode(rng):
     return rng.choices(modes, weights=weights, k=1)[0]
 
 
-def fixed_episode(all_objects, bin_mapping, n_objects, rng):
+def _at_default(obj):
+    pos, quat = obj["default_pos"], obj["default_quat"]
+    return {
+        "name":       obj["name"],
+        "color":      obj["color"],
+        "model_path": obj["model_path"],
+        "x": pos[0], "y": pos[1], "z": pos[2],
+        "yaw":   _yaw_from_quat(quat),
+        "scale": 1.0,
+        "quat":  quat,
+    }
+
+
+def _parked(spares):
+    return [_at_default(o) for o in spares if o["default_pos"] is not None]
+
+
+def fixed_episode(all_objects, bin_mapping, n_objects, rng, spares=()):
     """Every role=object body back at its task-config pose, scale 1.0 (FMB clearance is 1-2 mm)."""
+    return {
+        "mode":              _sample_mode(rng),
+        "color_bin_mapping": json.dumps(bin_mapping),
+        "objects":           [_at_default(o) for o in all_objects[:n_objects]],
+        "parked":            _parked(spares),
+        "lighting":          sample_lighting(rng),
+    }
+
+
+def scatter_episode(required, spares, obstacles, bin_mapping, spawn, rng):
+    """All required parts plus a random subset of the spare pool, collision-free, scale 1.0.
+    If a layout with k spares cannot be found, k is reduced; required parts are never dropped."""
+    lo, hi = spawn.get("spares", [0, 0])
+    hi = min(int(hi), len(spares))
+    lo = min(int(lo), hi)
+    n_spare = rng.randint(lo, hi) if hi > 0 else 0
+    chosen = rng.sample(spares, n_spare)
+
+    layout = None
+    while True:
+        layout = scatter_spawn.scatter(required + chosen, obstacles, spawn, rng)
+        if layout is not None or not chosen:
+            break
+        log.warning("scatter: no layout with %d spares, retrying with %d", len(chosen), len(chosen) - 1)
+        chosen = chosen[:-1]
+
+    if layout is None:
+        log.error("scatter: no collision-free layout for the required parts; using task-config poses. "
+                  "Widen spawn x_range/y_range or lower object_gap/obstacle_gap.")
+        ep = fixed_episode(required, bin_mapping, len(required), rng, spares)
+        return ep, []
+
+    table_z = {o["model_path"]: o["default_pos"][2] for o in required}
+    active = required + chosen
+    rng.shuffle(active)
     spawned = []
-    for obj in all_objects[:n_objects]:
-        pos, quat = obj["default_pos"], obj["default_quat"]
+    for obj in active:
+        x, y, yaw = layout[obj["name"]]
+        quat = scatter_spawn.quat_mul(scatter_spawn.yaw_quat(yaw), obj["default_quat"])
+        z = obj["default_pos"][2] if not obj["spare"] else table_z.get(obj["model_path"], spawn["z"])
         spawned.append({
             "name":       obj["name"],
             "color":      obj["color"],
             "model_path": obj["model_path"],
-            "x": pos[0], "y": pos[1], "z": pos[2],
-            "yaw":   _yaw_from_quat(quat),
+            "x": x, "y": y, "z": z,
+            "yaw":   scatter_spawn.yaw_of(quat),
             "scale": 1.0,
             "quat":  quat,
         })
+    chosen_names = {o["name"] for o in chosen}
     return {
         "mode":              _sample_mode(rng),
         "color_bin_mapping": json.dumps(bin_mapping),
         "objects":           spawned,
+        "parked":            _parked([o for o in spares if o["name"] not in chosen_names]),
         "lighting":          sample_lighting(rng),
-    }
+    }, sorted(chosen_names)
 
 
 def sample_episode(all_objects, bin_mapping, bin_positions, n_objects, spawn, rng):
@@ -311,18 +396,19 @@ def _lighting_from_row(row: dict) -> dict:
     return out
 
 
-def load_recorded_episode(folder: Path, model_paths: dict) -> dict:
+def load_recorded_episode(folder: Path, model_paths: dict, spare_names=frozenset()) -> dict:
     """Rebuild the recorded episode config; model_path comes from the sim config."""
     meta = _read_episode_meta(folder)
     row = _spawn_row(folder, meta["seed"])
 
     n_objects = int(float(row["n_objects"]))
-    objects = []
+    objects, parked = [], []
     for i in range(n_objects):
         name = row.get(f"obj{i}_name") or ""
         if not name:
             continue
-        objects.append({
+        dst = parked if (name in spare_names and not row.get(f"obj{i}_color")) else objects
+        dst.append({
             "name": name,
             "color": row.get(f"obj{i}_color", "unknown"),
             "model_path": model_paths.get(name, ""),
@@ -339,6 +425,7 @@ def load_recorded_episode(folder: Path, model_paths: dict) -> dict:
         "mode": meta["mode"],
         "color_bin_mapping": meta["color_bin_mapping"],
         "objects": objects,
+        "parked": parked,
         "lighting": _lighting_from_row(row),
     }
     episode["lighting"].setdefault("main_target", list(LIGHT_TARGET))
@@ -353,29 +440,41 @@ def build_model_paths(sim_cfg: dict) -> dict:
 def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=True,
         spawn_mode_override=None):
     sim_cfg, spawn = resolve_merged_config(sim_config_path)
-    all_objects    = build_object_defs(sim_cfg)
+    base_dir       = Path(sim_config_path).parent
+    defs           = build_object_defs(sim_cfg, base_dir)
+    all_objects    = [o for o in defs if not o["spare"]]
+    spares         = [o for o in defs if o["spare"]]
     bin_mapping    = build_bin_mapping(sim_cfg)
     bin_positions  = build_bin_positions(sim_cfg)
+    obstacles      = build_obstacles(sim_cfg, base_dir)
 
     spawn_mode = spawn_mode_override or spawn.get("mode", "random")
     if spawn_mode not in SPAWN_MODES:
         log.error("Unknown spawn mode %r (expected one of %s)", spawn_mode, SPAWN_MODES)
         sys.exit(1)
     spawn["mode"] = spawn_mode
-    if spawn_mode == "fixed":
-        missing = [o["name"] for o in all_objects if o["default_pos"] is None]
+    if spawn_mode in ("fixed", "scatter"):
+        missing = [o["name"] for o in defs if o["default_pos"] is None]
         if missing:
-            log.error("spawn mode 'fixed' needs pose.position for every role=object; missing: %s",
-                      missing)
+            log.error("spawn mode '%s' needs pose.position for every role=object; missing: %s",
+                      spawn_mode, missing)
             sys.exit(1)
+    if spawn_mode == "scatter":
+        no_fp = [o["name"] for o in defs if o["fp"] is None]
+        if no_fp:
+            log.error("spawn mode 'scatter' needs box geoms in the model of every part; none for: %s", no_fp)
+            sys.exit(1)
+        if len(obstacles) == 0:
+            log.warning("scatter: no board/fixture/bin obstacles found")
 
     # replay mode: one recorded scene per request
     replay_queue = []
     if replay_folders:
         model_paths = build_model_paths(sim_cfg)
+        spare_names = frozenset(o["name"] for o in spares)
         for folder in replay_folders:
             try:
-                ep = load_recorded_episode(Path(folder), model_paths)
+                ep = load_recorded_episode(Path(folder), model_paths, spare_names)
             except Exception as e:
                 log.error("Cannot replay %s: %s", folder, e)
                 sys.exit(1)
@@ -393,6 +492,8 @@ def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=Tr
     n_objects = min(n_objects, len(all_objects))
 
     log.info("Loaded %d pickable objects, will spawn %d per episode.", len(all_objects), n_objects)
+    if spares:
+        log.info("Spare pool: %s, %s per episode", [o["name"] for o in spares], spawn.get("spares", [0, 0]))
     log.info("Spawn mode: %s%s", spawn_mode,
              "  (objects reset to task-config poses, scale 1.0)" if spawn_mode == "fixed" else "")
     log.info("Bin mapping: %s", bin_mapping)
@@ -431,11 +532,16 @@ def run(sim_config_path, n_objects_override, replay_folders=None, replay_loop=Tr
                     seed    = random.randint(0, 2**31 - 1)
                     rng     = random.Random(seed)
                     if spawn_mode == "fixed":
-                        episode = fixed_episode(all_objects, bin_mapping, n_objects, rng)
+                        episode = fixed_episode(all_objects, bin_mapping, n_objects, rng, spares)
+                    elif spawn_mode == "scatter":
+                        episode, used_spares = scatter_episode(
+                            all_objects[:n_objects], spares, obstacles, bin_mapping, spawn, rng)
+                        log.info("  spares this episode: %s", used_spares or "none")
                     else:
                         episode = sample_episode(all_objects, bin_mapping, bin_positions,
                                                  n_objects, spawn, rng)
                     episode["seed"] = seed
+                    episode.setdefault("parked", _parked(spares))
 
                 sock.sendto(msgpack.packb(episode), addr)
 
@@ -487,7 +593,8 @@ if __name__ == "__main__":
         "--spawn-mode", choices=SPAWN_MODES, default=None,
         help="Override the task config's spawn.mode. 'random' randomizes "
              "role=object poses (parcels); 'fixed' puts them back at their "
-             "task-config poses every episode (FMB).",
+             "task-config poses every episode; 'scatter' places them "
+             "collision-free at random poses, scale 1.0, plus spare parts (FMB).",
     )
     parser.add_argument(
         "--replay", nargs="+", metavar="EPISODE_DIR", default=None,

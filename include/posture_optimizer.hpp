@@ -19,10 +19,12 @@ struct PostureConfig {
     double lead_rad          = 0.15;   // |q_ref - q| cap
     double filter_tau_s      = 0.20;   // first-order filter on the optimum
     double margin_rad        = 0.30;   // posture keeps this far from q_min / q_max
-    double manip_floor       = 0.0;    // sqrt(det(J J^T)) floor, 0 disables
+    double sigma_floor       = 0.0;    // smallest singular value of J below which the posture is infeasible, 0 disables
     double swivel_offset_deg = 0.0;    // added to the swivel angle of q0
     double k_height          = 0.0;    // rad of swivel per m of wrist rise above its q0 height (world z)
     double k_lateral         = 0.0;    // rad of swivel per m of wrist lateral offset from q0 (world y)
+    std::array<double, 3> side_dir = {0.0, 0.0, 0.0};   // world direction the elbow should favour, zero disables
+    double k_side            = 0.0;    // weight of the side term, 0.1 shifts the rest posture ~6 deg
 };
 
 struct PostureKinematics {
@@ -37,7 +39,7 @@ struct PostureSnapshot {
     double  s_opt    = 0.0;   // filtered orbit displacement handed to the spring (rad)
     double  cost     = 0.0;   // 1 - e.e* at the chosen sample
     double  margin   = 0.0;   // min joint-limit margin at the chosen sample (rad)
-    double  manip    = 0.0;   // sqrt(det(J J^T)) at the chosen sample
+    double  sigma    = 0.0;   // smallest singular value of J at the chosen sample
     bool    feasible = false; // chosen sample satisfies the margins
     double  swivel   = 0.0;   // current swivel angle (rad)
     double  swivel_target = 0.0;
@@ -72,15 +74,17 @@ private:
     ArmGeometry geometry(const Vector7& q) const;
     double swivelTarget(const ArmGeometry& g) const;
     double cost(const ArmGeometry& g, double phi_target) const;
+    double sideCost(const ArmGeometry& g) const;
     double jointMargin(const Vector7& q) const;
-    static double manipulability(const Matrix6x7& J);
-    Vector7 nullspaceTangent(const Matrix6x7& J);
+    static double sigmaMin(const Matrix6x7& J);
     Vector7 projectToManifold(const Vector7& q_s, const Eigen::Isometry3d& x_ref) const;
 
     PostureConfig     cfg_;
     PostureKinematics kin_;
     Vector7 q_min_ = Vector7::Zero(), q_max_ = Vector7::Zero();
     Eigen::Vector3d g_base_ = Eigen::Vector3d(0, 0, -1);   // world down, in base frame
+    Eigen::Vector3d side_base_ = Eigen::Vector3d::Zero();   // preferred elbow side, in base frame
+    bool            have_side_ = false;
     Eigen::Matrix3d R_base_ = Eigen::Matrix3d::Identity();
     double          phi_home_ = 0.0;
     double          z_home_   = 0.0, y_home_ = 0.0;         // world-frame wrist height / lateral at q0

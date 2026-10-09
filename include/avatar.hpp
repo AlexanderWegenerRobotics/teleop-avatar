@@ -91,6 +91,7 @@ private:
         std::string model_path;
         double fixed_x = 0, fixed_y = 0, fixed_z = 0;
         double fixed_qw = 1, fixed_qx = 0, fixed_qy = 0, fixed_qz = 0;  // w,x,y,z
+        bool   spare = false;
     };
 
     struct SpawnedObject {
@@ -110,6 +111,7 @@ private:
         int                       mode = 0;
         std::string               color_bin_mapping;
         std::vector<SpawnedObject> objects;
+        std::vector<SpawnedObject> parked;
 #ifndef WITH_FRANKA
         LightingConfig            lighting;
 #endif

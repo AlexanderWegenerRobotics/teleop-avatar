@@ -325,6 +325,7 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         def.mujoco_body = name + "_" + body_name;
         def.color       = color;
         def.model_path  = mp;
+        def.spare       = obj["spare"] ? obj["spare"].as<bool>(false) : false;
         if (obj["pose"] && obj["pose"]["position"]) {
             auto p = obj["pose"]["position"].as<std::vector<double>>();
             def.fixed_x = p[0]; def.fixed_y = p[1]; def.fixed_z = p[2];
@@ -927,7 +928,7 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
         so.x = def.fixed_x; so.y = def.fixed_y; so.z = def.fixed_z;
         so.has_quat = true;
         so.qw = def.fixed_qw; so.qx = def.fixed_qx; so.qy = def.fixed_qy; so.qz = def.fixed_qz;
-        cfg.objects.push_back(so);
+        (def.spare ? cfg.parked : cfg.objects).push_back(so);
     }
 
     if (n <= 0) {
@@ -945,9 +946,7 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
         cfg.mode = fields.at("mode").as<int>();
         cfg.color_bin_mapping = fields.at("color_bin_mapping").as<std::string>();
 
-        cfg.objects.clear();
-        auto obj_list = fields.at("objects").as<std::vector<msgpack::object>>();
-        for (const auto& item : obj_list) {
+        auto parseObject = [](const msgpack::object& item) {
             std::map<std::string, msgpack::object> o;
             item.convert(o);
             SpawnedObject so;
@@ -966,7 +965,17 @@ Avatar::EpisodeConfig Avatar::requestEpisodeConfig() {
                     so.qw = q[0]; so.qx = q[1]; so.qy = q[2]; so.qz = q[3];
                 }
             }
-            cfg.objects.push_back(so);
+            return so;
+        };
+
+        cfg.objects.clear();
+        for (const auto& item : fields.at("objects").as<std::vector<msgpack::object>>())
+            cfg.objects.push_back(parseObject(item));
+
+        if (fields.count("parked")) {
+            cfg.parked.clear();
+            for (const auto& item : fields.at("parked").as<std::vector<msgpack::object>>())
+                cfg.parked.push_back(parseObject(item));
         }
 
 #ifndef WITH_FRANKA
@@ -1035,24 +1044,42 @@ void Avatar::startNewEpisodeFolder() {
 void Avatar::applyEpisodeConfig(const EpisodeConfig& cfg) {
     std::cout << "[AVATAR-INFO]: Episode config seed=" << cfg.seed
               << " mode=" << (cfg.mode == 0 ? "unimanual" : "bimanual")
-              << " n_objects=" << cfg.objects.size() << std::endl;
+              << " n_objects=" << cfg.objects.size()
+              << " parked=" << cfg.parked.size() << std::endl;
 
 #ifndef WITH_FRANKA
     sim_->setLighting(cfg.lighting);
+
+    std::vector<Simulation::FreeBodyPose> poses;
+    auto toQuat = [](const SpawnedObject& so) {
+        return so.has_quat
+            ? Eigen::Quaterniond(so.qw, so.qx, so.qy, so.qz).normalized()
+            : Eigen::Quaterniond(Eigen::AngleAxisd(so.yaw, Eigen::Vector3d::UnitZ()));
+    };
+    for (const auto* list : {&cfg.objects, &cfg.parked}) {
+        for (const auto& so : *list) {
+            auto it = std::find_if(object_defs_.begin(), object_defs_.end(),
+                [&](const ObjectDef& d){ return d.name == so.name; });
+            if (it == object_defs_.end()) continue;
+            poses.push_back({it->mujoco_body, Eigen::Vector3d(so.x, so.y, so.z), toQuat(so)});
+        }
+    }
+    sim_->setFreeBodyPoses(poses);
 
     for (const auto& so : cfg.objects) {
         auto it = std::find_if(object_defs_.begin(), object_defs_.end(),
             [&](const ObjectDef& d){ return d.name == so.name; });
         if (it == object_defs_.end()) continue;
-        Eigen::Quaterniond q_spawn = so.has_quat
-            ? Eigen::Quaterniond(so.qw, so.qx, so.qy, so.qz).normalized()
-            : Eigen::Quaterniond(Eigen::AngleAxisd(so.yaw, Eigen::Vector3d::UnitZ()));
-        sim_->setFreeBodyPose(it->mujoco_body,
-            Eigen::Vector3d(so.x, so.y, so.z), q_spawn);
         sim_->setBodyScale(it->mujoco_body, so.scale);
         std::cout << "[AVATAR-INFO]:   " << so.name << " (" << so.color
                   << ") -> (" << so.x << "," << so.y << "," << so.z
                   << ") yaw=" << so.yaw << " scale=" << so.scale << std::endl;
+    }
+    for (const auto& so : cfg.parked) {
+        auto it = std::find_if(object_defs_.begin(), object_defs_.end(),
+            [&](const ObjectDef& d){ return d.name == so.name; });
+        if (it == object_defs_.end()) continue;
+        sim_->setBodyScale(it->mujoco_body, 1.0);
     }
 #endif
 }

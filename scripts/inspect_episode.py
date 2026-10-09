@@ -17,6 +17,8 @@ import argparse
 import h5py
 import numpy as np
 
+MAX_SCENE_OBJECTS = 8
+
 
 def find_file(arg=None):
     """Resolve a folder or .hdf5 path to the episode file (default: latest in logs/)."""
@@ -84,11 +86,11 @@ def print_scene(f):
     sg = f["scene"]
     _sep("Scene — spawn config (episode constants)")
 
-    n_objects = sum(1 for i in range(4) if f"obj{i}_pose" in sg)
+    n_objects = sum(1 for i in range(MAX_SCENE_OBJECTS) if f"obj{i}_pose" in sg)
     print(f"  Active objects : {n_objects}")
     print()
 
-    for i in range(4):
+    for i in range(MAX_SCENE_OBJECTS):
         pose_key = f"obj{i}_pose"
         if pose_key not in sg:
             continue

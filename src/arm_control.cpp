@@ -185,10 +185,15 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
         if (p["lead_rad"])          posture_cfg_.lead_rad          = p["lead_rad"].as<double>();
         if (p["filter_tau_s"])      posture_cfg_.filter_tau_s      = p["filter_tau_s"].as<double>();
         if (p["margin_rad"])        posture_cfg_.margin_rad        = p["margin_rad"].as<double>();
-        if (p["manip_floor"])       posture_cfg_.manip_floor       = p["manip_floor"].as<double>();
+        if (p["sigma_floor"])       posture_cfg_.sigma_floor       = p["sigma_floor"].as<double>();
         if (p["swivel_offset_deg"]) posture_cfg_.swivel_offset_deg = p["swivel_offset_deg"].as<double>();
         if (p["k_height"])          posture_cfg_.k_height          = p["k_height"].as<double>();
         if (p["k_lateral"])         posture_cfg_.k_lateral         = p["k_lateral"].as<double>();
+        if (p["k_side"])            posture_cfg_.k_side            = p["k_side"].as<double>();
+        if (p["side_dir"]) {
+            const auto v = p["side_dir"].as<std::vector<double>>();
+            if (v.size() == 3) posture_cfg_.side_dir = {v[0], v[1], v[2]};
+        }
     }
     std::cout << "[INFO] " << name_ << ": nullspace posture "
               << (posture_cfg_.enabled ? "enabled" : "disabled (q0 hold)")
@@ -1436,14 +1441,14 @@ bool ArmControl::isHome() {
 
 
 Eigen::Isometry3d ArmControl::transformCommandToBase(const Eigen::Isometry3d& T_cmd_world) const {
-    Eigen::Matrix3d R_w2b = T_base_.rotation().transpose();
+    const Eigen::Matrix3d R_b2w = T_base_.rotation();
+    const Eigen::Matrix3d R_w2b = R_b2w.transpose();
 
     Eigen::Isometry3d T_target = Eigen::Isometry3d::Identity();
 
     T_target.translation() = T_origin_.translation() + R_w2b * T_cmd_world.translation();
 
-    const Eigen::Matrix3d& M = R_ctrl_to_ee_;
-    T_target.linear() = T_origin_.rotation() * (M * T_cmd_world.rotation() * M.transpose());
+    T_target.linear() = R_w2b * T_cmd_world.rotation() * R_b2w * T_origin_.rotation();
 
     return T_target;
 }
@@ -1458,7 +1463,7 @@ Eigen::Isometry3d ArmControl::transformBaseToWorld(const Eigen::Isometry3d& T_ba
 
     Eigen::Isometry3d T_world = Eigen::Isometry3d::Identity();
     T_world.translation() = R_b2w * (T_base.translation() - T_origin_.translation());
-    T_world.linear() = T_origin_.rotation().transpose() * T_base.rotation();
+    T_world.linear() = R_b2w * T_base.rotation() * T_origin_.rotation().transpose() * R_b2w.transpose();
 
     return T_world;
 }

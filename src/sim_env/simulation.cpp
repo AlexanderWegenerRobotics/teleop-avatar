@@ -775,6 +775,41 @@ void Simulation::setFramePose(const std::string& name, const Eigen::Vector3d& po
     data->mocap_quat[id * 4 + 3] = quat.z();
 }
 
+void Simulation::setFreeBodyPoses(const std::vector<FreeBodyPose>& poses) {
+    struct Target { int qadr; int vadr; const FreeBodyPose* p; };
+    std::vector<Target> targets;
+    targets.reserve(poses.size());
+    for (const auto& p : poses) {
+        int body_id = mj_name2id(model, mjOBJ_BODY, p.body.c_str());
+        if (body_id < 0) {
+            std::cerr << "[Simulation] setFreeBodyPoses: body '" << p.body << "' not found\n";
+            continue;
+        }
+        int jnt_id = -1;
+        for (int j = 0; j < model->njnt; ++j) {
+            if (model->jnt_bodyid[j] == body_id && model->jnt_type[j] == mjJNT_FREE) { jnt_id = j; break; }
+        }
+        if (jnt_id < 0) {
+            std::cerr << "[Simulation] setFreeBodyPoses: body '" << p.body << "' has no freejoint\n";
+            continue;
+        }
+        targets.push_back({model->jnt_qposadr[jnt_id], model->jnt_dofadr[jnt_id], &p});
+    }
+
+    std::lock_guard<std::mutex> lock(data_mtx);
+    for (const auto& t : targets) {
+        data->qpos[t.qadr + 0] = t.p->pos.x();
+        data->qpos[t.qadr + 1] = t.p->pos.y();
+        data->qpos[t.qadr + 2] = t.p->pos.z();
+        data->qpos[t.qadr + 3] = t.p->quat.w();
+        data->qpos[t.qadr + 4] = t.p->quat.x();
+        data->qpos[t.qadr + 5] = t.p->quat.y();
+        data->qpos[t.qadr + 6] = t.p->quat.z();
+        for (int i = 0; i < 6; ++i) data->qvel[t.vadr + i] = 0.0;
+    }
+    mj_forward(model, data);
+}
+
 void Simulation::setFreeBodyPose(const std::string& bodyName, const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat){
     int body_id = mj_name2id(model, mjOBJ_BODY, bodyName.c_str());
     if (body_id < 0) {

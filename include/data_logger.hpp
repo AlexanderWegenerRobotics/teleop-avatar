@@ -385,7 +385,7 @@ inline std::string headLogRow(const HeadLogEntry& e) {
 }
 
 struct SceneLogEntry {
-    static constexpr int MAX_OBJECTS = 4;
+    static constexpr int MAX_OBJECTS = 8;
     static constexpr int MAX_BINS    = 4;
 
     double   time          = 0.0;  // s since logger start
@@ -406,7 +406,7 @@ struct SceneLogEntry {
     // spawn config, constant per episode
     std::array<std::string, MAX_OBJECTS> object_colors;
     std::array<double, MAX_OBJECTS> object_spawn_yaw{};    // rad
-    std::array<double, MAX_OBJECTS> object_scale{1.0, 1.0, 1.0, 1.0};
+    std::array<double, MAX_OBJECTS> object_scale = [] { std::array<double, MAX_OBJECTS> a{}; a.fill(1.0); return a; }();
 
     // lighting, constant per episode
     std::array<float, 3> light_main_pos        = {0.5f,  0.0f,  1.8f};

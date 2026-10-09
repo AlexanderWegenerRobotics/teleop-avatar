@@ -1,15 +1,16 @@
 # Task: FMB Board 1 assembly
 
-# body_name must match the <body> in model_path (MuJoCo body is "<name>_<body_name>")
-
 spawn:
-  mode: fixed
+  mode: scatter
   x_range: [0.45, 0.78]
   y_range: [-0.30, 0.30]
-  z: 0.725
+  z: 0.715
+  yaw_range: [0.0, 6.2832]
+  object_gap: 0.04
+  obstacle_gap: 0.03
+  spares: [0, 3]
   min_object_dist: 0.12
   min_bin_dist: 0.20
-  yaw_range: [0.0, 6.2832]
   scale_range: [0.90, 1.10]
 
 objects:
@@ -65,16 +66,6 @@ objects:
       position: [0.55, 0.0, 0.715]
       orientation: [1, 0, 0, 0]
 
-  - name: peg_3_2
-    type: dynamic
-    role: object
-    color: red
-    body_name: peg_v1_3
-    model_path: "../models/mujoco/props/board_1/peg_v1_3.xml"
-    pose:
-      position: [0.86, 0.20, 0.715]
-      orientation: [1, 0, 0, 0]
-
   - name: peg_4_1
     type: dynamic
     role: object
@@ -85,3 +76,46 @@ objects:
       position: [0.86, -0.20, 0.715]
       orientation: [1, 0, 0, 0]
 
+  - name: spare_peg_1_a
+    type: dynamic
+    role: object
+    spare: true
+    color: blue
+    body_name: peg_v1_1
+    model_path: "../models/mujoco/props/board_1/peg_v1_1.xml"
+    pose:
+      position: [0.25, -0.25, 0.002]
+      orientation: [1, 0, 0, 0]
+
+  - name: spare_peg_1_b
+    type: dynamic
+    role: object
+    spare: true
+    color: blue
+    body_name: peg_v1_1
+    model_path: "../models/mujoco/props/board_1/peg_v1_1.xml"
+    pose:
+      position: [0.25, 0.0, 0.002]
+      orientation: [1, 0, 0, 0]
+
+  - name: spare_peg_3_a
+    type: dynamic
+    role: object
+    spare: true
+    color: red
+    body_name: peg_v1_3
+    model_path: "../models/mujoco/props/board_1/peg_v1_3.xml"
+    pose:
+      position: [0.55, -0.25, 0.002]
+      orientation: [1, 0, 0, 0]
+
+  - name: spare_peg_4_a
+    type: dynamic
+    role: object
+    spare: true
+    color: blue
+    body_name: peg_v1_4
+    model_path: "../models/mujoco/props/board_1/peg_v1_4.xml"
+    pose:
+      position: [0.55, 0.15, 0.002]
+      orientation: [1, 0, 0, 0]
