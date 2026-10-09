@@ -7,6 +7,10 @@ avatar:
     receive_port: 7000
     frequency: 20
 
+  intention:
+    camera: "desk_cam"
+    belief_temperature: 3.0
+
   pipeline_logger:
     enabled:  true
     host:     "127.0.0.1"

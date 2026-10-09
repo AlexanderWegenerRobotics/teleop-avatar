@@ -838,20 +838,35 @@ void Simulation::setLighting(const LightingConfig& lc) {
     int main_id = mj_name2id(model, mjOBJ_LIGHT, "light_main");
     int fill_id = mj_name2id(model, mjOBJ_LIGHT, "light_fill");
 
+    auto aimAtTarget = [&](int id) {
+        double d[3];
+        for (int i = 0; i < 3; ++i) d[i] = lc.main_target[i] - model->light_pos[id * 3 + i];
+        double n = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (n < 1e-6) return;
+        for (int i = 0; i < 3; ++i) model->light_dir[id * 3 + i] = d[i] / n;
+    };
+
     if (main_id >= 0) {
         for (int i = 0; i < 3; ++i) {
             model->light_pos     [main_id * 3 + i] = lc.main_pos[i];
             model->light_diffuse [main_id * 3 + i] = lc.main_diffuse[i];
             model->light_specular[main_id * 3 + i] = lc.main_specular[i];
         }
+        aimAtTarget(main_id);
+        model->light_cutoff    [main_id] = lc.main_cutoff;
+        model->light_exponent  [main_id] = lc.main_exponent;
+        model->light_castshadow[main_id] = 1;
     }
     if (fill_id >= 0) {
         for (int i = 0; i < 3; ++i) {
             model->light_diffuse[fill_id * 3 + i] = lc.fill_diffuse[i];
         }
+        aimAtTarget(fill_id);
+        model->light_cutoff    [fill_id] = lc.fill_cutoff;
+        model->light_exponent  [fill_id] = lc.fill_exponent;
+        model->light_castshadow[fill_id] = 0;
     }
 
-    // Headlight lives in model->vis.headlight, not mjvScene
     model->vis.headlight.active = 1;
     for (int i = 0; i < 3; ++i) {
         model->vis.headlight.diffuse[i]  = lc.headlight_diffuse[i];

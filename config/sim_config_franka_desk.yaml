@@ -8,6 +8,14 @@ simulation:
   model_path: "../models/mujoco/scenes/world_scene.xml"
   task_config: "../config/tasks/FMB_board_1.yaml"
 
+  ground_truth_wrench:
+    enabled: true
+    rate_hz: 200
+    log_dir: "../log/"
+    devices:
+      - name: arm_left
+        ee_body: "hand_left_hand"
+
 devices:
   - name: arm_left
     model_path: "../models/mujoco/robots/franka_fr3/fr3_torque.xml"

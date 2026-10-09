@@ -10,6 +10,11 @@ static const Eigen::Matrix3d R_body2cv = (Eigen::Matrix3d() <<
      0.0,  0.0, -1.0,
      1.0,  0.0,  0.0).finished();
 
+static const Eigen::Matrix3d R_mjcam2cv = (Eigen::Matrix3d() <<
+     1.0,  0.0,  0.0,
+     0.0, -1.0,  0.0,
+     0.0,  0.0, -1.0).finished();
+
 IntentionBuffer::IntentionBuffer(const IntentionBufferConfig& config)
     : config_(config)
 {}
@@ -67,9 +72,8 @@ void IntentionBuffer::fuseGaze(const GazeSampleMsg& gaze) {
             sample.slot_names.push_back(slot.name);
         }
 
-        // gaze u comes in over full stereo width (2560), halve it to single-cam pixels
-        const float gaze_u_cam = gaze.gaze_px_x * 0.5f;
-        const float gaze_v_cam = gaze.gaze_px_y;
+        const float gaze_u_cam = gaze.gaze_px_x * config_.gaze_scale_u;
+        const float gaze_v_cam = gaze.gaze_px_y * config_.gaze_scale_v;
 
         // stored gaze is a normalized ray coord (u-cx)/fx, (v-cy)/fy, not pixels
         sample.gaze_px_x = (gaze_u_cam - config_.intrinsics.cx) / config_.intrinsics.fx;
@@ -188,10 +192,15 @@ bool IntentionBuffer::projectToImage(const Eigen::Vector3d& p_world,
                                      const Eigen::Matrix3d& R_CH,
                                      const Eigen::Vector3d& t_WH,
                                      float& u, float& v) const {
-    // same chain as ProjectWorldToScreen: world -> head -> cam offset -> OpenCV axes
-    Eigen::Vector3d p_H      = R_CH * (p_world - t_WH);
-    Eigen::Vector3d p_C_body = p_H - config_.extrinsics.position;
-    Eigen::Vector3d p_CV     = R_body2cv * p_C_body;
+    Eigen::Vector3d p_CV;
+    if (config_.static_camera) {
+        p_CV = R_mjcam2cv * (config_.R_world_cam.transpose() * (p_world - config_.cam_pos_world));
+    } else {
+        // same chain as ProjectWorldToScreen: world -> head -> cam offset -> OpenCV axes
+        Eigen::Vector3d p_H      = R_CH * (p_world - t_WH);
+        Eigen::Vector3d p_C_body = p_H - config_.extrinsics.position;
+        p_CV                     = R_body2cv * p_C_body;
+    }
 
     if (p_CV.z() <= 0.0) return false;
 
