@@ -182,6 +182,7 @@ void Simulation::run_model() {
     auto loop_start  = clock::now();
     auto next        = loop_start + step_period;
     auto last_report = loop_start;
+    bool slow_warned = false;
 
     while (bModelIsRunning) {
         const auto step_t0 = clock::now();
@@ -255,17 +256,15 @@ void Simulation::run_model() {
         wall_seconds_.store(std::chrono::duration<double>(now - loop_start).count(),
                             std::memory_order_relaxed);
 
-        if (now - last_report >= std::chrono::seconds(10)) {
+        if (now - last_report >= std::chrono::seconds(60)) {
             const SimTimingStats st = getTimingStats();
-            std::cout << "[SIM-TIMING] rtf " << st.rtf << "  steps " << st.steps
-                      << "  mj_step " << st.step_ms_mean << " ms mean / "
-                      << st.step_ms_max << " ms max  deadline misses "
-                      << st.deadline_misses << std::endl;
-            if (st.rtf < 0.95)
-                std::cout << "[SIM-WARN] running at " << st.rtf
-                          << "x real time -- episodes stay valid (resample on sim_time), "
-                          << "but operator feel and any wall-clock latency number are distorted."
-                          << std::endl;
+            std::cout << "[SIM-TIMING] rtf " << st.rtf << "  mj_step " << st.step_ms_mean << " ms mean / "
+                      << st.step_ms_max << " ms max  deadline misses " << st.deadline_misses << std::endl;
+            if (st.rtf < 0.95 && !slow_warned) {
+                std::cout << "[SIM-WARN] running below real time -- episodes stay valid (resample on sim_time), "
+                          << "but operator feel and any wall-clock latency number are distorted." << std::endl;
+                slow_warned = true;
+            }
             last_report = now;
         }
     }
