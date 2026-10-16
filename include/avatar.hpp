@@ -134,8 +134,7 @@ private:
     bool intention_static_camera_ = false;
 
     // pipeline logger episode signaling
-    std::string logger_host_;
-    int         logger_port_        = 0;
+    std::vector<std::pair<std::string,int>> logger_targets_;
     socket_t    logger_sock_        = kInvalidSocket;
     int         current_episode_idx_    = -1;  // -1 = no active episode
     std::string current_episode_folder_;      // set by startNewEpisodeFolder

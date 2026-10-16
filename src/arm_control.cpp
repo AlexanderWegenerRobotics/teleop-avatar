@@ -738,6 +738,8 @@ void ArmControl::runStateHandler(){
             state_msg.header.sample_time_ns = rs_sample_ns;
             // Echo of the last applied operator command, for latency measurement.
             state_msg.applied_cmd_sequence = applied_cmd_seq_.load(std::memory_order_relaxed);
+            for (int i = 0; i < 7; ++i) state_msg.tau_ext[i] = static_cast<float>(rs.tau_ext_hat_filtered[i]);
+            for (int i = 0; i < 6; ++i) state_msg.F_ext[i]   = static_cast<float>(rs.O_F_ext_hat_K[i]);
             transmission_->setSendData(state_msg);
             // Also publish on the absolute channel, UDP is point-to-point and the orchestrator needs state too.
             if (transmission_absolute_) transmission_absolute_->setSendData(state_msg);

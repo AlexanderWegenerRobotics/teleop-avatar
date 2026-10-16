@@ -118,18 +118,21 @@ Avatar::Avatar(const YAML::Node& config, Role role) : role_(role) {
         }
     }
 
-    // pipeline logger episode signaling
+    // pipeline logger episode signaling (fans out to every listed target)
     if (sys_config["avatar"]["pipeline_logger"]) {
         const auto& pl = sys_config["avatar"]["pipeline_logger"];
         if (pl["enabled"].as<bool>(false)) {
-            logger_host_ = pl["host"].as<std::string>("127.0.0.1");
-            logger_port_ = pl["port"].as<int>(7100);
+            logger_targets_.emplace_back(pl["host"].as<std::string>("127.0.0.1"), pl["port"].as<int>(7100));
+            if (pl["extra_targets"])
+                for (const auto& t : pl["extra_targets"])
+                    logger_targets_.emplace_back(t["host"].as<std::string>("127.0.0.1"), t["port"].as<int>());
             logger_sock_ = socket(AF_INET, SOCK_DGRAM, 0);
             if (logger_sock_ == kInvalidSocket) {
                 std::cerr << "[AVATAR-WARN] Failed to create pipeline logger socket\n";
-                logger_port_ = 0;
+                logger_targets_.clear();
             } else {
-                std::cout << "[AVATAR-INFO] Pipeline logger signals -> " << logger_host_ << ":" << logger_port_ << std::endl;
+                for (const auto& [h, p] : logger_targets_)
+                    std::cout << "[AVATAR-INFO] Episode events -> " << h << ":" << p << std::endl;
             }
         }
     }
@@ -812,7 +815,7 @@ void Avatar::markEpisodeEnd(const std::string& reason) {
 }
 
 void Avatar::sendEpisodeEvent(const std::string& type, const std::string& reason) {
-    if (logger_sock_ == kInvalidSocket || logger_port_ == 0) return;
+    if (logger_sock_ == kInvalidSocket || logger_targets_.empty()) return;
     EpisodeEventMsg msg;
     msg.type          = type;
     msg.session_id    = session_id_;
@@ -821,12 +824,14 @@ void Avatar::sendEpisodeEvent(const std::string& type, const std::string& reason
     msg.log_dir       = current_episode_folder_;
     msgpack::sbuffer buf;
     msgpack::pack(buf, msg);
-    sockaddr_in dst{};
-    dst.sin_family = AF_INET;
-    dst.sin_port   = htons(static_cast<uint16_t>(logger_port_));
-    inet_pton(AF_INET, logger_host_.c_str(), &dst.sin_addr);
-    sendto(logger_sock_, buf.data(), static_cast<int>(buf.size()), 0,
-           reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+    for (const auto& [host, port] : logger_targets_) {
+        sockaddr_in dst{};
+        dst.sin_family = AF_INET;
+        dst.sin_port   = htons(static_cast<uint16_t>(port));
+        inet_pton(AF_INET, host.c_str(), &dst.sin_addr);
+        sendto(logger_sock_, buf.data(), static_cast<int>(buf.size()), 0,
+               reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+    }
 }
 
 void Avatar::sendSceneObjects(const StateSnapshot& snap) {

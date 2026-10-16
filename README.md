@@ -127,6 +127,8 @@ cd teleop-avatar && mkdir build && cd build
 # simulation only — no hardware needed
 cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DMUJOCO_ROOT=/path/to/mujoco -DCMAKE_PREFIX_PATH=/opt/openrobots  
 
+cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_STREAMER=ON -DBUILD_WITH_REALSENSE=ON-Drealsense2_DIR=C:/vcpkg/installed/x64-windows/share/realsense2 -DBoost_DIR=C:/Users/ceti/miniconda3/envs/robotics/Library/lib/cmake/Boost-1.88.0 -DPython3_ROOT_DIR=C:/Users/ceti/miniconda3/envs/robotics -DPython3_EXECUTABLE=C:/Users/ceti/miniconda3/envs/robotics/python.exe -DPYTHON_EXECUTABLE=C:/Users/ceti/miniconda3/envs/robotics/python.exe -DPython3_FIND_STRATEGY=LOCATION -DPython3_INCLUDE_DIR=C:/Users/ceti/miniconda3/envs/robotics/include -DPython3_LIBRARY=C:/Users/ceti/miniconda3/envs/robotics/libs/python310.lib -DPython3_NumPy_INCLUDE_DIR=C:/Users/ceti/miniconda3/envs/robotics/lib/site-packages/numpy/_core/include
+
 # real Franka hardware
 cmake .. -DBUILD_WITH_MUJOCO=OFF -DBUILD_WITH_FRANKA=ON
 cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DBUILD_STREAMER=ON

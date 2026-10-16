@@ -115,6 +115,8 @@ struct ArmStateMsg {
     // network_rtt = (recv_time - send_time(echo_cmd_sequence)) - echo_hold_us. 0/0 = unknown.
     uint32_t echo_cmd_sequence;
     uint32_t echo_hold_us;
+    // Estimated external wrench at the EE in the base frame (O_F_ext_hat_K): fx fy fz tx ty tz.
+    float F_ext[6];
 };
  
 struct HeadCommandMsg {
@@ -134,7 +136,7 @@ struct HeadStateMsg {
 // Wire contract, must match protocol.hpp (VR interface) and live/wire.py (orchestrator).
 static_assert(sizeof(MsgHeader)      == 23,  "MsgHeader size mismatch");
 static_assert(sizeof(ArmCommandMsg)  == 56,  "ArmCommandMsg size mismatch");
-static_assert(sizeof(ArmStateMsg)    == 125, "ArmStateMsg size mismatch");
+static_assert(sizeof(ArmStateMsg)    == 149, "ArmStateMsg size mismatch");
 static_assert(sizeof(HeadCommandMsg) == 31,  "HeadCommandMsg size mismatch");
 static_assert(sizeof(HeadStateMsg)   == 31,  "HeadStateMsg size mismatch");
 

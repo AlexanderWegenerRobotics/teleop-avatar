@@ -1,5 +1,5 @@
 rendering:
-  enabled: true
+  enabled: false
   fps: 15
 simulation:
   timestep: 0.001
@@ -14,7 +14,7 @@ devices:
   urdf_ee_name: fr3_hand
   gripper_actuator: actuator8
 - name: hand_left
-  model_path: ../models/mujoco/props/perception/hand_tagged.xml
+  model_path: ../models/mujoco/robots/franka_fr3/hand.xml
   root_body: hand
   gripper_actuator: actuator8
   attach_to: arm_left_fr3_link7

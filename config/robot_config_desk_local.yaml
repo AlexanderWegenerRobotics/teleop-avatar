@@ -15,12 +15,20 @@ avatar:
     enabled:  true
     host:     "127.0.0.1"
     port:     7100          # = pipeline_config episode_listener_port
+    extra_targets:          # same EpisodeEventMsg fanned out so every producer shares session_id/episode_index
+      - {host: "127.0.0.1", port: 7210}   # local orchestrator (system_local.yaml episode_events.port)
+      - {host: "127.0.0.1", port: 9600}   # VR interface (network_*.json episode_event_port)
 
   self_collision:
     enabled: false
     d_min: 0.10
     alpha: 3.0
     beta: 0.1
+
+  scene_objects:            # object poses + SysState for the local orchestrator (intent, nudge engine)
+    enabled: true
+    host: "127.0.0.1"
+    port: 7200
 
 devices:
   - name: arm_left
