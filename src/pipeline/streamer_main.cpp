@@ -11,6 +11,7 @@
 // must come before anything that pulls in windows.h
 #include "network/platform_socket.hpp"
 
+#include "pipeline/audio_streamer.hpp"
 #include "pipeline/camera_channel.hpp"
 #include "pipeline/episode_controller.hpp"
 #include "twin/role.hpp"
@@ -18,6 +19,7 @@
 
 static std::vector<std::unique_ptr<CameraChannel>> g_channels;
 static std::unique_ptr<EpisodeController>           g_episode_ctrl;
+static std::unique_ptr<AudioStreamer>               g_audio;
 static std::atomic<bool>                            g_running{true};
 
 static void onSignal(int) { g_running = false; }
@@ -51,6 +53,19 @@ static LoggerConfig parseLogConfig(const YAML::Node& n) {
     return c;
 }
 
+static AudioStreamerConfig parseAudioConfig(const YAML::Node& n) {
+    AudioStreamerConfig c;
+    c.enabled  = n["enabled"].as<bool>(false);
+    c.device   = n["device"].as<std::string>("Maono");
+    c.host     = n["host"].as<std::string>("");
+    c.port     = n["port"].as<int>(5020);
+    c.bitrate  = n["bitrate"].as<int>(64000);
+    c.frame_ms = n["frame_ms"].as<int>(10);
+    c.channels = n["channels"].as<int>(1);
+    c.retry_s  = n["retry_s"].as<int>(5);
+    return c;
+}
+
 static CameraChannelConfig parseCameraConfig(const YAML::Node& n) {
     CameraChannelConfig c;
     c.name             = n["name"].as<std::string>();
@@ -59,6 +74,8 @@ static CameraChannelConfig parseCameraConfig(const YAML::Node& n) {
     c.realsense_serial = n["realsense_serial"].as<std::string>("");
     c.v4l2_device      = n["v4l2_device"].as<std::string>("/dev/video0");
     c.v4l2_format      = n["v4l2_format"].as<std::string>("yuyv");
+    c.zed_serial       = n["zed_serial"].as<int>(0);
+    c.zed_resolution   = n["zed_resolution"].as<std::string>("HD720");
     c.fps              = n["fps"].as<int>(30);
     c.source_width     = n["source_width"].as<int>(640);
     c.source_height    = n["source_height"].as<int>(480);
@@ -221,6 +238,20 @@ int main(int argc, char** argv) {
         g_episode_ctrl->start();
         for (auto& ch : g_channels) ch->start();
 
+        if (cfg["audio"]) {
+            AudioStreamerConfig acfg = parseAudioConfig(cfg["audio"]);
+            if (acfg.enabled && acfg.host.empty()) {
+                std::cerr << "[Audio] 'audio.host' missing, audio disabled" << std::endl;
+            } else if (acfg.enabled) {
+                g_audio = std::make_unique<AudioStreamer>(acfg);
+                g_audio->start();
+            } else {
+                std::cout << "[Audio] disabled in config" << std::endl;
+            }
+        } else {
+            std::cout << "[Audio] no 'audio' block in config, audio off" << std::endl;
+        }
+
         std::cout << "[INFO] Pipeline running with " << g_channels.size()
                   << " camera(s). Ctrl+C to stop." << std::endl;
 
@@ -232,6 +263,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "[INFO] Shutting down..." << std::endl;
+    if (g_audio) { g_audio->stop(); g_audio.reset(); }
     for (auto& ch : g_channels) ch->stop();
     g_episode_ctrl->stop();
     g_channels.clear();

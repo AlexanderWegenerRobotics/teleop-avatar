@@ -21,8 +21,27 @@ public:
     uint32_t height() const      override;
 
 private:
+    struct Stats {
+        int      n = 0;
+        double   sum_ms = 0.0, min_ms = 1e9, max_ms = 0.0;
+        double   sum_exp_us = 0.0; int n_exp = 0;
+        double   sum_gain = 0.0;   int n_gain = 0;
+        double   sum_ts_backend = 0.0;  int n_ts_backend = 0;
+        double   sum_backend_toa = 0.0; int n_backend_toa = 0;
+        double   sum_toa_app = 0.0;     int n_toa_app = 0;
+        double   sum_mid_frame = 0.0;   int n_mid_frame = 0;
+        uint64_t first_arrival_ns = 0;
+        unsigned long long last_frame_number = 0;
+        int      dropped = 0;
+        bool     have_sensor_time = false;
+    };
+
     void run();
-    void configureColorSensor(rs2::pipeline_profile& profile);
+    void startPipeline();
+    void startSensor();
+    void configureColorSensor(rs2::device dev);
+    void handleFrame(const rs2::video_frame& color);
+    void resetStats();
 
     std::string serial_;
     int         width_;
@@ -33,6 +52,15 @@ private:
     int         gain_           = -1;
     rs2::sensor color_sensor_;
     bool        have_color_sensor_ = false;
+
+    bool          sensor_mode_    = true;
+    bool          sensor_started_ = false;
+    rs2::context  ctx_;
+    rs2::device   dev_;
+
+    Stats         stats_;
+    bool          domain_logged_ = false;
+    bool          time_warned_   = false;
 
     FrameCallback         cb_;
     rs2::pipeline         pipe_;

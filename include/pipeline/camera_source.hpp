@@ -22,6 +22,7 @@ public:
     virtual void stop()                  = 0;
     virtual uint32_t width()  const      = 0;
     virtual uint32_t height() const      = 0;
+    virtual bool     bgra()   const      { return false; }
 };
 
 class MuJoCoSource : public CameraSource {

@@ -7,6 +7,10 @@
     #include "pipeline/v4l2_source.hpp"
 #endif
 
+#ifdef WITH_ZED
+    #include "pipeline/zed_source.hpp"
+#endif
+
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -49,6 +53,18 @@ CameraChannel::CameraChannel(const CameraChannelConfig& config)
             config_.v4l2_format,
             config_.auto_exposure ? 0 : config_.exposure_100us);
     #endif
+    } else if (config_.source_type == "zed") {
+    #ifdef WITH_ZED
+        source_ = std::make_unique<ZedSource>(
+            config_.zed_serial,
+            config_.zed_resolution,
+            config_.fps,
+            config_.auto_exposure,
+            config_.exposure_100us,
+            config_.gain);
+    #else
+        throw std::runtime_error("Built without ZED support. Rebuild with -DBUILD_WITH_ZED=ON");
+    #endif
     } else {
         source_ = std::make_unique<MuJoCoSource>(config_.shm_name, config_.fps);
     }
@@ -72,8 +88,25 @@ CameraChannel::~CameraChannel() { stop(); }
 void CameraChannel::start() {
     if (streamer_) streamer_->start();
 
+    needs_rgb_ = !config_.raw_shm.empty() || !config_.undistort_file.empty() || logger_ != nullptr;
+
     source_->start([this](const uint8_t* rgb, uint32_t w, uint32_t h, uint64_t capture_time_ns) {
         const uint64_t frame_id = frame_count_.fetch_add(1, std::memory_order_relaxed);
+
+        bool bgra = source_->bgra();
+        if (bgra && needs_rgb_) {
+            const size_t n = static_cast<size_t>(w) * h;
+            rgb_buf_.resize(n * 3);
+            const uint8_t* s = rgb;
+            uint8_t*       d = rgb_buf_.data();
+            for (size_t i = 0; i < n; ++i, s += 4, d += 3) {
+                d[0] = s[2];
+                d[1] = s[1];
+                d[2] = s[0];
+            }
+            rgb  = rgb_buf_.data();
+            bgra = false;
+        }
 
         if (!config_.raw_shm.empty()) {
             if (!raw_writer_) {
@@ -111,7 +144,7 @@ void CameraChannel::start() {
             h = static_cast<uint32_t>(undistort_.height());
         }
 
-        if (streamer_) streamer_->pushFrame(rgb, w, h, capture_time_ns);
+        if (streamer_) streamer_->pushFrame(rgb, w, h, capture_time_ns, bgra);
 
         // fall back to now if the source gave no capture time
         if (logger_) {

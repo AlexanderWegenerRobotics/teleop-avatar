@@ -29,4 +29,4 @@ avatar_config_2:
 avatar_config:
   sim_config: "../config/sim_config_franka_desk.yaml"
   robot_config: "../config/robot_config_desk_local.yaml"
-  streamer_config: "../config/pipeline_config_desk_remote_realsense.yaml"
+  streamer_config: "../config/pipeline_config_desk_local_60fps.yaml"

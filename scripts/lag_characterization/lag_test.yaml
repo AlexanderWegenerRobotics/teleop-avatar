@@ -1,0 +1,35 @@
+# Lag characterization: command -> arm motion, measured on one clock.
+# Run lag_test.py on the machine that runs the avatar (sim or NUC), with the VR interface closed.
+# Relative paths are resolved against this file.
+
+robot_config: "../../config/robot_config_desk_local.yaml"  # ports, workspace and table limits come from here
+device: "arm_left"                 # arm under test (device name in the robot config)
+avatar_ip: "127.0.0.1"             # keep localhost so script and avatar share one clock
+output_dir: "runs"                 # one folder per run is created in here
+
+rate_hz: 120                       # command rate, same as the VR interface command thread
+reps: 3                            # repetitions per trial; trial order is shuffled within each repetition
+seed: 1                            # shuffle seed, keep it fixed to repeat a run exactly
+axes: ["x", "y", "z"]              # world axes to test
+
+points_mm:                         # workspace points as offsets from the engage pose (world frame, mm); effective mass and posture differ per point
+  - [0, 0, 0]                      # home pose
+  - [150, 0, -200]                 # forward and low, close to the board
+  - [-100, 200, -100]              # back and to the side, more bent elbow
+
+steps:
+  amplitudes_mm: [1, 2, 5, 10, 20, 50]   # every step goes out and back; both directions are measured
+  hold_s: 1.5                            # hold after each step before the next command change
+
+ramps:
+  speeds_mm_s: [2, 5, 10, 20, 50, 100, 200]  # constant-velocity ramps, out and back
+  duration_s: 3.0                  # nominal ramp duration; distance = speed * duration ...
+  min_distance_mm: 10              # ... clipped to [min, max] so slow ramps stay long enough
+  max_distance_mm: 60              #     and fast ramps stay inside the leash / workspace
+  hold_s: 1.0                      # hold at the end of each ramp
+
+transit_speed_mm_s: 30             # speed when moving to a workspace point (not measured)
+settle_s: 2.0                      # rest at each point before its first trial
+table_clearance_mm: 20             # extra margin above the robot config's table limit
+state_timeout_s: 60                # max wait for homing / engage
+end_state: "idle"                  # requested when finished or aborted: idle or awaiting

@@ -3,6 +3,7 @@ cmake/options.local.cmake
 
 # Build
 build/
+build_zed/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
@@ -18,6 +19,7 @@ __pycache__/
 
 log/
 logs/
+scripts/lag_characterization/runs/
 
 # Compiled objects
 *.o

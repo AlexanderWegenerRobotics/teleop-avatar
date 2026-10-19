@@ -13,11 +13,13 @@
 struct CameraChannelConfig {
     std::string name;
 
-    std::string source_type     = "mujoco";  // "mujoco" | "realsense" | "v4l2"
+    std::string source_type     = "mujoco";  // "mujoco" | "realsense" | "v4l2" | "zed"
     std::string shm_name;                    // mujoco only
     std::string realsense_serial;            // realsense only (empty = first device)
     std::string v4l2_device     = "/dev/video0";  // v4l2 only
     std::string v4l2_format     = "yuyv";         // v4l2 only: "yuyv" | "mjpeg"
+    int         zed_serial      = 0;
+    std::string zed_resolution  = "HD720";
     int         fps             = 30;
     int         source_width    = 640;       // realsense/v4l2 only (mujoco reads from shm)
     int         source_height   = 480;
@@ -68,6 +70,8 @@ private:
     RemapTable                    undistort_;
     std::vector<uint8_t>          undistorted_;
     bool                          undistort_checked_ = false;
+    std::vector<uint8_t>          rgb_buf_;
+    bool                          needs_rgb_ = false;
 
     std::atomic<uint64_t> frame_count_{0};
     int logging_idx_ = -1;   // -1 = not logging

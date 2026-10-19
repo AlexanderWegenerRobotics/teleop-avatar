@@ -84,4 +84,4 @@ cameras:
     type: fixed
     pos: [0.1, -0.4, 1.35]
     look_at: [0.65, 0.0, 0.78]
-    fovy: 60
+    fovy: 42.5

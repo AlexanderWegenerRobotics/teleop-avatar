@@ -46,7 +46,8 @@ public:
     void stop();
 
     // capture_time_ns in system_clock ns, 0 if unknown
-    void pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height, uint64_t capture_time_ns);
+    void pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height, uint64_t capture_time_ns,
+                   bool input_bgra = false);
 
     // Logs the already-encoded H.264 stream per episode.
     void startEncodedLog(const std::string& path);
@@ -68,6 +69,8 @@ private:
     std::thread       loop_thread_;
     std::atomic<bool> bRunning_{false};
     uint64_t          frame_count_ = 0;
+    bool              bgra_input_  = false;
+    bool              size_mismatch_warned_ = false;
 
     GstElement* encoder_ = nullptr;
     GstElement* fec_     = nullptr;

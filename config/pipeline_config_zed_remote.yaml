@@ -1,0 +1,38 @@
+enabled:        true
+stereo:         true
+
+episode_listener_port: 7100
+
+audio:
+  enabled:  true
+  device:   "Maono"
+  host:     "172.23.152.189"
+  port:     5020
+  bitrate:  64000
+  frame_ms: 10
+  channels: 1
+  retry_s:  5
+
+cameras:
+  - name:           "head_zed"
+    eye:            "stereo"
+    source_type:    "zed"
+    zed_serial:     15948839
+    zed_resolution: "HD720"
+    fps:            60
+    auto_exposure:  true
+
+    stream:
+      enabled:            true
+      host:               "172.23.152.189"
+      port:               5004
+      feedback_port:      5005
+      status_port:        5007
+      status_interval_ms: 500
+      bitrate_kbps:       8000
+      fec_percentage:     10
+      width:              2560
+      height:             720
+
+    log:
+      enabled:    false

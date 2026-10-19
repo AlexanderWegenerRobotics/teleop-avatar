@@ -247,6 +247,7 @@ if(BUILD_STREAMER)
         src/pipeline/camera_channel.cpp
         src/pipeline/episode_controller.cpp
         src/pipeline/stream_quality_controller.cpp
+        src/pipeline/audio_streamer.cpp
     )
 
     if(UNIX AND NOT APPLE)
@@ -275,6 +276,17 @@ if(BUILD_STREAMER)
     if(UNIX AND NOT APPLE)
         target_link_libraries(avatar_pipeline PRIVATE curl)
     endif()
+    if(BUILD_WITH_ZED)
+        find_package(ZED REQUIRED)
+        find_package(CUDAToolkit REQUIRED)
+        message(STATUS "ZED SDK: ${ZED_VERSION} (${ZED_INCLUDE_DIRS})")
+        target_compile_definitions(avatar_pipeline PRIVATE WITH_ZED)
+        target_sources(avatar_pipeline PRIVATE src/pipeline/zed_source.cpp)
+        target_include_directories(avatar_pipeline PRIVATE ${ZED_INCLUDE_DIRS})
+        target_link_directories(avatar_pipeline PRIVATE ${ZED_LIBRARY_DIR})
+        target_link_libraries(avatar_pipeline PRIVATE ${ZED_LIBRARIES} CUDA::cudart)
+    endif()
+
     if(BUILD_WITH_REALSENSE)
         target_compile_definitions(avatar_pipeline PRIVATE WITH_REALSENSE)
         target_link_libraries(avatar_pipeline PRIVATE realsense2::realsense2)

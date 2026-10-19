@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cstring>
 #include <chrono>
+#include <cstdlib>
 
 #include <gst/app/gstappsrc.h>
 
@@ -105,17 +106,60 @@ static bool cudaConvertAvailable() {
     return ok;
 }
 
+// true if the encoder takes BGRA in system memory; NVENC then does RGB->YUV on the GPU
+static bool encoderAcceptsSystemBGRA(const char* factory_name) {
+    GstElementFactory* f = gst_element_factory_find(factory_name);
+    if (!f) return false;
+    GstCaps* want = gst_caps_from_string("video/x-raw,format=BGRA");
+    bool ok = false;
+    for (const GList* l = gst_element_factory_get_static_pad_templates(f); l && !ok; l = l->next) {
+        GstStaticPadTemplate* t = static_cast<GstStaticPadTemplate*>(l->data);
+        if (t->direction != GST_PAD_SINK) continue;
+        GstCaps* caps = gst_static_pad_template_get_caps(t);
+        ok = gst_caps_can_intersect(caps, want);
+        gst_caps_unref(caps);
+    }
+    gst_caps_unref(want);
+    gst_object_unref(f);
+    return ok;
+}
+
+// " n-threads=N" if this GStreamer's videoconvert supports it, else ""
+static std::string videoconvertThreadsArg() {
+    GstElement* vc = gst_element_factory_make("videoconvert", nullptr);
+    if (!vc) return "";
+    bool has = g_object_class_find_property(G_OBJECT_GET_CLASS(vc), "n-threads") != nullptr;
+    gst_object_unref(vc);
+    if (!has) return "";
+    unsigned n = std::thread::hardware_concurrency();
+    n = n == 0 ? 2 : (n > 4 ? 4 : n);
+    return " n-threads=" + std::to_string(n);
+}
+
 void VideoStreamer::buildPipeline() {
     // +2 rows for embedded timestamp and frame ID, receiver crops them
     int padded_height = config_.stream_height + 2;
 
     // nvh264enc if available, else x264enc. byte-stream so the log branch is plain Annex-B .h264
-    auto build = [&](bool gpu, bool cuda_convert) -> std::string {
-        std::string convert_seg = !gpu
-            ? std::string(" ! videoconvert ! video/x-raw,format=I420")
-            : (cuda_convert
-                ? std::string(" ! cudaupload ! cudaconvert ! video/x-raw(memory:CUDAMemory),format=NV12")
-                : std::string(" ! videoconvert ! video/x-raw,format=NV12"));
+    // Convert modes: BGRA straight into NVENC (no CPU colour conversion), CUDA convert, CPU videoconvert.
+    enum class Convert { BgraDirect, Cuda, Cpu };
+    const std::string vc_threads = videoconvertThreadsArg();
+    // AVATAR_STREAM_PROFILE=constrained-baseline (or baseline/main/high) pins the H.264 profile.
+    // Baseline has no B-frames by definition, so the decoder has no reason to hold frames.
+    const char* profile_env = std::getenv("AVATAR_STREAM_PROFILE");
+    const std::string profile_caps = (profile_env && *profile_env)
+        ? std::string(",profile=") + profile_env : std::string();
+    auto build = [&](bool gpu, Convert mode) -> std::string {
+        std::string convert_seg;
+        if (!gpu)
+            convert_seg = " ! videoconvert" + vc_threads + " ! video/x-raw,format=I420";
+        else if (mode == Convert::BgraDirect)
+            convert_seg = "";
+        else if (mode == Convert::Cuda)
+            convert_seg = " ! cudaupload ! cudaconvert ! video/x-raw(memory:CUDAMemory),format=NV12";
+        else
+            convert_seg = " ! videoconvert" + vc_threads + " ! video/x-raw,format=NV12";
+        const char* in_format = (gpu && mode == Convert::BgraDirect) ? "BGRA" : "RGB";
 
         std::string encoder_seg = gpu
             ? std::string(
@@ -125,7 +169,7 @@ void VideoStreamer::buildPipeline() {
                 " ! x264enc name=encoder tune=zerolatency speed-preset=ultrafast"
                 " bitrate=" + std::to_string(config_.bitrate_kbps) +
                 " key-int-max=30");
-        encoder_seg += " ! video/x-h264,stream-format=byte-stream,alignment=au";
+        encoder_seg += " ! video/x-h264" + profile_caps + ",stream-format=byte-stream,alignment=au";
 
         std::string sink_seg =
             " ! rtph264pay pt=96 config-interval=1"
@@ -147,7 +191,7 @@ void VideoStreamer::buildPipeline() {
 
         return
             "appsrc name=src stream-type=0 format=3 is-live=true block=false"
-            " caps=video/x-raw,format=RGB"
+            " caps=video/x-raw,format=" + std::string(in_format) +
             ",width="      + std::to_string(config_.stream_width)  +
             ",height="     + std::to_string(padded_height)          +
             ",framerate="  + std::to_string(config_.fps) + "/1"
@@ -156,8 +200,8 @@ void VideoStreamer::buildPipeline() {
     };
 
     GError* err = nullptr;
-    auto try_build = [&](bool gpu, bool cuda_convert, const char* label) -> bool {
-        std::string s = build(gpu, cuda_convert);
+    auto try_build = [&](bool gpu, Convert mode, const char* label) -> bool {
+        std::string s = build(gpu, mode);
         std::cout << "[INFO] Encoder: " << label << std::endl;
         std::cout << "[INFO] Pipeline: " << s << std::endl;
         pipeline_ = gst_parse_launch(s.c_str(), &err);
@@ -172,12 +216,19 @@ void VideoStreamer::buildPipeline() {
     };
 
     bool built = false;
+    bgra_input_ = false;
     if (nvencAvailable()) {
-        if (cudaConvertAvailable()) built = try_build(true, true,  "nvh264enc (GPU) + cudaconvert");
-        if (!built)                 built = try_build(true, false, "nvh264enc (GPU) + videoconvert");
+        if (!std::getenv("AVATAR_STREAM_NO_BGRA") && encoderAcceptsSystemBGRA("nvh264enc")) {
+            built = try_build(true, Convert::BgraDirect, "nvh264enc (GPU) + BGRA input, colour conversion in NVENC");
+            bgra_input_ = built;
+        }
+        if (!built && cudaConvertAvailable()) built = try_build(true, Convert::Cuda, "nvh264enc (GPU) + cudaconvert");
+        if (!built)                           built = try_build(true, Convert::Cpu,  "nvh264enc (GPU) + videoconvert");
     }
-    if (!built && !try_build(false, false, "x264enc (CPU)"))
+    if (!built && !try_build(false, Convert::Cpu, "x264enc (CPU)"))
         throw std::runtime_error("GStreamer pipeline error: CPU fallback failed to build");
+    if (!vc_threads.empty() && !bgra_input_)
+        std::cout << "[INFO] videoconvert" << vc_threads << std::endl;
 
     appsrc_ = gst_bin_get_by_name(GST_BIN(pipeline_), "src");
     if (!appsrc_)
@@ -291,8 +342,20 @@ void VideoStreamer::stopEncodedLog() {
     ts_queue_.clear();
 }
 
-void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height, uint64_t capture_time_ns) {
+void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t height, uint64_t capture_time_ns,
+                              bool input_bgra) {
     if (!appsrc_ || !bRunning_) return;
+
+    if (static_cast<int>(width) != config_.stream_width || static_cast<int>(height) != config_.stream_height) {
+        if (!size_mismatch_warned_) {
+            size_mismatch_warned_ = true;
+            std::cerr << "[VideoStreamer] ERROR: source frame " << width << "x" << height
+                      << " does not match stream size " << config_.stream_width << "x" << config_.stream_height
+                      << ", dropping frames. For MuJoCo sources set the top-level stream_width/stream_height"
+                      << " to the camera size." << std::endl;
+        }
+        return;
+    }
 
     int tfps = target_fps_.load();
     if (tfps > 0 && tfps < config_.fps) {
@@ -303,9 +366,10 @@ void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t heigh
         }
     }
 
-    size_t row_bytes    = width * 3;
-    size_t image_bytes  = row_bytes * height;
-    size_t padded_bytes = image_bytes + row_bytes * 2;
+    const size_t bpp          = bgra_input_ ? 4 : 3;
+    const size_t row_bytes    = width * bpp;
+    const size_t image_bytes  = row_bytes * height;
+    const size_t padded_bytes = image_bytes + row_bytes * 2;
 
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, padded_bytes, nullptr);
     if (!buffer) return;
@@ -319,7 +383,30 @@ void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t heigh
         return;
     }
 
-    std::memcpy(map.data, rgb, image_bytes);
+    if (bgra_input_ && input_bgra) {
+        std::memcpy(map.data, rgb, image_bytes);
+    } else if (bgra_input_) {
+        const uint8_t* s = rgb;
+        uint8_t*       d = map.data;
+        const size_t   n = static_cast<size_t>(width) * height;
+        for (size_t i = 0; i < n; ++i, s += 3, d += 4) {
+            d[0] = s[2];
+            d[1] = s[1];
+            d[2] = s[0];
+            d[3] = 255;
+        }
+    } else if (input_bgra) {
+        const uint8_t* s = rgb;
+        uint8_t*       d = map.data;
+        const size_t   n = static_cast<size_t>(width) * height;
+        for (size_t i = 0; i < n; ++i, s += 4, d += 3) {
+            d[0] = s[2];
+            d[1] = s[1];
+            d[2] = s[0];
+        }
+    } else {
+        std::memcpy(map.data, rgb, image_bytes);
+    }
 
     uint8_t* ts_row = map.data + image_bytes;
     std::memset(ts_row, 0, row_bytes * 2);
@@ -328,20 +415,18 @@ void VideoStreamer::pushFrame(const uint8_t* rgb, uint32_t width, uint32_t heigh
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
-    for (int bit = 0; bit < 64; ++bit) {
-        uint8_t val = ((now_ns >> bit) & 1) ? 255 : 0;
-        ts_row[bit * 3 + 0] = val;
-        ts_row[bit * 3 + 1] = val;
-        ts_row[bit * 3 + 2] = val;
-    }
-
-    uint8_t* id_row = ts_row + row_bytes;
-    for (int bit = 0; bit < 64; ++bit) {
-        uint8_t val = ((frame_count_ >> bit) & 1) ? 255 : 0;
-        id_row[bit * 3 + 0] = val;
-        id_row[bit * 3 + 1] = val;
-        id_row[bit * 3 + 2] = val;
-    }
+    auto write_bits = [&](uint8_t* row, uint64_t value) {
+        for (int bit = 0; bit < 64; ++bit) {
+            uint8_t val = ((value >> bit) & 1) ? 255 : 0;
+            uint8_t* px = row + bit * bpp;
+            px[0] = val;
+            px[1] = val;
+            px[2] = val;
+            if (bpp == 4) px[3] = 255;
+        }
+    };
+    write_bits(ts_row, now_ns);
+    write_bits(ts_row + row_bytes, frame_count_);
 
     gst_buffer_unmap(buffer, &map);
 
