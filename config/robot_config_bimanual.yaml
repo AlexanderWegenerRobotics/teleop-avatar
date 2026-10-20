@@ -1,7 +1,8 @@
 avatar:
   loop_rate_hz: 100
+  log_dir: "../logs"
   transmission:
-    remote_ip: "10.112.24.173"
+    remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
     send_port: 8000
     receive_port: 7000
     frequency: 20
@@ -17,8 +18,8 @@ avatar:
     port:    7200
 
   twin_telemetry:
-    enabled: false
-    host:    "10.112.24.5"
+    enabled: true            # remote: false
+    host:    "127.0.0.1"     # remote: "10.112.24.5"
     port:    7400
     frequency: 100
 
@@ -33,19 +34,17 @@ devices:
     type: arm
     enabled: True
     franka_ip: "172.16.0.2"
-    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
-    urdf_ee_name: "fr3_hand"
     transmission:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8001
       receive_port: 7001
-      frequency: 200
+      frequency: 500           # remote: 200
 
     transmission_absolute:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8011
       receive_port: 7011
-      frequency: 200
+      frequency: 500           # remote: 200
 
     gripper:
       grasp_confirm_tolerance_m: 0.005
@@ -62,25 +61,25 @@ devices:
     #q0: [0.0, -1.2, 0.17, -1.58, 0, 1.6, 0.0]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
-    q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
-    q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+    q_min: [-2.7437, -1.7837, -2.9007, -3.0421, -2.8065, 0.5445, -3.0159]   # remote: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
+    q_max: [ 2.7437,  1.7837,  2.9007, -0.1518,  2.8065, 4.5169,  3.0159]   # remote: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+    dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]
 
     control:
       kp_joint: [600, 600, 600, 600, 250, 150, 50]
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
       kp_cart: [1000, 1000, 1000, 125, 125, 125]
       kd_cart: [50, 50, 50, 15, 15, 15]
-      eta_lin: 0.0
-      eta_rot: 0.0
+      eta_lin: 0.9   # remote: 0.0
+      eta_rot: 0.9   # remote: 0.0
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0
       friction:
-        # sigmoid friction ff, fp1..fp3 from Panda identification (Gaz 2019)
         enabled: false
         source: reference        # reference | measured
         scale: 0.5
         joint_mask: [1, 1, 1, 1, 0, 0, 0]
-        max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]   # Nm clamp per joint
+        max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]
         fp1: [0.54615, 0.87224, 0.64068, 1.2794, 0.83904, 0.30301, 0.56489]
         fp2: [5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336]
         fp3: [0.039533, 0.025882, -0.04607, 0.036194, 0.026226, -0.021047, 0.0035526]
@@ -111,11 +110,21 @@ devices:
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 1.0
-      max_command_angular_velocity: 4.0
+      max_command_velocity: 0.7           # remote: 1.0
+      max_command_angular_velocity: 2.0   # remote: 4.0
       max_command_acceleration: 5.0          # m/s^2
       max_command_angular_acceleration: 25.0 # rad/s^2
+      max_target_lead: 0.05
+      max_target_lead_rot: 0.08
       max_tilt_angle: 1.74533
+
+      collision_lower_torque: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+      collision_upper_torque: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+      #                        Fx    Fy    Fz     Mx    My    Mz
+      collision_lower_force:  [70.0, 70.0, 70.0, 50.0, 50.0, 50.0]
+      collision_upper_force:  [70.0, 70.0, 70.0, 50.0, 50.0, 50.0]
+      collision_reflex_enabled: true
+      collision_persist_ticks: 5
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
 
@@ -126,10 +135,11 @@ devices:
       v_lin_max:  0.8
       v_ang_max:  0.8                        # rad/s
       lambda:     0.01                       # LM damping
-      kp_posture: [1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4]
+      mu:         0.01
+      kp_posture: [2, 2, 2, 2, 2, 2, 2]      # remote: [1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4]
       qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]
       t_brake:    0.10
-      a_max:      10.0
+      a_max:      15.0                       # remote: 10.0
       gamma:      0.05
       wtask:      [1, 1, 1, 1, 1, 1]
 
@@ -137,19 +147,17 @@ devices:
     type: arm
     enabled: True
     franka_ip: "192.168.8.100"
-    urdf_path: "../models/urdf/franka_fr3/fr3_franka_hand.urdf"
-    urdf_ee_name: "fr3_hand"
     transmission:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8002
       receive_port: 7002
-      frequency: 200
+      frequency: 500           # remote: 200
 
     transmission_absolute:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8012
       receive_port: 7012
-      frequency: 200
+      frequency: 500           # remote: 200
 
     gripper:
       grasp_confirm_tolerance_m: 0.005
@@ -164,28 +172,34 @@ devices:
       - [1,  0,  0]
     q0: [0.3, -1.1, -0.3, -2.0, -0.5, 2.9, 0.9]
     #q0: [0.0, -1.2, -0.17, -1.58, 0, 1.6, 0.0]
-    #max_torque: [40, 40, 40, 40, 6, 6, 6]       # sim: [87, 87, 87, 87, 12, 12, 12]
+    #max_torque: [40, 40, 40, 40, 6, 6, 6]
     max_torque: [87, 87, 87, 87, 12, 12, 12]
     max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
-    q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
-    q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+    q_min: [-2.7437, -1.7837, -2.9007, -3.0421, -2.8065, 0.5445, -3.0159]   # remote: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
+    q_max: [ 2.7437,  1.7837,  2.9007, -0.1518,  2.8065, 4.5169,  3.0159]   # remote: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+    dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]
 
     control:
       kp_joint: [600, 600, 600, 600, 250, 150, 50]
       kd_joint: [50,  50,  50,  50,  30,  25,  15]
       kp_cart:  [1000, 1000, 1000, 125, 125, 125]
       kd_cart:  [50, 50, 50, 15, 15, 15]
-      eta_lin: 0.0
-      eta_rot: 0.0
+      #kp_joint: [300, 300, 300, 300, 120, 75, 25]
+      #kd_joint: [25,  25,  25,  25,  15,  12,  8]
+      #kp_cart: [200, 200, 200, 15, 15, 15]
+      #kd_cart: [35, 35, 35, 3, 3, 3]
+      #kp_null: [10, 10, 10, 10, 4, 4, 4]
+      #kd_null: [1, 1, 1, 1, 0.5, 0.5, 0.5]
+      eta_lin: 0.9   # remote: 0.0
+      eta_rot: 0.9   # remote: 0.0
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0
       friction:
-        # sigmoid friction ff, fp1..fp3 from Panda identification (Gaz 2019)
         enabled: false
         source: reference        # reference | measured
         scale: 0.5
         joint_mask: [1, 1, 1, 1, 0, 0, 0]
-        max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]   # Nm clamp per joint
+        max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]
         fp1: [0.54615, 0.87224, 0.64068, 1.2794, 0.83904, 0.30301, 0.56489]
         fp2: [5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336]
         fp3: [0.039533, 0.025882, -0.04607, 0.036194, 0.026226, -0.021047, 0.0035526]
@@ -202,39 +216,45 @@ devices:
         swivel_offset_deg: 0.0
         k_height: 0.0
         k_lateral: 0.0
-      #kp_joint: [300, 300, 300, 300, 120, 75, 25]
-      #kd_joint: [25,  25,  25,  25,  15,  12,  8]
-      #kp_cart: [200, 200, 200, 15, 15, 15]
-      #kd_cart: [35, 35, 35, 3, 3, 3]
-      #kp_null: [10, 10, 10, 10, 4, 4, 4]
-      #kd_null: [1, 1, 1, 1, 0.5, 0.5, 0.5]
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
+      torque_rate_margin: 0.9
+
     safety:
       workspace_min: [0.4, -0.4, 0.81]
       workspace_max: [1.1,  0.4, 1.6]
       table_height_world: 0.6754
       ee_fingertip_length: 0.127
       table_safety_margin: 0.01
-      max_command_velocity: 1.0
-      max_command_angular_velocity: 4.0
+      max_command_velocity: 0.7           # remote: 1.0
+      max_command_angular_velocity: 2.0   # remote: 4.0
       max_command_acceleration: 5.0          # m/s^2
       max_command_angular_acceleration: 25.0 # rad/s^2
+      max_target_lead: 0.05
+      max_target_lead_rot: 0.08
       max_tilt_angle: 1.74533
+
+      collision_lower_torque: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+      collision_upper_torque: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+      collision_lower_force:  [70.0, 70.0, 70.0, 50.0, 50.0, 50.0]
+      collision_upper_force:  [70.0, 70.0, 70.0, 50.0, 50.0, 50.0]
+      collision_reflex_enabled: true
+      collision_persist_ticks: 5
       joint_limit_buffer: 0.25
       joint_limit_torque_frac: 0.40
 
     control_mode: cartesian_impedance   # or: joint_ik
     ik:
       kp_p:       [12.0, 12.0, 12.0]
-      kp_o:       3
-      v_lin_max:  0.8
-      v_ang_max:  0.8                        # rad/s
+      kp_o:       9                          # remote: 3
+      v_lin_max:  2.0                        # remote: 0.8
+      v_ang_max:  6.0                        # rad/s, remote: 0.8
       lambda:     0.01                       # LM damping
-      kp_posture: [1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4]
-      qd_max:     [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]
+      mu:         0.00000001
+      kp_posture: [3, 3, 4, 4, 1, 1, 1]      # remote: [1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4]
+      qd_max:     [2.5, 2.5, 2.5, 2.5, 4.0, 4.0, 4.0]   # remote: [2.0, 2.0, 2.0, 2.0, 2.4, 2.4, 2.4]
       t_brake:    0.10
-      a_max:      10.0
+      a_max:      80.0                       # remote: 10.0
       gamma:      0.05
       wtask:      [1, 1, 1, 1, 1, 1]
 
@@ -242,9 +262,15 @@ devices:
     type: head
     enabled: True
     transmission:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8003
       receive_port: 7003
+      frequency: 200
+
+    transmission_absolute:
+      remote_ip: "127.0.0.1"
+      send_port: 8013
+      receive_port: 7013
       frequency: 200
 
     base_pose:
@@ -266,7 +292,7 @@ devices:
     type: gripper
     enabled: True
     transmission:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8004
       receive_port: 7004
       frequency: 20
@@ -278,7 +304,7 @@ devices:
     type: gripper
     enabled: True
     transmission:
-      remote_ip: "10.112.24.173"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8005
       receive_port: 7005
       frequency: 20
@@ -291,11 +317,12 @@ devices:
     enabled: True
     base_pose:
       position: [0, 0, 0]
-      orientation: [1, 0, 0, 0]
+      #orientation: [-0.5918, 0.8061, 0, 0]
+      orientation: [0, 1, 0, 0]   # remote: [1, 0, 0, 0]
 
   - name: camera_left
     type: sensor
     enabled: True
     base_pose:
       position: [0, 0, 0]
-      orientation: [1, 0, 0, 0]
+      orientation: [0, 1, 0, 0]   # remote: [1, 0, 0, 0]

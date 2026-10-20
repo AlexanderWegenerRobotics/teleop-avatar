@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <functional>
+#include <vector>
 #include <atomic>
 #include <thread>
 #include <mutex>
@@ -111,6 +113,7 @@ private:
     void applySelfCollisionFilter(Eigen::Isometry3d& T_target);
     void validateTargetPose(Eigen::Isometry3d& T_target);
     Vector7 jointLimitAvoidanceTorque(const Vector7& q, const Vector7& dq);
+    double wristDropBelowEE(const Eigen::Matrix3d& R_target_base);
     void latchOriginForEngage(SysState from);
     void resetPostureFromMeasured();
     void applyGripper(bool close);
@@ -125,6 +128,7 @@ private:
     Eigen::Isometry3d T_base_;
     Eigen::Isometry3d target_pose_, target_pose_raw_;
     Vector7 q0_, q_min_, q_max_;
+    Vector7 q_soft_min_, q_soft_max_;
     Vector7 tau_max_;
     Vector7 tau_rate_max_;
     double  torque_rate_margin_{0.9};
@@ -206,6 +210,7 @@ private:
     PostureSnapshot   posture_snap_;
     // Supplies F_T_EE / EE_T_K for FK at non-measured configurations.
     franka::RobotState kin_template_;
+    std::function<Eigen::Isometry3d(franka::Frame, const Vector7&)> kin_pose_;
 
 private:
     Eigen::Vector3d workspace_min_;
@@ -227,6 +232,8 @@ private:
     int    leash_count_{0}, leash_rot_count_{0};
     double leash_max_{0.0}, leash_rot_max_{0.0};
     double ee_fingertip_length_;
+    struct TableProbe { franka::Frame frame; Eigen::Vector3d p; double r; };
+    std::vector<TableProbe> table_probes_;
     double max_tilt_angle_;
     double cmd_dt_;
     double joint_limit_buffer_;

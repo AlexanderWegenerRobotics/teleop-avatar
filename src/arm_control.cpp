@@ -9,6 +9,7 @@
 #include <array>
 #include <chrono>
 #include <iostream>
+#include <unordered_map>
 #include <thread>
 
 namespace {
@@ -116,6 +117,13 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     q0_ = yamlToVector<7>(device_config["q0"]);
     q_min_ = yamlToVector<7>(device_config["q_min"]);
     q_max_ = yamlToVector<7>(device_config["q_max"]);
+    q_soft_min_ = device_config["q_soft_min"] ? yamlToVector<7>(device_config["q_soft_min"]) : q_min_;
+    q_soft_max_ = device_config["q_soft_max"] ? yamlToVector<7>(device_config["q_soft_max"]) : q_max_;
+    q_soft_min_ = q_soft_min_.cwiseMax(q_min_);
+    q_soft_max_ = q_soft_max_.cwiseMin(q_max_);
+    if (q_soft_min_ != q_min_ || q_soft_max_ != q_max_)
+        std::cout << "[INFO] " << name_ << ": soft joint limits min [" << q_soft_min_.transpose()
+                  << "] max [" << q_soft_max_.transpose() << "]" << std::endl;
     tau_max_ = yamlToVector<7>(device_config["max_torque"]);
     tau_rate_max_ = yamlToVector<7>(device_config["max_torque_rate"]) / 1000.0;
 
@@ -282,6 +290,26 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
                   << "commanded orientation may lead the wrist without bound." << std::endl;
     }
     ee_fingertip_length_ = device_config["safety"]["ee_fingertip_length"].as<double>();
+    if (device_config["safety"]["table_probes"]) {
+        static const std::unordered_map<std::string, franka::Frame> kFrames{
+            {"joint1", franka::Frame::kJoint1}, {"joint2", franka::Frame::kJoint2},
+            {"joint3", franka::Frame::kJoint3}, {"joint4", franka::Frame::kJoint4},
+            {"joint5", franka::Frame::kJoint5}, {"joint6", franka::Frame::kJoint6},
+            {"joint7", franka::Frame::kJoint7}, {"flange", franka::Frame::kFlange},
+            {"end_effector", franka::Frame::kEndEffector}};
+        for (const auto& pr : device_config["safety"]["table_probes"]) {
+            const auto it = kFrames.find(pr["frame"].as<std::string>());
+            if (it == kFrames.end()) {
+                std::cout << "[WARN] " << name_ << ": unknown table_probes frame '"
+                          << pr["frame"].as<std::string>() << "' - skipped." << std::endl;
+                continue;
+            }
+            const auto p = pr["p"].as<std::vector<double>>();
+            table_probes_.push_back({it->second, Eigen::Vector3d(p[0], p[1], p[2]), pr["r"].as<double>(0.0)});
+        }
+        std::cout << "[INFO] " << name_ << ": " << table_probes_.size()
+                  << " table probes raise the EE floor by the wrist drop below the EE." << std::endl;
+    }
     max_tilt_angle_ = device_config["safety"]["max_tilt_angle"].as<double>();
     cmd_dt_ = 1.0 / static_cast<double>(device_config["transmission"]["frequency"].as<int>());
 
@@ -299,8 +327,8 @@ ArmControl::ArmControl(const YAML::Node& device_config, const std::string& sessi
     {
         IkConfig ik_cfg;
         ik_cfg.q0    = q0_;
-        ik_cfg.q_min = q_min_;
-        ik_cfg.q_max = q_max_;
+        ik_cfg.q_min = q_soft_min_;
+        ik_cfg.q_max = q_soft_max_;
         ik_cfg.qd_max = (Eigen::Matrix<double,7,1>() << 2.175, 2.175, 2.175, 2.175, 2.610, 2.610, 2.610).finished();
 
         if (device_config["ik"]) {
@@ -378,7 +406,7 @@ void ArmControl::start(){
     kin_template_ = current_state;
     {
         PostureKinematics kin;
-        kin.pose = [this](franka::Frame frame, const Vector7& q) -> Eigen::Isometry3d {
+        kin_pose_ = [this](franka::Frame frame, const Vector7& q) -> Eigen::Isometry3d {
             std::array<double, 7> qa;
             Eigen::Map<Vector7>(qa.data()) = q;
 #ifdef WITH_FRANKA
@@ -388,13 +416,14 @@ void ArmControl::start(){
 #endif
             return Eigen::Isometry3d(Eigen::Map<const Eigen::Matrix4d>(T.data()));
         };
+        kin.pose = kin_pose_;
         kin.jacobian = [this](const Vector7& q) -> Matrix6x7 {
             franka::RobotState rs = kin_template_;
             Eigen::Map<Vector7>(rs.q.data()) = q;
             auto J = model->zeroJacobian(franka::Frame::kEndEffector, rs);
             return Eigen::Map<Matrix6x7>(J.data());
         };
-        posture_.init(posture_cfg_, q_min_, q_max_, q0_, T_base_.rotation(), std::move(kin));
+        posture_.init(posture_cfg_, q_soft_min_, q_soft_max_, q0_, T_base_.rotation(), std::move(kin));
         if (posture_cfg_.enabled && !posture_.enabled())
             std::cout << "[WARN] " << name_ << ": posture optimizer failed to initialise at q0 - "
                          "falling back to q0 hold." << std::endl;
@@ -1681,7 +1710,8 @@ void ArmControl::validateTargetPose(Eigen::Isometry3d& T_target) {
 
     Eigen::Vector3d p_world = T_base_.rotation() * p_target + T_base_.translation();
     p_world = p_world.cwiseMax(workspace_min_).cwiseMin(workspace_max_);
-    double min_world_z = table_height_world_ + table_safety_margin_ + ee_fingertip_length_;
+    double min_world_z = table_height_world_ + table_safety_margin_
+                       + std::max(ee_fingertip_length_, wristDropBelowEE(q_target.toRotationMatrix()));
     if (p_world.z() < min_world_z)
         p_world.z() = min_world_z;
     p_target = T_base_.rotation().transpose() * (p_world - T_base_.translation());
@@ -1871,8 +1901,8 @@ Vector7 ArmControl::jointLimitAvoidanceTorque(const Vector7& q, const Vector7& d
     Vector7 tau = Vector7::Zero();
 
     for (int i = 0; i < 7; ++i) {
-        const double qmin = q_min_(i);
-        const double qmax = q_max_(i);
+        const double qmin = q_soft_min_(i);
+        const double qmax = q_soft_max_(i);
         const double dmin = q(i) - qmin;
         const double dmax = qmax - q(i);
 
@@ -1899,4 +1929,22 @@ Vector7 ArmControl::jointLimitAvoidanceTorque(const Vector7& q, const Vector7& d
     }
 
     return tau;
+}
+
+double ArmControl::wristDropBelowEE(const Eigen::Matrix3d& R_target_base) {
+    // How far the lowest probe sphere would sit below the EE at the target orientation, from the measured q.
+    if (table_probes_.empty() || !kin_pose_) return 0.0;
+    Vector7 q;
+    {
+        std::lock_guard<std::mutex> lock(state_mtx);
+        q = Eigen::Map<const Vector7>(current_state.q.data());
+    }
+    const Eigen::Isometry3d T_ee_inv = kin_pose_(franka::Frame::kEndEffector, q).inverse();
+    const Eigen::Matrix3d R_w = T_base_.rotation() * R_target_base;
+    double drop = 0.0;
+    for (const auto& pr : table_probes_) {
+        const Eigen::Vector3d c_ee = T_ee_inv * (kin_pose_(pr.frame, q) * pr.p);
+        drop = std::max(drop, pr.r - (R_w * c_ee).z());
+    }
+    return drop;
 }

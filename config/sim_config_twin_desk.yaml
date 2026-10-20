@@ -27,6 +27,14 @@ devices:
       position: [0, 0, 0.107]
       orientation: [0.9239, 0, 0, -0.3827]
 
+  - name: camera_left
+    model_path: "../models/mujoco/props/camera_realsense.xml"
+    root_body: "camera_mount"
+    attach_to: "arm_left_fr3_link7"
+    attach_offset:
+      position: [0.02, -0.02, 0.08]
+      orientation: [0.9099, -0.0664, -0.1604, -0.3769]
+
 objects:
   - name: table
     type: static

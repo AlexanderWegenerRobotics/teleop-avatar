@@ -1,0 +1,50 @@
+# Task: cups on the allegro rig
+spawn:
+  x_range: [0.38, 0.60]
+  y_range: [0.10, 0.38]
+  z: 0.96
+  min_object_dist: 0.10
+  min_bin_dist: 0.20
+  yaw_range: [0.0, 6.2832]
+  scale_range: [1.0, 1.0]
+
+objects:
+  - name: cup_1
+    type: dynamic
+    role: object
+    color: white
+    body_name: cup
+    model_path: "../models/mujoco/props/cup.xml"
+    pose:
+      position: [0.42, 0.12, 0.96]
+      orientation: [1, 0, 0, 0]
+
+  - name: cup_2
+    type: dynamic
+    role: object
+    color: white
+    body_name: cup
+    model_path: "../models/mujoco/props/cup.xml"
+    pose:
+      position: [0.56, 0.22, 0.96]
+      orientation: [1, 0, 0, 0]
+
+  - name: cup_3
+    type: dynamic
+    role: object
+    color: white
+    body_name: cup
+    model_path: "../models/mujoco/props/cup.xml"
+    pose:
+      position: [0.42, 0.32, 0.96]
+      orientation: [1, 0, 0, 0]
+
+  - name: cup_4
+    type: dynamic
+    role: object
+    color: white
+    body_name: cup
+    model_path: "../models/mujoco/props/cup.xml"
+    pose:
+      position: [0.58, 0.38, 0.96]
+      orientation: [1, 0, 0, 0]

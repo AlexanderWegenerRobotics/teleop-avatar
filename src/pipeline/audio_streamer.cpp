@@ -108,6 +108,8 @@ GstElement* AudioStreamer::createSource(std::string& name_out) {
 
     if (best && g_object_class_find_property(G_OBJECT_GET_CLASS(best), "low-latency"))
         g_object_set(best, "low-latency", TRUE, nullptr);
+    if (best && g_object_class_find_property(G_OBJECT_GET_CLASS(best), "latency-time"))
+        g_object_set(best, "latency-time", static_cast<gint64>(config_.frame_ms) * 1000, nullptr);
     return best;
 }
 

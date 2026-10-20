@@ -1,6 +1,9 @@
 episode_listener_port: 8100
 
 stream_cameras:
+  - camera:   "desk_cam"
+    shm_name: "avatar_cam_twin"
+
   - camera:   "head_head_cam"
     shm_name: "avatar_cam_twin"
 
@@ -17,6 +20,13 @@ stream_cameras:
     shm_name: "avatar_wrist_cam_left_twin"
 
 cameras:
+  - name:     "desk_cam"
+    shm_name: "avatar_cam_twin"
+    stream:
+      port:          5904
+      feedback_port: 5905
+      status_port:   5907
+
   - name:     "head_cam"
     shm_name: "avatar_cam_twin"
     stream:

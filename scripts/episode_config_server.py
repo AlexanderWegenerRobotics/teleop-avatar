@@ -581,8 +581,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Episode config server")
     parser.add_argument(
         "--sim-config",
-        default=str(Path(__file__).parent.parent / "config" / "sim_config_franka.yaml"),
-        help="Path to sim_config_franka.yaml (task_config is followed automatically)",
+        default=str(Path(__file__).parent.parent / "config" / "sim_config_bimanual.yaml"),
+        help="Path to sim_config_*.yaml (task_config is followed automatically)",
     )
     parser.add_argument(
         "--n-objects", type=int, default=None,

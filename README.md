@@ -167,9 +167,9 @@ Avatar and operator connect over ZeroTier; addresses and ports live in the robot
 role: avatar
 
 avatar_config:
-  sim_config:      "../config/sim_config_franka_desk.yaml"
-  robot_config:    "../config/robot_config_desk_remote.yaml"
-  streamer_config: "../config/pipeline_config_desk_remote.yaml"
+  sim_config:      "../config/sim_config_desk.yaml"       # bimanual: sim_config_bimanual.yaml
+  robot_config:    "../config/robot_config_desk.yaml"     # bimanual: robot_config_bimanual.yaml
+  streamer_config: "../config/pipeline_config_desk.yaml"  # bimanual: pipeline_config_bimanual.yaml
 ```
 
 | File | Governs |
@@ -180,7 +180,7 @@ avatar_config:
 | `reconciler_config` | Twin only: correction time constant, innovation thresholds, buffer horizon, staleness guard |
 | `*_overlay` | Twin only: sparse overrides applied on top of the avatar's transmission and pipeline configs |
 
-Scenario variants sit beside each other (`_avatar`, `_local`, `_desk_local`, `_desk_remote`, `_twin_*`), and switching scenario is an edit to the index rather than a diff across every file. Task definitions live in `config/tasks/`. Every config file carries inline comments on the non-obvious values — those comments are the reference, not this table.
+There is one file per kind and setup (`_desk`, `_bimanual`). The active value is the local/sim one; where remote, ZED or another camera needs a different value it is written as a comment after the setting (`# remote: ...`), so switching is flipping those lines. The two twin overlays cover both setups. Task definitions live in `config/tasks/`.
 
 ---
 

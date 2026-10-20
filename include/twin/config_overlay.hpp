@@ -1,7 +1,8 @@
 #pragma once
 
 // Applies twin-role overlays onto loaded robot/pipeline config trees, so avatar and twin can share one config file.
-// Only keys present in the overlay are overwritten.
+// Only keys present in the overlay are overwritten; overlay entries missing in the base are skipped,
+// so one overlay file serves both the desk and the bimanual setup.
 
 #include <stdexcept>
 #include <string>
@@ -38,17 +39,11 @@ inline void applyTwinTransmissionOverlay(YAML::Node sys_config, const std::strin
     for (const auto& override_dev : overlay["devices"]) {
         const std::string name = override_dev["name"].as<std::string>();
 
-        bool matched = false;
         for (auto base_dev : sys_config["devices"]) {
             if (base_dev["name"].as<std::string>() != name) continue;
             mergeYamlNodeInto(base_dev, override_dev);
-            matched = true;
             break;
         }
-        if (!matched)
-            throw std::runtime_error(
-                "twin transmission_overlay: device '" + name +
-                "' not found in base robot_config (overlay: " + overlay_path + ")");
     }
 }
 
@@ -67,17 +62,11 @@ inline void applyTwinStreamerOverlay(YAML::Node cfg, const std::string& overlay_
         if (!overlay[list_key]) return;
         for (const auto& override_entry : overlay[list_key]) {
             const std::string name = override_entry[match_field].as<std::string>();
-            bool matched = false;
             for (auto base_entry : cfg[list_key]) {
                 if (base_entry[match_field].as<std::string>() != name) continue;
                 mergeYamlNodeInto(base_entry, override_entry);
-                matched = true;
                 break;
             }
-            if (!matched)
-                throw std::runtime_error(
-                    "twin streamer_overlay: entry '" + name + "' not found in base '" +
-                    list_key + "' (overlay: " + overlay_path + ")");
         }
     };
 

@@ -1,8 +1,8 @@
 enabled:        true
 stereo:         true
 stream_fps:     20
-stream_width:   960  #1280
-stream_height:  720 #960
+stream_width:   960   # remote: 1280
+stream_height:  720   # remote: 960
 
 stream_cameras:
   - camera:   "head_head_cam"
@@ -35,7 +35,7 @@ episode_listener_port: 7100
 cameras:
   - name:         "head_cam"
     eye:          "mono"
-    source_type:  "mujoco"
+    source_type:  "mujoco"   # or: realsense
     shm_name:     "avatar_cam"
     fps:           20
     source_width:  960
@@ -44,7 +44,7 @@ cameras:
 
     stream:
       enabled:            false
-      host:               "127.0.0.1"
+      host:               "127.0.0.1"   # remote: "10.112.24.173"
       port:               5004
       feedback_port:      5005
       status_port:        5007
@@ -64,14 +64,14 @@ cameras:
     eye:          "aux"
     source_type:  "mujoco"
     shm_name:     "avatar_wrist_cam_right"
-    fps:          20
+    fps:          20   # remote: 15
     source_width:  640
     source_height: 480
     realsense_serial: ""
 
     stream:
       enabled:            true
-      host:               "127.0.0.1"
+      host:               "127.0.0.1"   # remote: "10.112.24.173"
       port:               5010
       feedback_port:      5011
       status_port:        5012
@@ -91,14 +91,14 @@ cameras:
     eye:          "aux"
     source_type:  "mujoco"
     shm_name:     "avatar_wrist_cam_left"
-    fps:          20
+    fps:          20   # remote: 15
     source_width:  640
     source_height: 480
     realsense_serial: ""
 
     stream:
       enabled:            true
-      host:               "127.0.0.1"
+      host:               "127.0.0.1"   # remote: "10.112.24.173"
       port:               5013
       feedback_port:      5014
       status_port:        5015
@@ -136,7 +136,7 @@ cameras:
       height:             480
 
     log:
-      enabled:    true
+      enabled:    true   # remote: false
       output_dir: "logs"
       width:      640
       height:     480
@@ -154,15 +154,15 @@ cameras:
 
     stream:
       enabled:            true
-      host:               "127.0.0.1"
+      host:               "127.0.0.1"   # remote: "10.112.24.173"
       port:               5004
       feedback_port:      5005
       status_port:        5007
       status_interval_ms: 500
-      bitrate_kbps:       3500   #6000
+      bitrate_kbps:       3500   # remote: 6000
       fec_percentage:     10
-      width:              1920      #2560
-      height:             720     # 960
+      width:              1920   # remote: 2560
+      height:             720    # remote: 960
 
     log:
       enabled:    true

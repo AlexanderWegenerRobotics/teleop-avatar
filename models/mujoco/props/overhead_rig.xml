@@ -1,0 +1,47 @@
+<mujoco model="overhead_rig">
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <material name="rig_table_mat" rgba="0.07 0.07 0.07 1" specular="0.3" shininess="0.2"/>
+    <material name="rig_slot_mat" rgba="0.02 0.02 0.02 1" specular="0.0" shininess="0.0"/>
+    <material name="rig_alu_mat" rgba="0.72 0.73 0.75 1" specular="0.8" shininess="0.5" reflectance="0.1"/>
+  </asset>
+
+  <default>
+    <default class="rig">
+      <geom condim="6" friction="1.0 0.005 0.0001" solimp="0.99 0.99 0.001" solref="0.01 1"/>
+      <default class="rig_visual">
+        <geom contype="0" conaffinity="0" group="2"/>
+      </default>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="overhead_rig" childclass="rig">
+      <geom name="rig_table_top" type="box" material="rig_table_mat" pos="0.6160 0.5150 0.8850" size="0.4000 0.4500 0.015"/>
+      <geom name="rig_slot_0" class="rig_visual" type="box" material="rig_slot_mat" pos="0.2410 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_1" class="rig_visual" type="box" material="rig_slot_mat" pos="0.2910 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_2" class="rig_visual" type="box" material="rig_slot_mat" pos="0.3410 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_3" class="rig_visual" type="box" material="rig_slot_mat" pos="0.3910 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_4" class="rig_visual" type="box" material="rig_slot_mat" pos="0.4410 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_5" class="rig_visual" type="box" material="rig_slot_mat" pos="0.4910 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_6" class="rig_visual" type="box" material="rig_slot_mat" pos="0.5410 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_7" class="rig_visual" type="box" material="rig_slot_mat" pos="0.5910 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_8" class="rig_visual" type="box" material="rig_slot_mat" pos="0.6410 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_9" class="rig_visual" type="box" material="rig_slot_mat" pos="0.6910 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_10" class="rig_visual" type="box" material="rig_slot_mat" pos="0.7410 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_11" class="rig_visual" type="box" material="rig_slot_mat" pos="0.7910 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_12" class="rig_visual" type="box" material="rig_slot_mat" pos="0.8410 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_13" class="rig_visual" type="box" material="rig_slot_mat" pos="0.8910 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_14" class="rig_visual" type="box" material="rig_slot_mat" pos="0.9410 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_slot_15" class="rig_visual" type="box" material="rig_slot_mat" pos="0.9910 0.5150 0.9002" size="0.004 0.4400 0.0002"/>
+      <geom name="rig_table_leg_0" type="box" material="rig_alu_mat" pos="0.2560 0.1050 0.4350" size="0.02 0.02 0.4350"/>
+      <geom name="rig_table_leg_1" type="box" material="rig_alu_mat" pos="0.9760 0.1050 0.4350" size="0.02 0.02 0.4350"/>
+      <geom name="rig_table_leg_2" type="box" material="rig_alu_mat" pos="0.2560 0.9250 0.4350" size="0.02 0.02 0.4350"/>
+      <geom name="rig_table_leg_3" type="box" material="rig_alu_mat" pos="0.9760 0.9250 0.4350" size="0.02 0.02 0.4350"/>
+      <geom name="rig_pole" type="box" material="rig_alu_mat" pos="0.1760 0.1050 0.8750" size="0.04 0.04 0.8750"/>
+      <geom name="rig_beam" type="box" material="rig_alu_mat" pos="-0.1340 0.1050 1.7100" size="0.35 0.04 0.04"/>
+      <geom name="rig_mount_plate" type="box" material="rig_alu_mat" pos="0.0 0.0175 1.6625" size="0.12 0.1275 0.0075"/>
+    </body>
+  </worldbody>
+</mujoco>

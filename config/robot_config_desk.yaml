@@ -2,7 +2,7 @@ avatar:
   loop_rate_hz: 100
   log_dir: "../logs"
   transmission:
-    remote_ip: "127.0.0.1"
+    remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
     send_port: 8000
     receive_port: 7000
     frequency: 20
@@ -15,9 +15,9 @@ avatar:
     enabled:  true
     host:     "127.0.0.1"
     port:     7100          # = pipeline_config episode_listener_port
-    extra_targets:          # same EpisodeEventMsg fanned out so every producer shares session_id/episode_index
-      - {host: "127.0.0.1", port: 7210}   # local orchestrator (system_local.yaml episode_events.port)
-      - {host: "127.0.0.1", port: 9600}   # VR interface (network_*.json episode_event_port)
+    extra_targets:          # orchestrator (7210) and VR (9600) get the same episode events
+      - {host: "127.0.0.1", port: 7210}
+      - {host: "127.0.0.1", port: 9600}
 
   self_collision:
     enabled: false
@@ -25,24 +25,30 @@ avatar:
     alpha: 3.0
     beta: 0.1
 
-  scene_objects:            # object poses + SysState for the local orchestrator (intent, nudge engine)
-    enabled: true
+  scene_objects:            # object poses + SysState for the local orchestrator
+    enabled: true           # remote: false
     host: "127.0.0.1"
     port: 7200
+
+  twin_telemetry:
+    enabled: false          # remote: true
+    host: "127.0.0.1"       # remote: "10.112.24.173"
+    port: 7400              # = reconciler_config listen_port
+    frequency: 100
 
 devices:
   - name: arm_left
     type: arm
     enabled: True
-    franka_ip: "172.16.0.2"
+    franka_ip: "192.168.3.100"
     transmission:
-      remote_ip: "127.0.0.1"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8001
       receive_port: 7001
-      frequency: 200
+      frequency: 200           # remote: 500
 
     transmission_absolute:
-      remote_ip: "127.0.0.1"
+      remote_ip: "127.0.0.1"   # remote: "10.112.24.173"
       send_port: 8011
       receive_port: 7011
       frequency: 200
@@ -60,33 +66,44 @@ devices:
       - [1,  0,  0]
       - [0, -1,  0]
       - [0,  0, -1]
-    q0: [0.0, -0.4, 0.0, -2.4, 0.0, 2.0, 0.785]
-    max_torque: [87, 87, 87, 87, 12, 12, 12]
-    max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
+    q0: [0.0, -0.4, 0.0, -2.4, 0.0, 2.0, 0.785]   # remote: [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+    #max_torque: [87, 87, 87, 87, 12, 12, 12]
+    #max_torque_rate: [1000, 1000, 1000, 1000, 1000, 1000, 1000]
+    max_torque: [70, 70, 70, 70, 10, 10, 10]
+    max_torque_rate: [900, 900, 900, 900, 900, 900, 900]
     q_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, 0.0175, -2.8973]
     q_max: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
-    dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]
+    dq_max: [2.62, 2.62, 2.62, 2.62, 5.26, 4.18, 5.26]   # remote: [2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61]
 
     control:
-      kp_joint: [600, 600, 600, 600, 250, 150, 50]
-      kd_joint: [50,  50,  50,  50,  30,  25,  15]
+      kp_joint: [600, 600, 600, 600, 200, 150, 50]
+      kd_joint: [50,  50,  50,  50,  18,  25,  15]
       kp_idle:  [240, 240, 240, 240, 100,  60,  20]
       kd_idle:  [32,  32,  32,  32,  19,  16,   9]
-      kp_cart: [800, 800, 800, 40, 40, 40]
+      kp_cart: [800, 800, 800, 50, 50, 50]
       kd_cart: [40, 40, 40, 12, 12, 12]
       eta_lin: 0.9
       eta_rot: 0.9
       ff_force_max: 30.0     # N
       ff_torque_max: 8.0     # Nm
-      kp_null: [40, 40, 40, 40, 8, 8, 8]
-      kd_null: [3, 3, 3, 3, 1, 1, 1]
+      friction:              # sim frictionloss (1.14 Nm on j1-4) stays above the ff
+        enabled: true
+        source: reference
+        scale: 0.5
+        joint_mask: [1, 1, 1, 1, 0, 0, 0]
+        max_torque: [2.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0]
+        fp1: [0.54615, 0.87224, 0.64068, 1.2794, 0.83904, 0.30301, 0.56489]
+        fp2: [5.1181, 9.0657, 10.136, 5.5903, 8.3469, 17.133, 10.336]
+        fp3: [0.039533, 0.025882, -0.04607, 0.036194, 0.026226, -0.021047, 0.0035526]
+      kp_null: [20, 20, 20, 20, 8, 8, 8]
+      kd_null: [2, 2, 2, 2, 1, 1, 1]
       posture:
         enabled: true
         window_rad: 0.30
         samples: 7
         lead_rad: 0.15
         filter_tau_s: 0.20
-        margin_rad: 0.25
+        margin_rad: 0.30
         sigma_floor: 0.06
         swivel_offset_deg: 0.0
         k_height: 0.0
@@ -95,16 +112,17 @@ devices:
         k_side: 0.1
       kp_joint_limit: [30, 28, 26, 22, 4, 8, 10]
       kd_joint_limit: [1.8, 1.6, 1.5, 1.35, 0.3, 0.5, 0.8]
+      torque_rate_margin: 0.9
 
     safety:
-      workspace_min: [0.4, -0.4, 0.1]
+      workspace_min: [0.4, -0.4, 0.1]   # remote: [0.4, -0.4, 0.03]
       workspace_max: [1.2,  0.4, 1.6]
       table_height_world: 0.6754
-      ee_fingertip_length: 0.127
+      ee_fingertip_length: 0.127        # remote: 0.0
       table_safety_margin: 0.01
-      max_command_velocity: 0.7
-      max_command_angular_velocity: 2.0
-      max_command_acceleration: 5.0          # m/s^2
+      max_command_velocity: 0.8  #1.0
+      max_command_angular_velocity: 2.0 #4.0
+      max_command_acceleration: 9.0          # m/s^2
       max_command_angular_acceleration: 25.0 # rad/s^2
       max_target_lead: 0.05
       max_target_lead_rot: 0.08
@@ -141,3 +159,10 @@ devices:
     base_pose:
       position: [0, 0, 0]
       orientation: [1, 0, 0, 0]
+
+  - name: camera_left
+    type: sensor
+    enabled: True
+    base_pose:
+      position: [0, 0, 0]
+      orientation: [0, 1, 0, 0]

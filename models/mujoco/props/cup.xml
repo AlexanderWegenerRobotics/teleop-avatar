@@ -1,0 +1,33 @@
+<mujoco model="cup">
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <material name="cup_mat" rgba="0.92 0.92 0.94 0.55" specular="0.6" shininess="0.6"/>
+  </asset>
+
+  <default>
+    <default class="cup">
+      <geom type="box" material="cup_mat" condim="4" friction="0.9 0.005 0.0001" solimp="0.95 0.99 0.001" solref="0.004 1" mass="0"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="cup" childclass="cup">
+      <freejoint name="cup_joint"/>
+      <inertial mass="0.04" pos="0 0 -0.015" diaginertia="5.0e-5 5.0e-5 3.5e-5"/>
+      <geom name="cup_bottom" type="cylinder" size="0.036 0.0015" pos="0 0 -0.0585"/>
+      <geom name="cup_wall_0" size="0.0012 0.0104 0.060" pos="0.0360 0.0000 0" euler="0 0 0.0000"/>
+      <geom name="cup_wall_1" size="0.0012 0.0104 0.060" pos="0.0312 0.0180 0" euler="0 0 0.5236"/>
+      <geom name="cup_wall_2" size="0.0012 0.0104 0.060" pos="0.0180 0.0312 0" euler="0 0 1.0472"/>
+      <geom name="cup_wall_3" size="0.0012 0.0104 0.060" pos="0.0000 0.0360 0" euler="0 0 1.5708"/>
+      <geom name="cup_wall_4" size="0.0012 0.0104 0.060" pos="-0.0180 0.0312 0" euler="0 0 2.0944"/>
+      <geom name="cup_wall_5" size="0.0012 0.0104 0.060" pos="-0.0312 0.0180 0" euler="0 0 2.6180"/>
+      <geom name="cup_wall_6" size="0.0012 0.0104 0.060" pos="-0.0360 0.0000 0" euler="0 0 3.1416"/>
+      <geom name="cup_wall_7" size="0.0012 0.0104 0.060" pos="-0.0312 -0.0180 0" euler="0 0 3.6652"/>
+      <geom name="cup_wall_8" size="0.0012 0.0104 0.060" pos="-0.0180 -0.0312 0" euler="0 0 4.1888"/>
+      <geom name="cup_wall_9" size="0.0012 0.0104 0.060" pos="-0.0000 -0.0360 0" euler="0 0 4.7124"/>
+      <geom name="cup_wall_10" size="0.0012 0.0104 0.060" pos="0.0180 -0.0312 0" euler="0 0 5.2360"/>
+      <geom name="cup_wall_11" size="0.0012 0.0104 0.060" pos="0.0312 -0.0180 0" euler="0 0 5.7596"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,6 @@
+WARNING Mon Oct 19 16:56:06 2026: Attach conflict when attaching 'fr3', policy is 'warning'
+integrator: parent has 0 (default), child has 3, keeping parent value
+
+WARNING Mon Oct 19 16:56:13 2026: Attach conflict when attaching 'fr3', policy is 'warning'
+integrator: parent has 0 (default), child has 3, keeping parent value
+

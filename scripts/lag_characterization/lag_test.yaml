@@ -2,7 +2,7 @@
 # Run lag_test.py on the machine that runs the avatar (sim or NUC), with the VR interface closed.
 # Relative paths are resolved against this file.
 
-robot_config: "../../config/robot_config_desk_local.yaml"  # ports, workspace and table limits come from here
+robot_config: "../../config/robot_config_desk.yaml"  # ports, workspace and table limits come from here
 device: "arm_left"                 # arm under test (device name in the robot config)
 avatar_ip: "127.0.0.1"             # keep localhost so script and avatar share one clock
 output_dir: "runs"                 # one folder per run is created in here

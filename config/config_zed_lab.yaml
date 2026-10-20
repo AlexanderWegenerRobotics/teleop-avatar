@@ -1,4 +1,0 @@
-role: avatar
-
-avatar_config:
-  streamer_config: "../config/pipeline_config_zed_remote.yaml"

@@ -214,7 +214,7 @@ def main():
     parser.add_argument("index", nargs="?", type=int, default=None,
                         help="Episode index (optional; default = latest)")
     parser.add_argument("--config", default=None, metavar="YAML",
-                        help="Path to robot_config_local.yaml — enables "
+                        help="Path to robot_config_*.yaml — enables "
                              "world-frame transform via base_pose")
     args = parser.parse_args()
 
