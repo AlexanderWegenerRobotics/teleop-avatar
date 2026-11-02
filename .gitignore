@@ -48,3 +48,9 @@ compile_commands.json
 
 # Logs
 *.log
+
+# MuJoCo runtime log and scratch output
+MUJOCO_LOG.TXT
+.tmpview/
+*.pyc
+*.patch

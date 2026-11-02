@@ -98,7 +98,7 @@ From one desk-hardware session, operator and avatar on separate machines:
 | Video jitter | 0.08 ms median |
 | Packet loss | effectively zero over the session |
 
-The first three bars are direct measurements against a common NTP-disciplined clock. The fourth — command to robot pose responding — is a cross-correlation estimate and should be read as an order of magnitude, not a figure. This is one session on a desk setup, not a benchmark.
+Recorded in an earlier desk session; later end-to-end glass-to-glass measurements with an LED and light-sensor rig came to 80 ms median on the local test setup and about 60 ms on the deployment setup. The first three bars are direct measurements against a common NTP-disciplined clock. The fourth — command to robot pose responding — is a cross-correlation estimate and should be read as an order of magnitude, not a figure. This is one session on a desk setup, not a benchmark.
 
 ---
 
@@ -122,20 +122,22 @@ MuJoCo, Pinocchio, Eigen3, yaml-cpp, msgpack-cxx and Poco are required. GStreame
 
 ```bash
 git clone https://github.com/AlexanderWegenerRobotics/teleop-avatar.git
-cd teleop-avatar && mkdir build && cd build
+cd teleop-avatar
 
-# simulation only — no hardware needed
-cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DMUJOCO_ROOT=/path/to/mujoco -DCMAKE_PREFIX_PATH=/opt/openrobots  
-
-cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_STREAMER=ON -DBUILD_WITH_REALSENSE=ON-Drealsense2_DIR=C:/vcpkg/installed/x64-windows/share/realsense2 -DBoost_DIR=C:/Users/ceti/miniconda3/envs/robotics/Library/lib/cmake/Boost-1.88.0 -DPython3_ROOT_DIR=C:/Users/ceti/miniconda3/envs/robotics -DPython3_EXECUTABLE=C:/Users/ceti/miniconda3/envs/robotics/python.exe -DPYTHON_EXECUTABLE=C:/Users/ceti/miniconda3/envs/robotics/python.exe -DPython3_FIND_STRATEGY=LOCATION -DPython3_INCLUDE_DIR=C:/Users/ceti/miniconda3/envs/robotics/include -DPython3_LIBRARY=C:/Users/ceti/miniconda3/envs/robotics/libs/python310.lib -DPython3_NumPy_INCLUDE_DIR=C:/Users/ceti/miniconda3/envs/robotics/lib/site-packages/numpy/_core/include -Dtinyxml2_DIR="$env:CONDA_PREFIX/Library/lib/cmake/tinyxml2"
+# simulation only, no hardware needed
+cmake -B build -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF \
+      -DMUJOCO_ROOT=/path/to/mujoco -DCMAKE_PREFIX_PATH=/opt/openrobots
 
 # real Franka hardware
-cmake .. -DBUILD_WITH_MUJOCO=OFF -DBUILD_WITH_FRANKA=ON
-cmake .. -DBUILD_WITH_MUJOCO=ON -DBUILD_WITH_FRANKA=OFF -DBUILD_STREAMER=ON
+cmake -B build -DBUILD_WITH_MUJOCO=OFF -DBUILD_WITH_FRANKA=ON
 
-cmake --build . --config Release -j
-cmake --build build -j 10
-``` 
+# optional camera source
+#   add -DBUILD_WITH_REALSENSE=ON (and -Drealsense2_DIR=... if it is not found)
+
+cmake --build build --config Release -j
+```
+
+On Windows, dependencies from vcpkg or a conda environment are found through `CMAKE_PREFIX_PATH` (or the package's `*_DIR` variable); the pipeline binary is off by default there.
 
 This produces `avatar` and, unless the pipeline is disabled, `avatar_pipeline`.
 
